@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Operaciones - CREA</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0A1628 0%, #1E3A5F 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: linear-gradient(135deg, #00D9FF 0%, #0099CC 100%);
+            padding: 20px 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 20px rgba(0, 217, 255, 0.3);
+        }
+
+        header h1 {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0, 217, 255, 0.2);
+        }
+
+        .stat-card.green {
+            border-left: 4px solid #4CAF50;
+        }
+
+        .stat-card.blue {
+            border-left: 4px solid #2196F3;
+        }
+
+        .stat-card.orange {
+            border-left: 4px solid #FF9800;
+        }
+
+        .stat-card.red {
+            border-left: 4px solid #F44336;
+        }
+
+        .stat-card.amber {
+            border-left: 4px solid #FFC107;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.8;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-change {
+            font-size: 12px;
+            opacity: 0.7;
+        }
+
+        .stat-change.positive {
+            color: #4CAF50;
+        }
+
+        .stat-change.negative {
+            color: #F44336;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .chart-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .chart-card h3 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #00D9FF;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+
+        .table-container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            overflow-x: auto;
+        }
+
+        .table-container h3 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #00D9FF;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        th {
+            background: rgba(0, 217, 255, 0.2);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 12px;
+            letter-spacing: 1px;
+        }
+
+        tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge.success {
+            background: #4CAF50;
+        }
+
+        .badge.warning {
+            background: #FF9800;
+        }
+
+        .badge.danger {
+            background: #F44336;
+        }
+
+        .badge.info {
+            background: #2196F3;
+        }
+
+        .refresh-btn {
+            background: linear-gradient(135deg, #00D9FF 0%, #0099CC 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .refresh-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 15px rgba(0, 217, 255, 0.4);
+        }
+
+        .refresh-btn:active {
+            transform: scale(0.98);
+        }
+
+        @media (max-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Dashboard Operaciones CREA</h1>
+            <p>Monitoreo en tiempo real de métricas y producción</p>
+        </header>
+
+        <button class="refresh-btn" onclick="cargarDatos()">🔄 Actualizar Datos</button>
+
+        <div class="stats-grid">
+            <div class="stat-card green">
+                <div class="stat-label">Órdenes Completadas</div>
+                <div class="stat-value" id="ordenesCompletadas">-</div>
+                <div class="stat-change positive">↑ +12% vs mes anterior</div>
+            </div>
+
+            <div class="stat-card blue">
+                <div class="stat-label">RGU Promedio</div>
+                <div class="stat-value" id="rguPromedio">-</div>
+                <div class="stat-change positive">↑ +0.5 RGU/día</div>
+            </div>
+
+            <div class="stat-card orange">
+                <div class="stat-label">Técnicos Activos</div>
+                <div class="stat-value" id="tecnicosActivos">-</div>
+                <div class="stat-change">En terreno</div>
+            </div>
+
+            <div class="stat-card red">
+                <div class="stat-label">Reiteración</div>
+                <div class="stat-value" id="reiteracion">-</div>
+                <div class="stat-change negative">↓ -2.3% vs mes anterior</div>
+            </div>
+
+            <div class="stat-card amber">
+                <div class="stat-label">Productividad</div>
+                <div class="stat-value" id="productividad">-</div>
+                <div class="stat-change positive">↑ +5% vs mes anterior</div>
+            </div>
+
+            <div class="stat-card blue">
+                <div class="stat-label">Efectividad</div>
+                <div class="stat-value" id="efectividad">-</div>
+                <div class="stat-change positive">↑ +3.1% vs mes anterior</div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>📈 Producción Diaria (RGU)</h3>
+                <div class="chart-container">
+                    <canvas id="produccionChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <h3>🎯 Distribución por Tipo de Orden</h3>
+                <div class="chart-container">
+                    <canvas id="tipoOrdenChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <h3>⏱️ Tiempos de Trabajo</h3>
+                <div class="chart-container">
+                    <canvas id="tiemposChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <h3>📊 Calidad y Reiteración</h3>
+                <div class="chart-container">
+                    <canvas id="calidadChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <h3>👥 Ranking de Técnicos (<span id="totalTecnicos">-</span> técnicos)</h3>
+            <table id="rankingTable">
+                <thead>
+                    <tr>
+                        <th>Posición</th>
+                        <th>Técnico</th>
+                        <th>RUT</th>
+                        <th>RGU/día</th>
+                        <th>Órdenes</th>
+                        <th>Reiteración</th>
+                        <th>Productividad</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody id="rankingBody">
+                    <tr>
+                        <td colspan="8" class="loading">Cargando datos...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="table-container" style="margin-top: 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h3>💰 Bonos de Técnicos - <span id="periodoBonoTexto">-</span></h3>
+                <div style="display: flex; gap: 10px;">
+                    <select id="periodoBono" style="padding: 8px 12px; border-radius: 6px; background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.3);">
+                        <option value="">Seleccionar período</option>
+                    </select>
+                    <button class="refresh-btn" onclick="cargarBonos()" style="margin: 0;">🔄 Actualizar</button>
+                </div>
+            </div>
+            <table id="bonosTable">
+                <thead>
+                    <tr>
+                        <th>Técnico</th>
+                        <th>RUT</th>
+                        <th>RGU Promedio</th>
+                        <th>Calidad %</th>
+                        <th>Bono Producción</th>
+                        <th>Bono Calidad</th>
+                        <th>Total Bruto</th>
+                        <th>Total Líquido</th>
+                    </tr>
+                </thead>
+                <tbody id="bonosBody">
+                    <tr>
+                        <td colspan="8" class="loading">Cargando bonos...</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div style="margin-top: 15px; padding: 15px; background: rgba(0, 217, 255, 0.1); border-radius: 8px;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    <div>
+                        <div style="font-size: 12px; opacity: 0.8;">Total Bruto</div>
+                        <div style="font-size: 24px; font-weight: bold; color: #00D9FF;" id="totalBruto">$0</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 12px; opacity: 0.8;">Total Líquido</div>
+                        <div style="font-size: 24px; font-weight: bold; color: #4CAF50;" id="totalLiquido">$0</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 12px; opacity: 0.8;">Técnicos con Bono</div>
+                        <div style="font-size: 24px; font-weight: bold;" id="tecnicosConBono">0</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 12px; opacity: 0.8;">Promedio por Técnico</div>
+                        <div style="font-size: 24px; font-weight: bold;" id="promedioBono">$0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuración de Supabase
+        const SUPABASE_URL = 'https://efvicvqffvxocnrqjxrs.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmdmljdnFmZnZ4b2NucnFqeHJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0Mzc4MjMsImV4cCI6MjA4MTAxMzgyM30._RIVNg4_FoMKDJWbdi8QuS6LSsjjaAapwkTa_9Gb0Cc';
+        
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // Datos globales
+        let datosReales = {
+            ordenesCompletadas: 0,
+            rguPromedio: 0,
+            tecnicosActivos: 0,
+            reiteracion: 0,
+            productividad: 0,
+            efectividad: 0,
+            produccionDiaria: {
+                labels: [],
+                data: []
+            },
+            tipoOrden: {
+                labels: ['Altas', 'Migraciones', 'Modificaciones'],
+                data: [0, 0, 0]
+            },
+            tiempos: {
+                labels: ['Trabajo', 'Ruta', 'Ocio'],
+                data: [0, 0, 0]
+            },
+            calidad: {
+                labels: [],
+                data: []
+            },
+            ranking: []
+        };
+
+        // Inicializar gráficos
+        let produccionChart, tipoOrdenChart, tiemposChart, calidadChart;
+
+        function inicializarGraficos() {
+            // Gráfico de Producción Diaria
+            const ctxProduccion = document.getElementById('produccionChart').getContext('2d');
+            produccionChart = new Chart(ctxProduccion, {
+                type: 'line',
+                data: {
+                    labels: datosReales.produccionDiaria.labels,
+                    datasets: [{
+                        label: 'RGU/día',
+                        data: datosReales.produccionDiaria.data,
+                        borderColor: '#00D9FF',
+                        backgroundColor: 'rgba(0, 217, 255, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: '#ffffff' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        },
+                        x: {
+                            ticks: { color: '#ffffff' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        }
+                    }
+                }
+            });
+
+            // Gráfico de Tipo de Orden
+            const ctxTipo = document.getElementById('tipoOrdenChart').getContext('2d');
+            tipoOrdenChart = new Chart(ctxTipo, {
+                type: 'doughnut',
+                data: {
+                    labels: datosReales.tipoOrden.labels,
+                    datasets: [{
+                        data: datosReales.tipoOrden.data,
+                        backgroundColor: [
+                            '#4CAF50',
+                            '#2196F3',
+                            '#FF9800'
+                        ],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { color: '#ffffff' }
+                        }
+                    }
+                }
+            });
+
+            // Gráfico de Tiempos
+            const ctxTiempos = document.getElementById('tiemposChart').getContext('2d');
+            tiemposChart = new Chart(ctxTiempos, {
+                type: 'bar',
+                data: {
+                    labels: datosReales.tiempos.labels,
+                    datasets: [{
+                        label: 'Porcentaje',
+                        data: datosReales.tiempos.data,
+                        backgroundColor: [
+                            '#4CAF50',
+                            '#FFC107',
+                            '#F44336'
+                        ],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: { 
+                                color: '#ffffff',
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        },
+                        x: {
+                            ticks: { color: '#ffffff' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        }
+                    }
+                }
+            });
+
+            // Gráfico de Calidad
+            const ctxCalidad = document.getElementById('calidadChart').getContext('2d');
+            calidadChart = new Chart(ctxCalidad, {
+                type: 'line',
+                data: {
+                    labels: datosReales.calidad.labels,
+                    datasets: [{
+                        label: 'Reiteración %',
+                        data: datosReales.calidad.data,
+                        borderColor: '#FFC107',
+                        backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#ffffff' }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { 
+                                color: '#ffffff',
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        },
+                        x: {
+                            ticks: { color: '#ffffff' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function actualizarEstadisticas() {
+            document.getElementById('ordenesCompletadas').textContent = datosReales.ordenesCompletadas.toLocaleString();
+            document.getElementById('rguPromedio').textContent = datosReales.rguPromedio.toFixed(1);
+            document.getElementById('tecnicosActivos').textContent = datosReales.tecnicosActivos;
+            document.getElementById('reiteracion').textContent = datosReales.reiteracion.toFixed(1) + '%';
+            document.getElementById('productividad').textContent = datosReales.productividad.toFixed(1) + '%';
+            document.getElementById('efectividad').textContent = datosReales.efectividad.toFixed(1) + '%';
+        }
+
+        function actualizarRanking() {
+            const tbody = document.getElementById('rankingBody');
+            tbody.innerHTML = '';
+
+            if (datosReales.ranking.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="loading">No hay datos disponibles</td></tr>';
+                return;
+            }
+
+            document.getElementById('totalTecnicos').textContent = datosReales.ranking.length;
+
+            datosReales.ranking.forEach((tecnico, index) => {
+                const row = document.createElement('tr');
+                
+                let badgeClass = 'success';
+                if (tecnico.estado === 'En ruta' || tecnico.estado === 'en_ruta') badgeClass = 'warning';
+                if (tecnico.estado === 'Inactivo' || tecnico.estado === 'no_iniciado') badgeClass = 'danger';
+                if (tecnico.estado === 'Activo' || tecnico.estado === 'trabajando') badgeClass = 'success';
+
+                const estadoTexto = tecnico.estado === 'trabajando' ? 'Activo' : 
+                                   tecnico.estado === 'en_ruta' ? 'En ruta' : 
+                                   tecnico.estado === 'no_iniciado' ? 'Inactivo' : tecnico.estado;
+
+                row.innerHTML = `
+                    <td><strong>#${tecnico.pos || (index + 1)}</strong></td>
+                    <td>${tecnico.nombre || 'N/A'}</td>
+                    <td>${tecnico.rut || 'N/A'}</td>
+                    <td><strong>${(tecnico.rgu || 0).toFixed(1)}</strong></td>
+                    <td>${tecnico.ordenes || 0}</td>
+                    <td>${(tecnico.reiteracion || 0).toFixed(1)}%</td>
+                    <td>${(tecnico.productividad || 0).toFixed(1)}%</td>
+                    <td><span class="badge ${badgeClass}">${estadoTexto}</span></td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        async function cargarDatos() {
+            console.log('🔄 Cargando datos reales desde Supabase...');
+            
+            try {
+                const now = new Date();
+                const mesActual = now.getMonth() + 1;
+                const añoActual = now.getFullYear();
+
+                // 1. Obtener todas las órdenes completadas del mes actual
+                const { data: ordenes, error: errorOrdenes } = await supabase
+                    .from('produccion_crea')
+                    .select('*')
+                    .eq('estado', 'Completado');
+
+                if (errorOrdenes) {
+                    console.error('❌ Error obteniendo órdenes:', errorOrdenes);
+                    return;
+                }
+
+                // Filtrar por mes actual (formato fecha: DD/MM/YYYY)
+                const ordenesMes = ordenes.filter(orden => {
+                    const fechaStr = orden.fecha_trabajo || '';
+                    const partes = fechaStr.split('/');
+                    if (partes.length !== 3) return false;
+                    const mesOrden = parseInt(partes[1]);
+                    const añoOrden = parseInt(partes[2]);
+                    return mesOrden === mesActual && añoOrden === añoActual;
+                });
+
+                // 2. Calcular estadísticas generales
+                datosReales.ordenesCompletadas = ordenesMes.length;
+                
+                // Calcular RGU promedio
+                const rguTotal = ordenesMes.reduce((sum, o) => sum + (parseFloat(o.rgu_total || 0)), 0);
+                const diasUnicos = new Set(ordenesMes.map(o => o.fecha_trabajo)).size;
+                datosReales.rguPromedio = diasUnicos > 0 ? rguTotal / diasUnicos : 0;
+
+                // 3. Obtener técnicos activos desde estados_tecnico
+                const { data: tecnicos, error: errorTecnicos } = await supabase
+                    .from('estados_tecnico')
+                    .select('*');
+
+                if (!errorTecnicos && tecnicos) {
+                    datosReales.tecnicosActivos = tecnicos.filter(t => 
+                        t.estado === 'trabajando' || t.estado === 'en_ruta'
+                    ).length;
+                }
+
+                // 4. Calcular reiteración promedio
+                let totalReiteracion = 0;
+                let tecnicosConDatos = 0;
+
+                // 5. Obtener ranking completo de técnicos
+                const rutTecnicos = [...new Set(ordenesMes.map(o => o.rut_tecnico))];
+                const rankingCompleto = [];
+
+                for (const rut of rutTecnicos) {
+                    const ordenesTecnico = ordenesMes.filter(o => o.rut_tecnico === rut);
+                    const rguTecnico = ordenesTecnico.reduce((sum, o) => sum + (parseFloat(o.rgu_total || 0)), 0);
+                    const diasTecnico = new Set(ordenesTecnico.map(o => o.fecha_trabajo)).size;
+                    const rguPromedioTecnico = diasTecnico > 0 ? rguTecnico / diasTecnico : 0;
+
+                    // Obtener nombre del técnico
+                    const { data: usuario } = await supabase
+                        .from('usuarios')
+                        .select('nombre')
+                        .eq('rut', rut)
+                        .single();
+
+                    // Obtener estado del técnico
+                    const { data: estadoTecnico } = await supabase
+                        .from('estados_tecnico')
+                        .select('estado')
+                        .eq('rut', rut)
+                        .single();
+
+                    // Calcular reiteración del técnico (simplificado)
+                    const accessIds = ordenesTecnico.map(o => o.access_id).filter(id => id);
+                    const accessIdsUnicos = new Set(accessIds);
+                    const reiteracionTecnico = accessIds.length > 0 
+                        ? ((accessIds.length - accessIdsUnicos.size) / accessIds.length) * 100 
+                        : 0;
+
+                    totalReiteracion += reiteracionTecnico;
+                    tecnicosConDatos++;
+
+                    rankingCompleto.push({
+                        pos: 0, // Se asignará después del sort
+                        nombre: usuario?.nombre || 'N/A',
+                        rut: rut,
+                        rgu: rguPromedioTecnico,
+                        ordenes: ordenesTecnico.length,
+                        reiteracion: reiteracionTecnico,
+                        productividad: 0, // Se puede calcular con tiempo
+                        estado: estadoTecnico?.estado || 'no_iniciado'
+                    });
+                }
+
+                // Ordenar por RGU descendente y asignar posiciones
+                rankingCompleto.sort((a, b) => b.rgu - a.rgu);
+                rankingCompleto.forEach((t, i) => t.pos = i + 1);
+
+                datosReales.ranking = rankingCompleto;
+                datosReales.reiteracion = tecnicosConDatos > 0 ? totalReiteracion / tecnicosConDatos : 0;
+
+                // 6. Calcular distribución por tipo de orden
+                const tipoOrdenCount = {
+                    'Altas': 0,
+                    'Migraciones': 0,
+                    'Modificaciones': 0
+                };
+
+                ordenesMes.forEach(orden => {
+                    const tipo = orden.tipo_orden || '';
+                    if (tipo.includes('Alta')) tipoOrdenCount['Altas']++;
+                    else if (tipo.includes('Migración')) tipoOrdenCount['Migraciones']++;
+                    else if (tipo.includes('Modificación')) tipoOrdenCount['Modificaciones']++;
+                });
+
+                datosReales.tipoOrden.data = [
+                    tipoOrdenCount['Altas'],
+                    tipoOrdenCount['Migraciones'],
+                    tipoOrdenCount['Modificaciones']
+                ];
+
+                // 7. Calcular producción diaria (últimos 7 días)
+                const ultimos7Dias = [];
+                for (let i = 6; i >= 0; i--) {
+                    const fecha = new Date();
+                    fecha.setDate(fecha.getDate() - i);
+                    const fechaStr = `${fecha.getDate()}/${fecha.getMonth() + 1}/${fecha.getFullYear()}`;
+                    
+                    const ordenesDia = ordenesMes.filter(o => o.fecha_trabajo === fechaStr);
+                    const rguDia = ordenesDia.reduce((sum, o) => sum + (parseFloat(o.rgu_total || 0)), 0);
+                    const diasTrabajados = new Set(ordenesDia.map(o => o.rut_tecnico)).size;
+                    const rguPromedioDia = diasTrabajados > 0 ? rguDia / diasTrabajados : 0;
+
+                    ultimos7Dias.push({
+                        label: ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][fecha.getDay()],
+                        rgu: rguPromedioDia
+                    });
+                }
+
+                datosReales.produccionDiaria.labels = ultimos7Dias.map(d => d.label);
+                datosReales.produccionDiaria.data = ultimos7Dias.map(d => d.rgu);
+
+                // 8. Calcular efectividad (simplificado)
+                const totalAsignadas = ordenesMes.length; // Asumiendo que todas las completadas estaban asignadas
+                datosReales.efectividad = totalAsignadas > 0 ? (ordenesMes.length / totalAsignadas) * 100 : 0;
+
+                // 9. Calcular productividad promedio (simplificado)
+                datosReales.productividad = 70; // Se puede calcular con tiempo real
+
+                // Actualizar UI
+                actualizarEstadisticas();
+                actualizarRanking();
+                actualizarGraficos();
+
+                console.log('✅ Datos actualizados desde Supabase');
+                console.log(`📊 ${datosReales.ordenesCompletadas} órdenes, ${datosReales.ranking.length} técnicos`);
+
+            } catch (error) {
+                console.error('❌ Error cargando datos:', error);
+                document.getElementById('rankingBody').innerHTML = 
+                    '<tr><td colspan="8" class="loading">Error cargando datos: ' + error.message + '</td></tr>';
+            }
+        }
+
+        function actualizarGraficos() {
+            if (!produccionChart || !tipoOrdenChart) return;
+
+            // Actualizar gráfico de producción
+            produccionChart.data.labels = datosReales.produccionDiaria.labels;
+            produccionChart.data.datasets[0].data = datosReales.produccionDiaria.data;
+            produccionChart.update();
+
+            // Actualizar gráfico de tipo de orden
+            tipoOrdenChart.data.datasets[0].data = datosReales.tipoOrden.data;
+            tipoOrdenChart.update();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // FUNCIONES DE BONOS
+        // ═══════════════════════════════════════════════════════════
+
+        async function cargarPeriodosBonos() {
+            try {
+                // Obtener períodos disponibles desde v_pagos_tecnicos
+                const { data, error } = await supabase
+                    .from('v_pagos_tecnicos')
+                    .select('periodo')
+                    .order('periodo', { ascending: false });
+
+                if (error) {
+                    console.error('❌ Error obteniendo períodos:', error);
+                    return;
+                }
+
+                const periodosUnicos = [...new Set(data.map(p => p.periodo))];
+                const select = document.getElementById('periodoBono');
+                
+                select.innerHTML = '<option value="">Seleccionar período</option>';
+                
+                periodosUnicos.forEach(periodo => {
+                    const option = document.createElement('option');
+                    option.value = periodo;
+                    
+                    // Formatear período: 2026-02 → Febrero 2026
+                    const [ano, mes] = periodo.split('-');
+                    const meses = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+                                   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+                    option.textContent = `${meses[parseInt(mes)]} ${ano}`;
+                    
+                    select.appendChild(option);
+                });
+
+                // Seleccionar el período más reciente por defecto
+                if (periodosUnicos.length > 0) {
+                    select.value = periodosUnicos[0];
+                    await cargarBonos();
+                }
+
+                // Agregar listener para cambio de período
+                select.addEventListener('change', cargarBonos);
+
+            } catch (error) {
+                console.error('❌ Error en cargarPeriodosBonos:', error);
+            }
+        }
+
+        async function cargarBonos() {
+            const periodoBono = document.getElementById('periodoBono').value;
+            
+            if (!periodoBono) {
+                console.log('⚠️ No se ha seleccionado período');
+                return;
+            }
+
+            console.log('💰 Cargando bonos para período:', periodoBono);
+
+            try {
+                // Consultar v_pagos_tecnicos
+                const { data: bonos, error } = await supabase
+                    .from('v_pagos_tecnicos')
+                    .select('*')
+                    .eq('periodo', periodoBono)
+                    .order('total_liquido', { ascending: false });
+
+                if (error) {
+                    console.error('❌ Error obteniendo bonos:', error);
+                    document.getElementById('bonosBody').innerHTML = 
+                        '<tr><td colspan="8" class="loading">Error: ' + error.message + '</td></tr>';
+                    return;
+                }
+
+                console.log('✅ Bonos cargados:', bonos.length);
+
+                // Actualizar tabla
+                const tbody = document.getElementById('bonosBody');
+                tbody.innerHTML = '';
+
+                if (bonos.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="loading">No hay bonos para este período</td></tr>';
+                    actualizarResumenBonos([], periodoBono);
+                    return;
+                }
+
+                bonos.forEach(bono => {
+                    const row = document.createElement('tr');
+                    
+                    // Determinar color de fondo según bono
+                    const totalLiquido = bono.total_liquido || 0;
+                    let bgColor = '';
+                    if (totalLiquido === 0) {
+                        bgColor = 'background: rgba(244, 67, 54, 0.1);'; // Rojo suave
+                    } else if (totalLiquido >= 500000) {
+                        bgColor = 'background: rgba(76, 175, 80, 0.1);'; // Verde suave
+                    }
+
+                    row.innerHTML = `
+                        <td style="${bgColor}">${bono.tecnico || 'N/A'}</td>
+                        <td style="${bgColor}">${bono.rut_tecnico || 'N/A'}</td>
+                        <td style="${bgColor}"><strong>${(bono.rgu_promedio || 0).toFixed(2)}</strong></td>
+                        <td style="${bgColor}">${(bono.porcentaje_reiteracion || 0).toFixed(2)}%</td>
+                        <td style="${bgColor}">$${(bono.bono_produccion_bruto || 0).toLocaleString()}</td>
+                        <td style="${bgColor}">$${(bono.bono_calidad_bruto || 0).toLocaleString()}</td>
+                        <td style="${bgColor}"><strong>$${(bono.total_bruto || 0).toLocaleString()}</strong></td>
+                        <td style="${bgColor}"><strong style="color: #4CAF50;">$${(bono.total_liquido || 0).toLocaleString()}</strong></td>
+                    `;
+                    tbody.appendChild(row);
+                });
+
+                actualizarResumenBonos(bonos, periodoBono);
+
+            } catch (error) {
+                console.error('❌ Error en cargarBonos:', error);
+                document.getElementById('bonosBody').innerHTML = 
+                    '<tr><td colspan="8" class="loading">Error: ' + error.message + '</td></tr>';
+            }
+        }
+
+        function actualizarResumenBonos(bonos, periodo) {
+            // Formatear período para mostrar
+            if (periodo) {
+                const [ano, mes] = periodo.split('-');
+                const meses = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+                               'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+                document.getElementById('periodoBonoTexto').textContent = 
+                    `${meses[parseInt(mes)]} ${ano}`;
+            }
+
+            if (bonos.length === 0) {
+                document.getElementById('totalBruto').textContent = '$0';
+                document.getElementById('totalLiquido').textContent = '$0';
+                document.getElementById('tecnicosConBono').textContent = '0';
+                document.getElementById('promedioBono').textContent = '$0';
+                return;
+            }
+
+            const totalBruto = bonos.reduce((sum, b) => sum + (b.total_bruto || 0), 0);
+            const totalLiquido = bonos.reduce((sum, b) => sum + (b.total_liquido || 0), 0);
+            const tecnicosConBono = bonos.filter(b => (b.total_liquido || 0) > 0).length;
+            const promedio = tecnicosConBono > 0 ? totalLiquido / tecnicosConBono : 0;
+
+            document.getElementById('totalBruto').textContent = '$' + totalBruto.toLocaleString();
+            document.getElementById('totalLiquido').textContent = '$' + totalLiquido.toLocaleString();
+            document.getElementById('tecnicosConBono').textContent = tecnicosConBono;
+            document.getElementById('promedioBono').textContent = '$' + Math.round(promedio).toLocaleString();
+        }
+
+        // Inicializar al cargar la página
+        window.addEventListener('DOMContentLoaded', async () => {
+            // Cargar datos reales primero
+            await cargarDatos();
+            
+            // Inicializar gráficos después de cargar datos
+            inicializarGraficos();
+            
+            // Cargar períodos y bonos
+            await cargarPeriodosBonos();
+            
+            // Auto-actualizar cada 30 segundos
+            setInterval(cargarDatos, 30000);
+        });
+    </script>
+</body>
+</html>
+

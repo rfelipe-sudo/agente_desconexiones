@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">CREABOX</string>
+    <!-- Asistente Visual CTO (turing) -->
+    <string name="cto_camera_permission_required">Se requiere permiso de cámara</string>
+    <string name="cto_loading_models">Cargando modelos de IA…</string>
+    <string name="cto_models_loaded">Modelos cargados — apunta la cámara a la CTO</string>
+    <string name="cto_model_load_error">Error al cargar modelos de IA</string>
+    <string name="cto_rut_label">RUT Técnico</string>
+    <string name="cto_no_rut">Sin RUT</string>
+</resources>

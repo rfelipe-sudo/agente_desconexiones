@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Color de fondo oscuro para el splash (mismo que el gradiente de Flutter) -->
+    <color name="splash_background">#0A0A0A</color>
+    
+    <!-- Color de fondo para el icono de la app -->
+    <color name="ic_launcher_background">#0D1B2E</color>
+</resources>

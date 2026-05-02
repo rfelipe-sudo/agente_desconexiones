@@ -1,0 +1,2856 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Técnicos | Creaciones Tecnológicas</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0F2027;
+            --bg-secondary: #203A43;
+            --bg-card: #1a1a24;
+            --border: #2a2a3a;
+            --text-primary: #ffffff;
+            --text-secondary: #8888aa;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-yellow: #f59e0b;
+            --accent-purple: #9D6BFF;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary), var(--bg-secondary));
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo-text {
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .filters {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        select, input {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 12px 18px;
+            border-radius: 10px;
+            font-family: inherit;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        select:hover, input:hover {
+            border-color: var(--accent-blue);
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 10px;
+            font-family: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            box-shadow: none;
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-card);
+            box-shadow: 0 4px 15px rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-back {
+            background: transparent;
+            border: 1px solid var(--border);
+            padding: 8px 16px;
+            font-size: 13px;
+        }
+
+        .btn-icon {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-icon:hover {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            transform: scale(1.1);
+        }
+
+        /* KPI Cards */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .kpi-card {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(59, 130, 246, 0.3);
+        }
+
+        .kpi-card:hover::before {
+            opacity: 1;
+        }
+
+        .kpi-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 10px;
+        }
+
+        .kpi-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 36px;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .kpi-value.blue { 
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .kpi-value.green { color: var(--accent-green); }
+        .kpi-value.red { color: var(--accent-red); }
+        .kpi-value.yellow { color: var(--accent-yellow); }
+        .kpi-value.purple { color: var(--accent-purple); }
+
+        .kpi-sub {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+
+        /* Table */
+        .table-container {
+            background: rgba(26, 26, 36, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .table-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 25px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(32, 58, 67, 0.5);
+        }
+
+        .table-title {
+            font-weight: 600;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .breadcrumb span {
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .breadcrumb span:hover {
+            color: var(--accent-blue);
+        }
+
+        .breadcrumb .active {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .search-box {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .search-box input {
+            width: 300px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            background: rgba(18, 18, 26, 0.8);
+            padding: 12px 10px;
+            text-align: left;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+
+        th:hover {
+            color: var(--accent-blue);
+            background: rgba(18, 18, 26, 1);
+        }
+
+        th.sorted-asc::after { 
+            content: ' ↑'; 
+            color: var(--accent-blue);
+            font-size: 14px;
+        }
+        th.sorted-desc::after { 
+            content: ' ↓'; 
+            color: var(--accent-blue);
+            font-size: 14px;
+        }
+
+        td {
+            padding: 12px 10px;
+            border-bottom: 1px solid rgba(42, 42, 58, 0.5);
+            font-size: 13px;
+        }
+        
+        .td-clickable {
+            cursor: pointer !important;
+            position: relative;
+            transition: all 0.2s;
+        }
+        
+        .td-clickable:hover {
+            background: rgba(59, 130, 246, 0.15) !important;
+            color: var(--accent-blue) !important;
+        }
+        
+        .td-clickable:hover::after {
+            content: '🔍';
+            position: absolute;
+            right: 5px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 12px;
+            opacity: 0.7;
+        }
+
+        tr {
+            transition: all 0.2s;
+        }
+
+        tr:hover {
+            background: rgba(59, 130, 246, 0.08);
+            cursor: pointer;
+        }
+
+        .clickable {
+            cursor: pointer !important;
+            transition: all 0.2s;
+            font-weight: 600;
+        }
+
+        .clickable:hover {
+            color: var(--accent-blue) !important;
+            transform: scale(1.05);
+        }
+
+        .tecnico-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+
+        .tecnico-rut {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .orden-cell {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-good {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-warning {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--accent-yellow);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .badge-danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .number {
+            font-family: 'JetBrains Mono', monospace;
+            text-align: right;
+            font-size: 12px;
+        }
+
+        .number-highlight {
+            font-weight: 700;
+            font-size: 14px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hhee-cell {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .hhee-bar {
+            width: 80px;
+            height: 8px;
+            background: rgba(139, 92, 246, 0.2);
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid rgba(139, 92, 246, 0.3);
+        }
+
+        .hhee-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-purple), var(--accent-blue));
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 80px;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(59, 130, 246, 0.2);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .periodo-info {
+            background: rgba(32, 58, 67, 0.5);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 24px;
+            margin-bottom: 25px;
+            display: flex;
+            gap: 40px;
+            font-size: 13px;
+            backdrop-filter: blur(10px);
+        }
+
+        .periodo-info strong {
+            color: var(--accent-blue);
+            font-weight: 600;
+        }
+
+        /* Modal para detalle de RGUs */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(5px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 700px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .detalle-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .detalle-item {
+            background: rgba(59, 130, 246, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.2s;
+        }
+        
+        .detalle-item:hover {
+            background: rgba(59, 130, 246, 0.1);
+            border-color: var(--accent-blue);
+        }
+        
+        .detalle-fecha {
+            font-size: 14px;
+            color: var(--text-primary);
+        }
+        
+        .detalle-tipo {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 5px 10px;
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            color: var(--text-primary);
+            transform: rotate(90deg);
+        }
+
+        .rgu-item {
+            background: rgba(59, 130, 246, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .rgu-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .rgu-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .kpi-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .kpi-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            header {
+                flex-direction: column;
+                gap: 15px;
+            }
+
+            .filters {
+                flex-wrap: wrap;
+            }
+
+            .search-box input {
+                width: 200px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <div class="logo-text">creaciones</div>
+                <h1>Dashboard Técnicos</h1>
+            </div>
+            <div class="filters">
+                <select id="mesFilter">
+                    <option value="2025-11">Noviembre 2025</option>
+                    <option value="2025-12" selected>Diciembre 2025</option>
+                    <option value="2026-01">Enero 2026</option>
+                    <option value="2026-02">Febrero 2026</option>
+                </select>
+                <button class="btn" onclick="cargarDatos()">🔄 Actualizar</button>
+                <button class="btn btn-secondary" onclick="exportarExcel()">📥 Exportar</button>
+                <button class="btn btn-secondary" onclick="exportarPlantillaHaberes()">💼 Plantilla RRHH</button>
+                <button class="btn btn-secondary" onclick="generarAnexosMasivo()">📄 Anexos (Todos)</button>
+            </div>
+        </header>
+
+        <div class="periodo-info">
+            <div>📅 <strong>Producción:</strong> <span id="periodoProduccion">Mes seleccionado</span></div>
+            <div>🔍 <strong>% Reiteración:</strong> Trabajos del 21 del mes anterior al 20 del mes actual (garantía hasta el 20 del mes siguiente)</div>
+            <div>⏰ <strong>HHEE:</strong> Lun-Vie después 18:30 | Sáb después 15:00</div>
+        </div>
+
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-label">👥 Técnicos Activos</div>
+                <div class="kpi-value blue" id="kpiTecnicos">--</div>
+                <div class="kpi-sub">con producción en el mes</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">📊 RGU Total</div>
+                <div class="kpi-value green" id="kpiRGU">--</div>
+                <div class="kpi-sub">producción del período</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">📈 Promedio RGU/Téc</div>
+                <div class="kpi-value yellow" id="kpiPromRGU">--</div>
+                <div class="kpi-sub">por técnico activo</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">⚠️ % Reiteración Promedio</div>
+                <div class="kpi-value" id="kpiCalidad">--</div>
+                <div class="kpi-sub">trabajos reiterados (menor es mejor)</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">⏱️ Horas Extras</div>
+                <div class="kpi-value purple" id="kpiHHEE">--</div>
+                <div class="kpi-sub">acumuladas en el mes</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">💰 Total Bonos</div>
+                <div class="kpi-value blue" id="kpiBonos">--</div>
+                <div class="kpi-sub">líquido del período</div>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <div class="table-header">
+                <div>
+                    <div class="breadcrumb" id="breadcrumb">
+                        <span class="active">📋 Resumen Técnicos</span>
+                    </div>
+                </div>
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="🔍 Buscar..." onkeyup="filtrarTabla()">
+                    <button class="btn btn-back" id="btnVolver" onclick="volverNivel()" style="display:none;">← Volver</button>
+                </div>
+            </div>
+            <div id="tableContent">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <div>Cargando datos...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para detalle de RGUs -->
+    <div class="modal" id="modalRGU">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Detalle de RGUs</h3>
+                <button class="modal-close" onclick="cerrarModal()">×</button>
+            </div>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+
+    <script>
+        // Supabase Config - REEMPLAZA CON TUS CREDENCIALES
+        const SUPABASE_URL = 'https://efvicvqffvxocnrqjxrs.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmdmljdnFmZnZ4b2NucnFqeHJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0Mzc4MjMsImV4cCI6MjA4MTAxMzgyM30._RIVNg4_FoMKDJWbdi8QuS6LSsjjaAapwkTa_9Gb0Cc';
+
+        let datosGlobales = [];
+        let sortColumn = 'rgu_total';
+        let sortDirection = 'desc';
+        let nivelActual = 'tecnicos'; // 'tecnicos', 'ordenes', 'rgus'
+        let tecnicoSeleccionado = null;
+        let ordenSeleccionada = null;
+        let usuarioAutenticado = false;
+        
+        // Credenciales (en producción, usar backend seguro)
+        const USUARIO_ADMIN = 'rfelipe';
+        const PASSWORD_ADMIN = 'male2050';
+
+        async function query(tabla, params = '') {
+            const response = await fetch(`${SUPABASE_URL}/rest/v1/${tabla}?${params}`, {
+                headers: {
+                    'apikey': SUPABASE_KEY,
+                    'Authorization': `Bearer ${SUPABASE_KEY}`
+                }
+            });
+            return response.json();
+        }
+
+        async function queryAll(tabla, params = '') {
+            let allData = [];
+            let offset = 0;
+            const limit = 1000;
+            let hasMore = true;
+            
+            while (hasMore) {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/${tabla}?${params}&limit=${limit}&offset=${offset}`, {
+                    headers: {
+                        'apikey': SUPABASE_KEY,
+                        'Authorization': `Bearer ${SUPABASE_KEY}`
+                    }
+                });
+                const data = await response.json();
+                
+                if (data.length === 0) {
+                    hasMore = false;
+                } else {
+                    allData = allData.concat(data);
+                    offset += limit;
+                    if (data.length < limit) {
+                        hasMore = false;
+                    }
+                }
+            }
+            return allData;
+        }
+
+        async function cargarDatos() {
+            const mes = document.getElementById('mesFilter').value;
+            const [year, month] = mes.split('-');
+            
+            mostrarLoading();
+
+            // Actualizar periodo mostrado
+            const meses = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+                          'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+            document.getElementById('periodoProduccion').textContent = `${meses[parseInt(month)]} ${year}`;
+
+            try {
+                const monthNum = parseInt(month);
+                
+                // 1. Producción del mes
+                const produccion = await queryAll('produccion_crea', 
+                    `select=tecnico,rut_tecnico,codigo_tecnico,rgu_total,rgu_base,rgu_adicional,fecha_trabajo,orden_trabajo,tipo_orden,hora_inicio,hora_fin,estado&estado=eq.Completado&fecha_trabajo=like.*/${monthNum}/${year}`
+                );
+                
+                console.log('📊 Producción cargada:', produccion.length);
+
+                // 2. Calidad - calcular período según lógica de la app
+                const periodoCalidad = calcularPeriodoCalidad(year, monthNum);
+                console.log('🔍 Período calidad:', periodoCalidad);
+                console.log(`   Del ${periodoCalidad.inicio.dia}/${periodoCalidad.inicio.mes}/${periodoCalidad.inicio.anio} al ${periodoCalidad.fin.dia}/${periodoCalidad.fin.mes}/${periodoCalidad.fin.anio}`);
+
+                // Cargar TODOS los reiterados (los filtraremos después)
+                const calidad = await queryAll('calidad_crea', 
+                    `select=rut_tecnico_original,tecnico_original,orden_original,fecha_original`
+                );
+                console.log('🔴 Total reiterados en BD:', calidad.length);
+                console.log('🔴 Ejemplo reiterado:', calidad.find(c => c.rut_tecnico_original === '14091368-5'));
+
+                const trabajosCalidad = await queryAll('produccion_crea',
+                    `select=rut_tecnico,orden_trabajo,fecha_trabajo&estado=eq.Completado`
+                );
+                
+                const trabajosPeriodoCalidad = filtrarTrabajosPeriodo(trabajosCalidad, periodoCalidad);
+                console.log('✅ Trabajos período calidad:', trabajosPeriodoCalidad.length);
+                console.log('📊 Primeros 5 trabajos filtrados:', trabajosPeriodoCalidad.slice(0, 5).map(t => ({
+                    rut: t.rut_tecnico,
+                    orden: t.orden_trabajo,
+                    fecha: t.fecha_trabajo
+                })));
+
+                // 3. Bonos - cargar desde v_pagos_tecnicos
+                // El período de bono es el mes siguiente al seleccionado
+                const [yearBono, monthBono] = calcularPeriodoBono(year, monthNum);
+                const periodoBono = `${yearBono}-${String(monthBono).padStart(2, '0')}`;
+                console.log('💰 Consultando bonos para período:', periodoBono);
+                
+                let bonos = [];
+                try {
+                    bonos = await queryAll('v_pagos_tecnicos',
+                        `select=rut_tecnico,bono_produccion_bruto,bono_produccion_liquido,bono_calidad_bruto,total_liquido&periodo=eq.${periodoBono}`
+                    );
+                    console.log('💰 Bonos cargados:', bonos.length);
+                } catch (error) {
+                    console.warn('⚠️ No se pudieron cargar bonos:', error.message);
+                    bonos = [];
+                }
+
+                // Calcular días de descanso del mes para el desglose de semana corrida
+                const diasDescanso = calcularDiasDescanso(year, monthNum);
+
+                // 4. Cargar RGU adicionales (compensaciones)
+                const mesFormato = `${year}-${String(monthNum).padStart(2, '0')}`;
+                console.log('💰 Consultando RGU adicionales para mes:', mesFormato);
+                
+                let rguAdicionales = [];
+                try {
+                    // Verificar si la tabla existe antes de consultar
+                    const testQuery = await fetch(`${SUPABASE_URL}/rest/v1/v_rgu_adicionales_resumen?limit=1`, {
+                        headers: {
+                            'apikey': SUPABASE_KEY,
+                            'Authorization': `Bearer ${SUPABASE_KEY}`
+                        }
+                    });
+                    
+                    if (testQuery.ok) {
+                        rguAdicionales = await queryAll('v_rgu_adicionales_resumen',
+                            `select=rut_tecnico,total_rgu_adicional,cantidad_ajustes,motivos&mes=eq.${mesFormato}`
+                        );
+                        console.log('💰 RGU adicionales cargados:', rguAdicionales.length);
+                    } else {
+                        console.warn('⚠️ Tabla rgu_adicionales no existe aún');
+                        rguAdicionales = [];
+                    }
+                } catch (error) {
+                    console.warn('⚠️ No se pudieron cargar RGU adicionales:', error.message);
+                    rguAdicionales = [];
+                }
+
+                // 4. HHEE - cargar todas las horas y filtrar
+                const todasLasHoras = await queryAll('produccion_crea',
+                    `select=rut_tecnico,tecnico,fecha_trabajo,hora_fin&estado=eq.Completado&fecha_trabajo=like.*/${monthNum}/${year}`
+                );
+
+                // Filtrar reiterados del período de calidad (solo contar los del período)
+                console.log('🔍 Intentando filtrar reiterados...');
+                console.log('🔍 Primeros 5 reiterados antes de filtrar:', calidad.slice(0, 5).map(c => ({
+                    rut: c.rut_tecnico_original,
+                    orden: c.orden_original,
+                    fecha_original: c.fecha_original
+                })));
+                
+                const reiteradosPeriodoCalidad = filtrarTrabajosPeriodo(
+                    calidad.map(c => ({ fecha_trabajo: c.fecha_original, rut_tecnico: c.rut_tecnico_original })),
+                    periodoCalidad
+                );
+                console.log('🔴 Reiterados del período calidad:', reiteradosPeriodoCalidad.length);
+
+                // Procesar datos
+                const resumen = procesarDatosTecnicos(produccion, reiteradosPeriodoCalidad, todasLasHoras, trabajosPeriodoCalidad, bonos, diasDescanso, rguAdicionales);
+                datosGlobales = resumen;
+                
+                // Actualizar KPIs y tabla
+                actualizarKPIs(resumen);
+                renderizarTablaTecnicos(resumen);
+
+            } catch (error) {
+                console.error('❌ Error:', error);
+                mostrarError(error.message);
+            }
+        }
+
+        function calcularPeriodoCalidad(year, month) {
+            // Período de calidad: del 21 del mes anterior al 20 del mes actual
+            // Ej: Si estamos en Diciembre, el período es 21/Nov - 20/Dic
+            const mesAnterior = month - 1 || 12;
+            const anioAnterior = month === 1 ? year - 1 : year;
+            
+            return {
+                inicio: { dia: 21, mes: mesAnterior, anio: anioAnterior },
+                fin: { dia: 20, mes: month, anio: year }
+            };
+        }
+
+        function calcularPeriodoBono(year, month) {
+            // El bono del mes seleccionado se paga en el mes siguiente
+            // Ej: Si estamos viendo Diciembre 2025, el bono se paga en Enero 2026
+            let mesBono = parseInt(month) + 1;
+            let anioBono = parseInt(year);
+            
+            if (mesBono > 12) {
+                mesBono = 1;
+                anioBono = anioBono + 1;
+            }
+            
+            return [anioBono, mesBono];
+        }
+
+        function calcularDiasDescanso(year, month) {
+            // Calcular días de descanso (domingos + feriados) del mes
+            const anio = parseInt(year);
+            const mes = parseInt(month);
+            
+            // Contar domingos del mes
+            const primerDia = new Date(anio, mes - 1, 1);
+            const ultimoDia = new Date(anio, mes, 0);
+            let domingos = 0;
+            
+            for (let dia = primerDia; dia <= ultimoDia; dia.setDate(dia.getDate() + 1)) {
+                if (dia.getDay() === 0) { // 0 = Domingo
+                    domingos++;
+                }
+            }
+            
+            // Feriados chilenos según calendario oficial
+            let feriadosLaborales = 0;
+            
+            // DICIEMBRE 2025
+            if (anio === 2025 && mes === 12) {
+                feriadosLaborales = 2; // 8 dic (Lunes), 25 dic (Jueves)
+            }
+            
+            // ENERO 2026
+            if (anio === 2026 && mes === 1) {
+                feriadosLaborales = 1; // 1 enero (Jueves - Año Nuevo)
+            }
+            
+            // FEBRERO 2026
+            if (anio === 2026 && mes === 2) {
+                feriadosLaborales = 0; // Sin feriados laborales
+            }
+            
+            // MARZO 2026
+            if (anio === 2026 && mes === 3) {
+                feriadosLaborales = 0; // Sin feriados laborales
+            }
+            
+            // ABRIL 2026 (Semana Santa)
+            if (anio === 2026 && mes === 4) {
+                feriadosLaborales = 2; // 3 abr (Viernes Santo), 4 abr (Sábado Santo)
+            }
+            
+            // MAYO 2026
+            if (anio === 2026 && mes === 5) {
+                feriadosLaborales = 2; // 1 mayo (Viernes), 21 mayo (Jueves)
+            }
+            
+            const totalDescanso = domingos + feriadosLaborales;
+            
+            console.log(`📅 Días descanso ${mes}/${anio}: ${domingos} domingos + ${feriadosLaborales} feriados = ${totalDescanso}`);
+            
+            return totalDescanso;
+        }
+
+        function desglosarBonoProduccion(bonoProductoBruto, diasTrabajados, diasDescanso) {
+            // El bono bruto de la BD es SOLO la meta (según escala de RGU)
+            // Debemos CALCULAR y SUMAR la semana corrida
+            if (!bonoProductoBruto || bonoProductoBruto === 0 || diasTrabajados === 0) {
+                return {
+                    meta: 0,
+                    semanaCorrida: 0,
+                    brutoTotal: 0
+                };
+            }
+            
+            const meta = bonoProductoBruto; // El bono de BD ya es la meta pura
+            const semanaCorrida = Math.round((meta / diasTrabajados) * diasDescanso);
+            const brutoTotal = meta + semanaCorrida;
+            
+            console.log(`💰 Desglose: Meta=$${meta.toLocaleString('es-CL')} + SC=$${semanaCorrida.toLocaleString('es-CL')} = Total=$${brutoTotal.toLocaleString('es-CL')}`);
+            
+            return {
+                meta: meta,
+                semanaCorrida: semanaCorrida,
+                brutoTotal: brutoTotal
+            };
+        }
+
+        function filtrarTrabajosPeriodo(trabajos, periodo) {
+            let intentos = 0;
+            let exitos = 0;
+            let ejemploFiltrado = null;
+            
+            const resultado = trabajos.filter(t => {
+                intentos++;
+                if (!t.fecha_trabajo) {
+                    return false;
+                }
+                
+                let dia, mes, anio;
+                
+                // Detectar formato de fecha
+                if (t.fecha_trabajo.includes('/')) {
+                    // Formato DD/MM/YYYY
+                    const partes = t.fecha_trabajo.split('/');
+                    if (partes.length !== 3) return false;
+                    dia = parseInt(partes[0]);
+                    mes = parseInt(partes[1]);
+                    anio = parseInt(partes[2]);
+                } else if (t.fecha_trabajo.includes('-')) {
+                    // Formato YYYY-MM-DD (ISO)
+                    const partes = t.fecha_trabajo.split('-');
+                    if (partes.length !== 3) return false;
+                    anio = parseInt(partes[0]);
+                    mes = parseInt(partes[1]);
+                    dia = parseInt(partes[2]);
+                } else {
+                    return false;
+                }
+                
+                const { inicio, fin } = periodo;
+                
+                // Convertir a fechas comparables (YYYYMMDD format)
+                const fechaTrabajo = anio * 10000 + mes * 100 + dia;
+                const fechaInicio = inicio.anio * 10000 + inicio.mes * 100 + inicio.dia;
+                const fechaFin = fin.anio * 10000 + fin.mes * 100 + fin.dia;
+                
+                // Verificar si está en el rango (inclusive)
+                const enRango = fechaTrabajo >= fechaInicio && fechaTrabajo <= fechaFin;
+                
+                if (enRango) {
+                    if (!ejemploFiltrado) {
+                        ejemploFiltrado = { fecha: t.fecha_trabajo, fechaNum: fechaTrabajo, inicio: fechaInicio, fin: fechaFin };
+                    }
+                    exitos++;
+                }
+                
+                return enRango;
+            });
+            
+            console.log(`🔍 filtrarTrabajosPeriodo: ${intentos} intentos, ${exitos} éxitos`);
+            if (ejemploFiltrado) {
+                console.log('✅ Ejemplo filtrado:', ejemploFiltrado);
+            }
+            
+            return resultado;
+        }
+
+        function procesarDatosTecnicos(produccion, calidad, horasDia, trabajosPeriodoCalidad, bonos, diasDescanso, rguAdicionales) {
+            const tecnicos = {};
+            
+            // Crear un mapa de bonos por RUT para búsqueda rápida
+            const bonosPorRut = {};
+            if (bonos && bonos.length > 0) {
+                bonos.forEach(b => {
+                    bonosPorRut[b.rut_tecnico] = {
+                        bono_produccion_bruto: b.bono_produccion_bruto || 0,
+                        bono_produccion_liquido: b.bono_produccion_liquido || 0,
+                        bono_calidad: b.bono_calidad_bruto || 0,
+                        total_bono: b.total_liquido || 0
+                    };
+                });
+                console.log('💰 Bonos procesados:', Object.keys(bonosPorRut).length);
+            }
+
+            // Crear un mapa de RGU adicionales por RUT
+            const rguAdicionalesPorRut = {};
+            if (rguAdicionales && rguAdicionales.length > 0) {
+                rguAdicionales.forEach(r => {
+                    rguAdicionalesPorRut[r.rut_tecnico] = {
+                        total: r.total_rgu_adicional || 0,
+                        cantidad_ajustes: r.cantidad_ajustes || 0,
+                        motivos: r.motivos || ''
+                    };
+                });
+                console.log('💰 RGU adicionales procesados:', Object.keys(rguAdicionalesPorRut).length);
+            }
+
+            // Agrupar producción
+            produccion.forEach(p => {
+                const rut = p.rut_tecnico || p.codigo_tecnico;
+                if (!rut) return;
+                
+                if (!tecnicos[rut]) {
+                    tecnicos[rut] = {
+                        rut: rut,
+                        nombre: p.tecnico,
+                        rgu_total: 0,
+                        ot_count: 0,
+                        trabajos_calidad: 0,
+                        reiterados: 0,
+                        hhee_minutos: 0,
+                        dias_trabajados: new Set(),
+                        ordenes: []
+                    };
+                }
+                tecnicos[rut].rgu_total += parseFloat(p.rgu_total) || 0;
+                tecnicos[rut].ot_count += 1;
+                
+                // Guardar fecha de trabajo
+                if (p.fecha_trabajo) {
+                    tecnicos[rut].dias_trabajados.add(p.fecha_trabajo);
+                }
+                
+                // Guardar orden completa
+                tecnicos[rut].ordenes.push(p);
+            });
+
+            // Contar trabajos de calidad por técnico
+            const trabajosCalidadPorTecnico = {};
+            trabajosPeriodoCalidad.forEach(t => {
+                const rut = t.rut_tecnico;
+                if (!rut) return;
+                if (!trabajosCalidadPorTecnico[rut]) trabajosCalidadPorTecnico[rut] = 0;
+                trabajosCalidadPorTecnico[rut]++;
+            });
+
+            Object.keys(tecnicos).forEach(rut => {
+                tecnicos[rut].trabajos_calidad = trabajosCalidadPorTecnico[rut] || 0;
+                
+                // Log para debugging
+                if (tecnicos[rut].trabajos_calidad > 0) {
+                    console.log(`📋 ${tecnicos[rut].nombre} (${rut}): ${tecnicos[rut].trabajos_calidad} trabajos en período calidad`);
+                }
+            });
+
+            // Agregar reiterados (ya filtrados por período)
+            console.log('🔴 Total reiterados del período:', calidad.length);
+            calidad.forEach(c => {
+                const rut = c.rut_tecnico;
+                if (tecnicos[rut]) {
+                    tecnicos[rut].reiterados += 1;
+                }
+            });
+            
+            // Log reiterados por técnico
+            Object.values(tecnicos).forEach(t => {
+                if (t.reiterados > 0) {
+                    console.log(`❌ ${t.nombre}: ${t.reiterados} reiterados de ${t.trabajos_calidad} trabajos = ${t.trabajos_calidad > 0 ? ((t.reiterados / t.trabajos_calidad) * 100).toFixed(1) : 0}%`);
+                }
+            });
+
+            // Calcular HHEE
+            horasDia.forEach(h => {
+                const rut = h.rut_tecnico;
+                if (!tecnicos[rut]) return;
+                
+                const horaFin = h.hora_fin;
+                if (!horaFin) return;
+
+                const partesFecha = h.fecha_trabajo.split('/');
+                if (partesFecha.length !== 3) return;
+                
+                const dia = parseInt(partesFecha[0]);
+                const mes = parseInt(partesFecha[1]) - 1;
+                const anio = parseInt(partesFecha[2]);
+                const fecha = new Date(anio, mes, dia);
+                const esSabado = fecha.getDay() === 6;
+                
+                const horaLimite = esSabado ? '15:00' : '18:30';
+                const minutosExtra = calcularMinutosExtra(horaFin, horaLimite);
+                
+                if (minutosExtra > 0) {
+                    tecnicos[rut].hhee_minutos += minutosExtra;
+                }
+            });
+
+            // Convertir a array y calcular métricas
+            return Object.values(tecnicos).map(t => {
+                const trabajosBase = t.trabajos_calidad;
+                // CAMBIO: Mostrar % de REITERACIÓN (como en la app)
+                // Ejemplo: 7 reiterados / 99 trabajos = 7.1%
+                const porcentajeReiteracion = trabajosBase > 0 
+                    ? (t.reiterados / trabajosBase * 100).toFixed(1)
+                    : 0.0;
+                
+                const diasTrabajados = t.dias_trabajados.size;
+                
+                // Obtener RGU adicionales del técnico
+                const rguAdicional = rguAdicionalesPorRut[t.rut] || { total: 0, cantidad_ajustes: 0, motivos: '' };
+                
+                // Calcular RGU total real (base + compensaciones)
+                const rguBase = t.rgu_total;
+                const rguCompensado = rguAdicional.total;
+                const rguTotalReal = rguBase + rguCompensado;
+                
+                const promedioDiario = diasTrabajados > 0 ? (rguTotalReal / diasTrabajados).toFixed(1) : 0;
+                
+                // Obtener bonos del técnico
+                const bonosTecnico = bonosPorRut[t.rut] || { 
+                    bono_produccion_bruto: 0, 
+                    bono_produccion_liquido: 0, 
+                    bono_calidad: 0, 
+                    total_bono: 0 
+                };
+                
+                // Desglosar bono de producción en Meta + Semana Corrida
+                const desglose = desglosarBonoProduccion(
+                    bonosTecnico.bono_produccion_bruto,
+                    diasTrabajados,
+                    diasDescanso
+                );
+                
+                // Guardar array de fechas trabajadas
+                const diasTrabajadosArray = Array.from(t.dias_trabajados).sort();
+                
+                return {
+                    ...t,
+                    rgu_base: rguBase,
+                    rgu_compensado: rguCompensado,
+                    rgu_total: rguTotalReal,  // Actualizar con el total real
+                    rgu_compensado_ajustes: rguAdicional.cantidad_ajustes,
+                    rgu_compensado_motivos: rguAdicional.motivos,
+                    dias_trabajados: diasTrabajados,
+                    dias_trabajados_fechas: diasTrabajadosArray,
+                    promedio_diario: parseFloat(promedioDiario),
+                    porcentaje_reiteracion: parseFloat(porcentajeReiteracion),
+                    hhee_horas: (t.hhee_minutos / 60).toFixed(1),
+                    meta_produccion: desglose.meta,
+                    semana_corrida: desglose.semanaCorrida,
+                    bono_produccion_bruto: desglose.brutoTotal, // Meta + Semana Corrida
+                    bono_produccion_liquido: bonosTecnico.bono_produccion_liquido,
+                    bono_calidad: bonosTecnico.bono_calidad,
+                    total_bono: desglose.brutoTotal + bonosTecnico.bono_calidad  // ✅ Corregido: Bono Prod Bruto + Bono Cal
+                };
+            });
+        }
+
+        function calcularMinutosExtra(horaFin, horaLimite) {
+            try {
+                const [hFin, mFin] = horaFin.split(':').map(Number);
+                const [hLim, mLim] = horaLimite.split(':').map(Number);
+                
+                const minutosFin = hFin * 60 + mFin;
+                const minutosLimite = hLim * 60 + mLim;
+                
+                return Math.max(0, minutosFin - minutosLimite);
+            } catch {
+                return 0;
+            }
+        }
+
+        function actualizarKPIs(datos) {
+            const totalTecnicos = datos.length;
+            const totalRGU = datos.reduce((sum, t) => sum + t.rgu_total, 0);  // Ya incluye compensaciones
+            const totalRGUBase = datos.reduce((sum, t) => sum + t.rgu_base, 0);
+            const totalCompensado = datos.reduce((sum, t) => sum + t.rgu_compensado, 0);
+            const promedioRGU = totalTecnicos > 0 ? (totalRGU / totalTecnicos).toFixed(1) : 0;
+            
+            console.log(`📊 KPIs - Base: ${totalRGUBase.toFixed(1)}, Compensado: ${totalCompensado.toFixed(1)}, Total: ${totalRGU.toFixed(1)}`);
+            
+            // Calidad: calcular % de REITERACIÓN promedio (como en la app)
+            const totalTrabajosCalidad = datos.reduce((sum, t) => sum + t.trabajos_calidad, 0);
+            const totalReiterados = datos.reduce((sum, t) => sum + t.reiterados, 0);
+            const porcentajeReiteracion = totalTrabajosCalidad > 0 
+                ? (totalReiterados / totalTrabajosCalidad * 100).toFixed(1) 
+                : 0.0;
+            
+            const totalHHEE = datos.reduce((sum, t) => sum + parseFloat(t.hhee_horas), 0).toFixed(1);
+            const totalBonos = datos.reduce((sum, t) => sum + (t.total_bono || 0), 0);
+
+            document.getElementById('kpiTecnicos').textContent = totalTecnicos;
+            document.getElementById('kpiRGU').textContent = totalRGU.toLocaleString('es-CL', {maximumFractionDigits: 1});
+            document.getElementById('kpiPromRGU').textContent = promedioRGU;
+            
+            const calidadEl = document.getElementById('kpiCalidad');
+            calidadEl.textContent = porcentajeReiteracion + '%';
+            // Invertir colores: bajo es bueno (verde), alto es malo (rojo)
+            calidadEl.className = 'kpi-value ' + (porcentajeReiteracion <= 2 ? 'green' : porcentajeReiteracion <= 5 ? 'yellow' : 'red');
+            
+            document.getElementById('kpiHHEE').textContent = totalHHEE + 'h';
+            document.getElementById('kpiBonos').textContent = '$' + totalBonos.toLocaleString('es-CL');
+        }
+
+        function renderizarTablaTecnicos(datos) {
+            nivelActual = 'tecnicos';
+            document.getElementById('btnVolver').style.display = 'none';
+            document.getElementById('breadcrumb').innerHTML = '<span class="active">📋 Resumen Técnicos</span>';
+            
+            // Ordenar
+            datos.sort((a, b) => {
+                let valA = a[sortColumn];
+                let valB = b[sortColumn];
+                
+                if (typeof valA === 'string') valA = valA.toLowerCase();
+                if (typeof valB === 'string') valB = valB.toLowerCase();
+                
+                if (sortDirection === 'asc') {
+                    return valA > valB ? 1 : -1;
+                } else {
+                    return valA < valB ? 1 : -1;
+                }
+            });
+
+            const maxHHEE = Math.max(...datos.map(t => parseFloat(t.hhee_horas) || 0), 1);
+
+            let html = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th onclick="ordenar('nombre')" class="${sortColumn === 'nombre' ? 'sorted-' + sortDirection : ''}" style="min-width:140px">Técnico</th>
+                            <th onclick="ordenar('rgu_total')" class="${sortColumn === 'rgu_total' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:70px">RGU</th>
+                            <th onclick="ordenar('rgu_compensado')" class="${sortColumn === 'rgu_compensado' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:70px" title="RGU Compensados - Click para gestionar">🎁 Comp</th>
+                            <th onclick="ordenar('promedio_diario')" class="${sortColumn === 'promedio_diario' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:60px">Prom</th>
+                            <th onclick="ordenar('ot_count')" class="${sortColumn === 'ot_count' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:50px">OT</th>
+                            <th onclick="ordenar('dias_trabajados')" class="${sortColumn === 'dias_trabajados' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:50px">Días</th>
+                            <th onclick="ordenar('reiterados')" class="${sortColumn === 'reiterados' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:50px">Reit</th>
+                            <th onclick="ordenar('porcentaje_reiteracion')" class="${sortColumn === 'porcentaje_reiteracion' ? 'sorted-' + sortDirection : ''}" style="text-align:center; width:70px">% Reit</th>
+                            <th onclick="ordenar('hhee_horas')" class="${sortColumn === 'hhee_horas' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:80px">HHEE</th>
+                            <th onclick="ordenar('meta_produccion')" class="${sortColumn === 'meta_produccion' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:90px" title="Click para ver detalle">🎯 Meta</th>
+                            <th onclick="ordenar('semana_corrida')" class="${sortColumn === 'semana_corrida' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:90px" title="Click para ver días">📅 S.C.</th>
+                            <th onclick="ordenar('bono_produccion_bruto')" class="${sortColumn === 'bono_produccion_bruto' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:90px">💰 Bruto</th>
+                            <th onclick="ordenar('bono_calidad')" class="${sortColumn === 'bono_calidad' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:90px" title="Click para ver reiterados">✅ Calidad</th>
+                            <th onclick="ordenar('total_bono')" class="${sortColumn === 'total_bono' ? 'sorted-' + sortDirection : ''}" style="text-align:right; width:100px">💵 Total</th>
+                            <th style="text-align:center; width:60px">PDF</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            datos.forEach(t => {
+                // Invertir: bajo es bueno (verde), alto es malo (rojo)
+                const reiteracionClass = t.porcentaje_reiteracion <= 2 ? 'badge-good' : 
+                                        t.porcentaje_reiteracion <= 5 ? 'badge-warning' : 'badge-danger';
+                
+                const hheeWidth = (parseFloat(t.hhee_horas) / maxHHEE * 100).toFixed(0);
+
+                html += `
+                    <tr onclick="verOrdenesTecnico('${t.rut}')">
+                        <td>
+                            <div class="tecnico-name">${t.nombre || 'Sin nombre'}</div>
+                            <div class="tecnico-rut">${t.rut || ''}</div>
+                        </td>
+                        <td class="number number-highlight">${t.rgu_total.toLocaleString('es-CL', {maximumFractionDigits: 1})}</td>
+                        <td class="number td-clickable" onclick="event.stopPropagation(); abrirGestionRGU(${JSON.stringify(t).replace(/"/g, '&quot;')}, event)" title="Gestionar RGU compensados" style="color: ${t.rgu_compensado !== 0 ? (t.rgu_compensado > 0 ? 'var(--accent-green)' : 'var(--accent-red)') : 'var(--text-secondary)'}; font-weight: ${t.rgu_compensado !== 0 ? '700' : '400'};">${t.rgu_compensado !== 0 ? (t.rgu_compensado > 0 ? '+' : '') + t.rgu_compensado.toFixed(1) : '0.0'}</td>
+                        <td class="number">${t.promedio_diario}</td>
+                        <td class="number clickable" onclick="event.stopPropagation(); verOrdenesTecnico('${t.rut}')" title="Ver órdenes">📋 ${t.ot_count}</td>
+                        <td class="number td-clickable" onclick="event.stopPropagation(); verDetalleDiasTrabajados(${JSON.stringify(t).replace(/"/g, '&quot;')}, event)" title="Ver días trabajados" style="cursor: pointer;">📅 ${t.dias_trabajados}</td>
+                        <td class="number clickable" onclick="event.stopPropagation(); verReiteradosTecnico('${t.rut}')" title="Ver reiterados">⚠️ ${t.reiterados}</td>
+                        <td style="text-align:center">
+                            <span class="badge ${reiteracionClass}">${t.porcentaje_reiteracion}%</span>
+                        </td>
+                        <td>
+                            <div class="hhee-cell">
+                                <div class="hhee-bar">
+                                    <div class="hhee-fill" style="width: ${hheeWidth}%"></div>
+                                </div>
+                                <span class="number">${t.hhee_horas}h</span>
+                            </div>
+                        </td>
+                        <td class="number td-clickable" style="color: var(--accent-blue);" onclick="event.stopPropagation(); verDetalleProduccion(${JSON.stringify(t).replace(/"/g, '&quot;')}, event)" title="Ver detalle de producción">$${(t.meta_produccion || 0).toLocaleString('es-CL')}</td>
+                        <td class="number td-clickable" style="color: var(--accent-purple);" onclick="event.stopPropagation(); verDetalleSemanaCorrida(${JSON.stringify(t).replace(/"/g, '&quot;')}, event)" title="Ver días de descanso">$${(t.semana_corrida || 0).toLocaleString('es-CL')}</td>
+                        <td class="number" style="font-weight: 600;">$${(t.bono_produccion_bruto || 0).toLocaleString('es-CL')}</td>
+                        <td class="number td-clickable" onclick="event.stopPropagation(); verDetalleCalidad(${JSON.stringify(t).replace(/"/g, '&quot;')}, event)" title="Ver reiterados">$${(t.bono_calidad || 0).toLocaleString('es-CL')}</td>
+                        <td class="number" style="font-weight: 700; color: ${t.total_bono > 0 ? 'var(--accent-green)' : 'var(--text-secondary)'};">$${(t.total_bono || 0).toLocaleString('es-CL')}</td>
+                        <td style="text-align:center;">
+                            <button class="btn-icon" onclick="event.stopPropagation(); generarAnexoPDF(${JSON.stringify(t).replace(/"/g, '&quot;')}, true)" title="Generar Anexo PDF">📄</button>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            document.getElementById('tableContent').innerHTML = html;
+        }
+
+        function verOrdenesTecnico(rut) {
+            const tecnico = datosGlobales.find(t => t.rut === rut);
+            if (!tecnico) return;
+            
+            tecnicoSeleccionado = tecnico;
+            nivelActual = 'ordenes';
+            
+            document.getElementById('btnVolver').style.display = 'block';
+            document.getElementById('breadcrumb').innerHTML = `
+                <span onclick="volverNivel()">📋 Resumen Técnicos</span>
+                <span>→</span>
+                <span class="active">📋 ${tecnico.nombre} - Órdenes</span>
+            `;
+            
+            renderizarTablaOrdenes(tecnico.ordenes);
+        }
+
+        async function verReiteradosTecnico(rut) {
+            const tecnico = datosGlobales.find(t => t.rut === rut);
+            if (!tecnico || tecnico.reiterados === 0) {
+                alert('Este técnico no tiene reiterados en el período.');
+                return;
+            }
+            
+            tecnicoSeleccionado = tecnico;
+            nivelActual = 'reiterados';
+            
+            document.getElementById('btnVolver').style.display = 'block';
+            document.getElementById('breadcrumb').innerHTML = `
+                <span onclick="volverNivel()">📋 Resumen Técnicos</span>
+                <span>→</span>
+                <span class="active">⚠️ ${tecnico.nombre} - Reiterados</span>
+            `;
+            
+            // Mostrar loading
+            document.getElementById('tableContent').innerHTML = '<div style="text-align:center; padding:40px; color:#8888aa;">Cargando reiterados...</div>';
+            
+            try {
+                console.log('🔍 Cargando reiterados para:', rut);
+                
+                // Obtener el período de calidad del mes seleccionado
+                const [year, month] = document.getElementById('mesFilter').value.split('-').map(Number);
+                const periodo = calcularPeriodoCalidad(year, month);
+                
+                console.log('📅 Período calidad:', periodo);
+                
+                // Cargar TODOS los reiterados del técnico (sin filtro de período en la query)
+                console.log('📡 Consultando Supabase...');
+                const reiterados = await queryAll('calidad_crea',
+                    `select=orden_original,fecha_original,tecnico_original,rut_tecnico_original,orden_reiterada,fecha_reiterada,tipo_falla&rut_tecnico_original=eq.${rut}`
+                );
+                
+                console.log('📊 Reiterados encontrados:', reiterados.length);
+                
+                if (reiterados.length === 0) {
+                    renderizarTablaReiterados([]);
+                    return;
+                }
+                
+                // Filtrar por período
+                const reiteradosPeriodo = reiterados.filter(r => {
+                    if (!r.fecha_original) return false;
+                    const partes = r.fecha_original.split('-');
+                    if (partes.length !== 3) return false;
+                    
+                    const anio = parseInt(partes[0]);
+                    const mes = parseInt(partes[1]);
+                    const dia = parseInt(partes[2]);
+                    
+                    const fechaTrabajo = anio * 10000 + mes * 100 + dia;
+                    const fechaInicio = periodo.inicio.anio * 10000 + periodo.inicio.mes * 100 + periodo.inicio.dia;
+                    const fechaFin = periodo.fin.anio * 10000 + periodo.fin.mes * 100 + periodo.fin.dia;
+                    
+                    return fechaTrabajo >= fechaInicio && fechaTrabajo <= fechaFin;
+                });
+                
+                console.log('✅ Reiterados en período:', reiteradosPeriodo.length);
+                renderizarTablaReiterados(reiteradosPeriodo);
+            } catch (error) {
+                console.error('❌ Error cargando reiterados:', error);
+                document.getElementById('tableContent').innerHTML = `
+                    <div style="text-align:center; padding:40px; color:#ef4444;">
+                        <div style="font-size:24px; margin-bottom:10px;">❌</div>
+                        <div>Error al cargar reiterados</div>
+                        <div style="font-size:12px; margin-top:10px; color:#8888aa;">${error.message}</div>
+                    </div>
+                `;
+            }
+        }
+
+        function renderizarTablaOrdenes(ordenes) {
+            let html = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Orden</th>
+                            <th>Fecha</th>
+                            <th style="text-align:right">RGU</th>
+                            <th>Hora Fin</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            ordenes.forEach(o => {
+                html += `
+                    <tr onclick='verDetalleOrden(${JSON.stringify(o).replace(/'/g, "&#39;")})'>
+                        <td class="orden-cell">${o.orden_trabajo}</td>
+                        <td>${o.fecha_trabajo}</td>
+                        <td class="number number-highlight">${parseFloat(o.rgu_total).toFixed(2)}</td>
+                        <td>${o.hora_fin || '--:--'}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            document.getElementById('tableContent').innerHTML = html;
+        }
+
+        function renderizarTablaReiterados(reiterados) {
+            if (reiterados.length === 0) {
+                document.getElementById('tableContent').innerHTML = '<div style="text-align:center; padding:40px; color:#8888aa;">No hay reiterados en este período</div>';
+                return;
+            }
+
+            let html = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Orden Original</th>
+                            <th>Fecha Original</th>
+                            <th>Orden Reiterada</th>
+                            <th>Fecha Reiteración</th>
+                            <th>Tipo Falla</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            reiterados.forEach(r => {
+                const fechaOrig = r.fecha_original ? new Date(r.fecha_original).toLocaleDateString('es-CL') : 'N/A';
+                const fechaReit = r.fecha_reiterada ? new Date(r.fecha_reiterada).toLocaleDateString('es-CL') : 'N/A';
+                
+                html += `
+                    <tr>
+                        <td class="orden-cell">${r.orden_original || 'N/A'}</td>
+                        <td>${fechaOrig}</td>
+                        <td class="orden-cell">${r.orden_reiterada || 'N/A'}</td>
+                        <td>${fechaReit}</td>
+                        <td>${r.tipo_falla || 'N/A'}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            document.getElementById('tableContent').innerHTML = html;
+        }
+
+        function verDetalleOrden(orden) {
+            ordenSeleccionada = orden;
+            
+            document.getElementById('modalTitle').textContent = `Orden ${orden.orden_trabajo}`;
+            
+            let modalHtml = `
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:25px; padding:20px; background:rgba(32,58,67,0.3); border-radius:12px;">
+                    <div><strong>📅 Fecha:</strong> ${orden.fecha_trabajo}</div>
+                    <div><strong>🧑 Técnico:</strong> ${orden.tecnico}</div>
+                    <div><strong>🏷️ Tipo:</strong> ${orden.tipo_orden || orden.tipo_actividad || 'N/A'}</div>
+                    <div><strong>📊 Estado:</strong> ${orden.estado || 'N/A'}</div>
+                    <div><strong>🕐 Inicio:</strong> ${orden.hora_inicio || '--:--'}</div>
+                    <div><strong>🕑 Fin:</strong> ${orden.hora_fin || '--:--'}</div>
+                    <div><strong>⏱️ Duración:</strong> ${orden.duracion_min ? orden.duracion_min + ' min' : 'N/A'}</div>
+                    <div><strong>🚗 Viaje:</strong> ${orden.tiempo_viaje_min ? orden.tiempo_viaje_min + ' min' : 'N/A'}</div>
+                </div>
+
+                <div style="margin-bottom:20px;">
+                    <h3 style="color:#8888aa; font-size:13px; text-transform:uppercase; letter-spacing:1px; margin-bottom:15px;">💰 Desglose RGU</h3>
+                    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:15px;">
+                        <div class="rgu-item">
+                            <div class="rgu-label">RGU Base</div>
+                            <div class="rgu-value" style="color:#3b82f6;">${parseFloat(orden.rgu_base || 0).toFixed(2)}</div>
+                        </div>
+                        <div class="rgu-item">
+                            <div class="rgu-label">RGU Adicional</div>
+                            <div class="rgu-value" style="color:#f59e0b;">${parseFloat(orden.rgu_adicional || 0).toFixed(2)}</div>
+                        </div>
+                        <div class="rgu-item">
+                            <div class="rgu-label">RGU Total</div>
+                            <div class="rgu-value" style="color:#10b981; font-size:28px;">${parseFloat(orden.rgu_total).toFixed(2)}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-bottom:20px;">
+                    <h3 style="color:#8888aa; font-size:13px; text-transform:uppercase; letter-spacing:1px; margin-bottom:15px;">📦 Equipos Instalados</h3>
+                    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:15px;">
+                        <div style="padding:15px; background:rgba(59,130,246,0.1); border-radius:8px; text-align:center;">
+                            <div style="font-size:24px; margin-bottom:5px;">📺</div>
+                            <div style="font-size:12px; color:#8888aa;">D-Box</div>
+                            <div style="font-size:20px; font-weight:600; color:#3b82f6;">${orden.cant_dbox || 0}</div>
+                        </div>
+                        <div style="padding:15px; background:rgba(245,158,11,0.1); border-radius:8px; text-align:center;">
+                            <div style="font-size:24px; margin-bottom:5px;">📡</div>
+                            <div style="font-size:12px; color:#8888aa;">Extensores</div>
+                            <div style="font-size:20px; font-weight:600; color:#f59e0b;">${orden.cant_extensores || 0}</div>
+                        </div>
+                        <div style="padding:15px; background:rgba(16,185,129,0.1); border-radius:8px; text-align:center;">
+                            <div style="font-size:24px; margin-bottom:5px;">🌐</div>
+                            <div style="font-size:12px; color:#8888aa;">ONT</div>
+                            <div style="font-size:20px; font-weight:600; color:#10b981;">${orden.tiene_ont ? 'Sí' : 'No'}</div>
+                        </div>
+                        <div style="padding:15px; background:rgba(139,92,246,0.1); border-radius:8px; text-align:center;">
+                            <div style="font-size:24px; margin-bottom:5px;">📞</div>
+                            <div style="font-size:12px; color:#8888aa;">Telefonía</div>
+                            <div style="font-size:20px; font-weight:600; color:#8b5cf6;">${orden.tiene_telefonia ? 'Sí' : 'No'}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Agregar información adicional si existe
+            if (orden.access_id || orden.notas_cierre || orden.area_derivacion) {
+                modalHtml += `
+                    <div style="margin-top:20px; padding:15px; background:rgba(32,58,67,0.3); border-radius:12px;">
+                        <h3 style="color:#8888aa; font-size:13px; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">ℹ️ Información Adicional</h3>
+                        ${orden.access_id ? `<div style="margin-bottom:8px;"><strong>Access ID:</strong> ${orden.access_id}</div>` : ''}
+                        ${orden.area_derivacion ? `<div style="margin-bottom:8px;"><strong>Área Derivación:</strong> ${orden.area_derivacion}</div>` : ''}
+                        ${orden.notas_cierre ? `<div style="margin-bottom:8px;"><strong>Notas:</strong> ${orden.notas_cierre}</div>` : ''}
+                    </div>
+                `;
+            }
+            
+            document.getElementById('modalBody').innerHTML = modalHtml;
+            document.getElementById('modalRGU').classList.add('active');
+        }
+
+        function cerrarModal() {
+            document.getElementById('modalRGU').classList.remove('active');
+        }
+
+        function verDetalleSemanaCorrida(tecnico, event) {
+            event.stopPropagation();
+            
+            const mes = document.getElementById('mesFilter').value;
+            const [year, month] = mes.split('-');
+            const diasDescanso = calcularDiasDescanso(year, parseInt(month));
+            
+            // Generar lista de días de descanso
+            const anio = parseInt(year);
+            const mesNum = parseInt(month);
+            const primerDia = new Date(anio, mesNum - 1, 1);
+            const ultimoDia = new Date(anio, mesNum, 0);
+            
+            let diasHTML = '<ul class="detalle-list">';
+            
+            // Agregar domingos
+            for (let dia = primerDia; dia <= ultimoDia; dia.setDate(dia.getDate() + 1)) {
+                if (dia.getDay() === 0) {
+                    const diaNum = dia.getDate();
+                    diasHTML += `
+                        <li class="detalle-item">
+                            <div>
+                                <div class="detalle-fecha">🗓️ Domingo ${diaNum}</div>
+                                <div class="detalle-tipo">Día de descanso</div>
+                            </div>
+                        </li>
+                    `;
+                }
+            }
+            
+            // Agregar feriados
+            const feriados = obtenerFeriadosDelMes(anio, mesNum);
+            feriados.forEach(f => {
+                diasHTML += `
+                    <li class="detalle-item">
+                        <div>
+                            <div class="detalle-fecha">🎉 ${f.nombre}</div>
+                            <div class="detalle-tipo">Feriado nacional</div>
+                        </div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">${f.dia} ${obtenerNombreMes(mesNum)}</div>
+                    </li>
+                `;
+            });
+            
+            diasHTML += '</ul>';
+            
+            // Calcular desglose
+            const valorDiario = tecnico.meta_produccion / tecnico.dias_trabajados;
+            
+            document.getElementById('modalTitle').textContent = `📅 Semana Corrida - ${tecnico.nombre}`;
+            document.getElementById('modalBody').innerHTML = `
+                <div style="background: rgba(32,58,67,0.3); border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                    <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">💰 Cálculo de Semana Corrida</h3>
+                    <div style="font-family: 'JetBrains Mono', monospace; font-size: 14px; line-height: 2;">
+                        <div>Meta Producción (según RGU): <strong style="color: var(--accent-blue);">$${tecnico.meta_produccion.toLocaleString('es-CL')}</strong></div>
+                        <div>Días trabajados: <strong>${tecnico.dias_trabajados}</strong></div>
+                        <div style="border-top: 1px solid var(--border); margin: 10px 0; padding-top: 10px;">
+                            Valor diario: <strong>$${Math.round(valorDiario).toLocaleString('es-CL')}</strong>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 3px;">
+                                ($${tecnico.meta_produccion.toLocaleString('es-CL')} / ${tecnico.dias_trabajados} días)
+                            </div>
+                        </div>
+                        <div>Días de descanso: <strong>${diasDescanso}</strong></div>
+                        <div style="border-top: 1px solid var(--border); margin: 10px 0; padding-top: 10px; font-size: 16px; color: var(--accent-purple);">
+                            Semana Corrida: <strong>$${tecnico.semana_corrida.toLocaleString('es-CL')}</strong>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 3px;">
+                                ($${Math.round(valorDiario).toLocaleString('es-CL')} × ${diasDescanso} días)
+                            </div>
+                        </div>
+                        <div style="border-top: 2px solid var(--border); margin: 15px 0; padding-top: 15px; font-size: 18px; color: var(--accent-green); font-weight: 700;">
+                            Total Bruto Producción: <strong>$${tecnico.bono_produccion_bruto.toLocaleString('es-CL')}</strong>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 3px; font-weight: 400;">
+                                (Meta + Semana Corrida)
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">📆 Días de Descanso (${diasDescanso} días)</h3>
+                ${diasHTML}
+            `;
+            document.getElementById('modalRGU').classList.add('active');
+        }
+
+        function verDetalleDiasTrabajados(tecnico, event) {
+            event.stopPropagation();
+            
+            const mes = document.getElementById('mesFilter').value;
+            const [year, month] = mes.split('-');
+            const anio = parseInt(year);
+            const mesNum = parseInt(month);
+            
+            // Obtener todos los días del mes
+            const diasEnMes = new Date(anio, mesNum, 0).getDate();
+            const fechasTrabajadas = tecnico.dias_trabajados_fechas || [];
+            
+            // Debug: ver qué fechas tiene
+            console.log('📅 Días trabajados del técnico:', fechasTrabajadas.slice(0, 5));
+            console.log('📅 Total días trabajados:', tecnico.dias_trabajados);
+            
+            // Crear arrays de días presentes y ausentes
+            const diasPresentes = [];
+            const diasAusentes = [];
+            
+            for (let dia = 1; dia <= diasEnMes; dia++) {
+                const fecha = new Date(anio, mesNum - 1, dia);
+                const diaSemana = fecha.getDay(); // 0 = Domingo, 6 = Sábado
+                const nombreDia = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][diaSemana];
+                
+                // Buscar si trabajó este día - probar múltiples formatos
+                const diaStr = String(dia).padStart(2, '0');
+                const mesStr = String(mesNum).padStart(2, '0');
+                const anioCorto = String(anio).slice(-2);
+                
+                // Formatos posibles: DD/MM/YYYY, DD/MM/YY
+                const formato1 = `${diaStr}/${mesStr}/${anio}`;
+                const formato2 = `${diaStr}/${mesStr}/${anioCorto}`;
+                
+                // Buscar en el array de fechas
+                const trabajoEsteDia = fechasTrabajadas.some(f => 
+                    f === formato1 || f === formato2 || 
+                    f.startsWith(`${diaStr}/${mesStr}/`)
+                );
+                
+                if (trabajoEsteDia) {
+                    diasPresentes.push({ dia, nombreDia, fecha: formato1 });
+                } else {
+                    // Verificar si es domingo o feriado
+                    const esDomingo = diaSemana === 0;
+                    const feriados = obtenerFeriadosDelMes(anio, mesNum);
+                    const esFeriado = feriados.some(f => f.dia === dia);
+                    
+                    diasAusentes.push({ 
+                        dia, 
+                        nombreDia, 
+                        fecha: formato1, 
+                        motivo: esDomingo ? 'Domingo' : esFeriado ? 'Feriado' : 'Ausente' 
+                    });
+                }
+            }
+            
+            // Construir HTML
+            let htmlPresentes = '<ul class="detalle-list" style="max-height: 300px; overflow-y: auto;">';
+            diasPresentes.forEach(d => {
+                htmlPresentes += `
+                    <li class="detalle-item">
+                        <div>
+                            <div class="detalle-fecha">✅ ${d.nombreDia} ${d.dia}</div>
+                            <div class="detalle-tipo">${d.fecha}</div>
+                        </div>
+                    </li>
+                `;
+            });
+            htmlPresentes += '</ul>';
+            
+            let htmlAusentes = '<ul class="detalle-list" style="max-height: 300px; overflow-y: auto;">';
+            if (diasAusentes.length > 0) {
+                diasAusentes.forEach(d => {
+                    const icono = d.motivo === 'Domingo' ? '🗓️' : d.motivo === 'Feriado' ? '🎉' : '❌';
+                    const color = d.motivo === 'Domingo' || d.motivo === 'Feriado' ? 'var(--accent-blue)' : 'var(--accent-red)';
+                    
+                    htmlAusentes += `
+                        <li class="detalle-item">
+                            <div>
+                                <div class="detalle-fecha" style="color: ${color};">${icono} ${d.nombreDia} ${d.dia}</div>
+                                <div class="detalle-tipo">${d.fecha} - ${d.motivo}</div>
+                            </div>
+                        </li>
+                    `;
+                });
+            } else {
+                htmlAusentes = '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">No hay días ausentes</p>';
+            }
+            htmlAusentes += '</ul>';
+            
+            document.getElementById('modalTitle').textContent = `📅 Asistencia - ${tecnico.nombre}`;
+            document.getElementById('modalBody').innerHTML = `
+                <div style="background: rgba(32,58,67,0.3); border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                    <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">📊 Resumen</h3>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; font-weight: 700; color: var(--accent-green);">${diasPresentes.length}</div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">DÍAS TRABAJADOS</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; font-weight: 700; color: var(--accent-red);">${diasAusentes.filter(d => d.motivo === 'Ausente').length}</div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">AUSENCIAS</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; font-weight: 700; color: var(--accent-blue);">${diasAusentes.filter(d => d.motivo !== 'Ausente').length}</div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">DESCANSOS</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">✅ Días Presentes (${diasPresentes.length})</h3>
+                ${htmlPresentes}
+                
+                <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin: 25px 0 15px;">📋 Días No Trabajados (${diasAusentes.length})</h3>
+                ${htmlAusentes}
+            `;
+            document.getElementById('modalRGU').classList.add('active');
+        }
+
+        function verDetalleCalidad(tecnico, event) {
+            event.stopPropagation();
+            
+            if (tecnico.reiterados === 0) {
+                alert('Este técnico no tiene reiterados en el período.');
+                return;
+            }
+            
+            document.getElementById('modalTitle').textContent = `✅ Calidad - ${tecnico.nombre}`;
+            document.getElementById('modalBody').innerHTML = `
+                <div style="background: rgba(32,58,67,0.3); border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                    <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">📊 Resumen</h3>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; font-weight: 700; color: var(--accent-green);">${tecnico.trabajos_calidad}</div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">TRABAJOS</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; font-weight: 700; color: var(--accent-red);">${tecnico.reiterados}</div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">REITERADOS</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 32px; font-weight: 700; color: var(--accent-yellow);">${tecnico.porcentaje_reiteracion}%</div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">% REITERACIÓN</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                    <div style="font-size: 16px; margin-bottom: 10px;">Cargando órdenes reiteradas...</div>
+                    <div class="spinner" style="margin: 0 auto;"></div>
+                </div>
+            `;
+            document.getElementById('modalRGU').classList.add('active');
+            
+            // Cargar reiterados en background
+            cargarReiteradosModal(tecnico);
+        }
+
+        async function cargarReiteradosModal(tecnico) {
+            try {
+                const [year, month] = document.getElementById('mesFilter').value.split('-').map(Number);
+                const periodo = calcularPeriodoCalidad(year, month);
+                
+                const reiterados = await queryAll('calidad_crea',
+                    `select=orden_original,fecha_original,orden_reiterada,fecha_reiterada,descripcion_reiterado&rut_tecnico_original=eq.${tecnico.rut}`
+                );
+                
+                // Filtrar por período
+                const reiteradosPeriodo = reiterados.filter(r => {
+                    if (!r.fecha_original) return false;
+                    const partes = r.fecha_original.split('-');
+                    if (partes.length !== 3) return false;
+                    
+                    const anio = parseInt(partes[0]);
+                    const mes = parseInt(partes[1]);
+                    const dia = parseInt(partes[2]);
+                    
+                    const fechaTrabajo = anio * 10000 + mes * 100 + dia;
+                    const fechaInicio = periodo.inicio.anio * 10000 + periodo.inicio.mes * 100 + periodo.inicio.dia;
+                    const fechaFin = periodo.fin.anio * 10000 + periodo.fin.mes * 100 + periodo.fin.dia;
+                    
+                    return fechaTrabajo >= fechaInicio && fechaTrabajo <= fechaFin;
+                });
+                
+                let reiteradosHTML = '<ul class="detalle-list">';
+                reiteradosPeriodo.forEach(r => {
+                    const fechaOrig = r.fecha_original ? new Date(r.fecha_original).toLocaleDateString('es-CL') : 'N/A';
+                    const fechaReit = r.fecha_reiterada ? new Date(r.fecha_reiterada).toLocaleDateString('es-CL') : 'N/A';
+                    
+                    reiteradosHTML += `
+                        <li class="detalle-item">
+                            <div style="flex: 1;">
+                                <div class="detalle-fecha">📋 ${r.orden_original} → ${r.orden_reiterada}</div>
+                                <div class="detalle-tipo">${r.descripcion_reiterado || 'Sin descripción'}</div>
+                            </div>
+                            <div style="text-align: right; font-size: 11px; color: var(--text-secondary);">
+                                <div>${fechaOrig}</div>
+                                <div>↓ ${fechaReit}</div>
+                            </div>
+                        </li>
+                    `;
+                });
+                reiteradosHTML += '</ul>';
+                
+                document.getElementById('modalBody').innerHTML = `
+                    <div style="background: rgba(32,58,67,0.3); border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                        <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">📊 Resumen</h3>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                            <div style="text-align: center;">
+                                <div style="font-size: 32px; font-weight: 700; color: var(--accent-green);">${tecnico.trabajos_calidad}</div>
+                                <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">TRABAJOS</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 32px; font-weight: 700; color: var(--accent-red);">${tecnico.reiterados}</div>
+                                <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">REITERADOS</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="font-size: 32px; font-weight: 700; color: var(--accent-yellow);">${tecnico.porcentaje_reiteracion}%</div>
+                                <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">% REITERACIÓN</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">⚠️ Órdenes Reiteradas (${reiteradosPeriodo.length})</h3>
+                    ${reiteradosHTML}
+                `;
+            } catch (error) {
+                console.error('Error cargando reiterados:', error);
+                document.getElementById('modalBody').innerHTML = '<div style="text-align:center; padding:40px; color:var(--accent-red);">Error cargando datos</div>';
+            }
+        }
+
+        function verDetalleProduccion(tecnico, event) {
+            event.stopPropagation();
+            
+            document.getElementById('modalTitle').textContent = `🎯 Producción - ${tecnico.nombre}`;
+            document.getElementById('modalBody').innerHTML = `
+                <div style="background: rgba(32,58,67,0.3); border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                    <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">📊 Resumen del Mes</h3>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+                        <div>
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">RGU Total</div>
+                            <div style="font-size: 28px; font-weight: 700; color: var(--accent-blue);">${tecnico.rgu_total.toFixed(1)}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">Órdenes</div>
+                            <div style="font-size: 28px; font-weight: 700; color: var(--accent-green);">${tecnico.ot_count}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">Días Trabajados</div>
+                            <div style="font-size: 28px; font-weight: 700; color: var(--accent-yellow);">${tecnico.dias_trabajados}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 5px;">Promedio/Día</div>
+                            <div style="font-size: 28px; font-weight: 700; color: var(--accent-purple);">${tecnico.promedio_diario}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="background: rgba(59, 130, 246, 0.1); border-radius: 12px; padding: 20px;">
+                    <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">💰 Bonos de Producción</h3>
+                    <div style="font-family: 'JetBrains Mono', monospace; font-size: 14px; line-height: 2;">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span>Meta (según escala RGU):</span>
+                            <strong style="color: var(--accent-blue);">$${tecnico.meta_produccion.toLocaleString('es-CL')}</strong>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span>+ Semana Corrida:</span>
+                            <strong style="color: var(--accent-purple);">$${tecnico.semana_corrida.toLocaleString('es-CL')}</strong>
+                        </div>
+                        <div style="border-top: 1px solid var(--border); margin: 10px 0; padding-top: 10px; display: flex; justify-content: space-between; font-size: 16px;">
+                            <span>= Total Bruto Producción:</span>
+                            <strong style="color: var(--accent-green);">$${tecnico.bono_produccion_bruto.toLocaleString('es-CL')}</strong>
+                        </div>
+                        <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--border);">
+                            <div style="display: flex; justify-content: space-between;">
+                                <span>Bono Calidad:</span>
+                                <strong style="color: var(--text-primary);">$${tecnico.bono_calidad.toLocaleString('es-CL')}</strong>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 18px; font-weight: 700; margin-top: 10px; color: var(--accent-green);">
+                                <span>TOTAL BONOS:</span>
+                                <strong>$${tecnico.total_bono.toLocaleString('es-CL')}</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px; text-align: center;">
+                    <button class="btn" onclick="verOrdenesTecnico('${tecnico.rut}'); cerrarModal();">
+                        Ver Todas las Órdenes (${tecnico.ot_count})
+                    </button>
+                </div>
+            `;
+            document.getElementById('modalRGU').classList.add('active');
+        }
+
+        function obtenerFeriadosDelMes(anio, mes) {
+            const feriados = [];
+            
+            if (anio === 2025 && mes === 11) {
+                feriados.push({ dia: 1, nombre: 'Día de Todos los Santos' });
+            } else if (anio === 2025 && mes === 12) {
+                feriados.push({ dia: 8, nombre: 'Inmaculada Concepción' });
+                feriados.push({ dia: 25, nombre: 'Navidad' });
+            } else if (anio === 2026 && mes === 1) {
+                feriados.push({ dia: 1, nombre: 'Año Nuevo' });
+            } else if (anio === 2026 && mes === 2) {
+                // Sin feriados laborales
+            } else if (anio === 2026 && mes === 3) {
+                // Sin feriados laborales
+            } else if (anio === 2026 && mes === 4) {
+                feriados.push({ dia: 3, nombre: 'Viernes Santo' });
+                feriados.push({ dia: 4, nombre: 'Sábado Santo' });
+            } else if (anio === 2026 && mes === 5) {
+                feriados.push({ dia: 1, nombre: 'Día del Trabajo' });
+                feriados.push({ dia: 21, nombre: 'Glorias Navales' });
+            }
+            
+            return feriados;
+        }
+
+        function obtenerNombreMes(mes) {
+            const meses = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+                          'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+            return meses[mes];
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // 🎁 SISTEMA DE GESTIÓN DE RGU COMPENSADOS
+        // ═══════════════════════════════════════════════════════════════════
+
+        function abrirGestionRGU(tecnico, event) {
+            event.stopPropagation();
+            
+            // Si ya está autenticado, ir directo a gestión
+            if (usuarioAutenticado) {
+                mostrarModalGestionRGU(tecnico);
+                return;
+            }
+            
+            // Pedir autenticación
+            document.getElementById('modalTitle').textContent = `🔐 Autenticación Requerida`;
+            document.getElementById('modalBody').innerHTML = `
+                <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--accent-red); border-radius: 12px; padding: 15px; margin-bottom: 20px;">
+                    <div style="font-size: 14px; color: var(--accent-red);">
+                        ⚠️ Esta acción requiere permisos de administrador
+                    </div>
+                </div>
+                
+                <form id="formAuth" onsubmit="event.preventDefault(); autenticar('${tecnico.rut}', ${JSON.stringify(tecnico).replace(/"/g, '&quot;')});" style="padding: 20px;">
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 8px; font-size: 13px; color: var(--text-secondary); text-transform: uppercase;">Usuario</label>
+                        <input type="text" id="inputUsuario" placeholder="Ingrese usuario" 
+                            style="width: 100%; padding: 12px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-family: inherit; font-size: 14px;"
+                            autocomplete="username" required>
+                    </div>
+                    
+                    <div style="margin-bottom: 25px;">
+                        <label style="display: block; margin-bottom: 8px; font-size: 13px; color: var(--text-secondary); text-transform: uppercase;">Contraseña</label>
+                        <input type="password" id="inputPassword" placeholder="Ingrese contraseña"
+                            style="width: 100%; padding: 12px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-family: inherit; font-size: 14px;"
+                            autocomplete="current-password" required>
+                    </div>
+                    
+                    <div id="errorAuth" style="display: none; background: rgba(239, 68, 68, 0.2); border: 1px solid var(--accent-red); border-radius: 8px; padding: 12px; margin-bottom: 15px; color: var(--accent-red); font-size: 13px;"></div>
+                    
+                    <button type="submit" class="btn" style="width: 100%;">
+                        🔓 Autenticar y Continuar
+                    </button>
+                </form>
+            `;
+            document.getElementById('modalRGU').classList.add('active');
+            
+            // Focus en el primer input
+            setTimeout(() => document.getElementById('inputUsuario').focus(), 100);
+        }
+
+        function autenticar(rutTecnico, tecnico) {
+            const usuario = document.getElementById('inputUsuario').value;
+            const password = document.getElementById('inputPassword').value;
+            
+            if (usuario === USUARIO_ADMIN && password === PASSWORD_ADMIN) {
+                usuarioAutenticado = true;
+                mostrarModalGestionRGU(tecnico);
+            } else {
+                const errorDiv = document.getElementById('errorAuth');
+                errorDiv.style.display = 'block';
+                errorDiv.textContent = '❌ Usuario o contraseña incorrectos';
+                document.getElementById('inputPassword').value = '';
+                document.getElementById('inputPassword').focus();
+            }
+        }
+
+        async function mostrarModalGestionRGU(tecnico) {
+            const mes = document.getElementById('mesFilter').value;
+            
+            document.getElementById('modalTitle').textContent = `🎁 Gestión de RGU Compensados - ${tecnico.nombre}`;
+            document.getElementById('modalBody').innerHTML = `
+                <div style="text-align: center; padding: 40px; color: var(--text-secondary);">
+                    <div class="spinner" style="margin: 0 auto 20px;"></div>
+                    <div>Cargando compensaciones...</div>
+                </div>
+            `;
+            
+            document.getElementById('modalRGU').classList.add('active');
+            
+            // Cargar compensaciones existentes
+            try {
+                const compensaciones = await queryAll('rgu_adicionales',
+                    `select=id,rgu_adicional,motivo,usuario_autorizo,fecha_creacion&rut_tecnico=eq.${tecnico.rut}&mes=eq.${mes}&order=fecha_creacion.desc`
+                );
+                
+                renderizarModalGestionRGU(tecnico, compensaciones, mes);
+            } catch (error) {
+                console.error('Error cargando compensaciones:', error);
+                renderizarModalGestionRGU(tecnico, [], mes);
+            }
+        }
+
+        function renderizarModalGestionRGU(tecnico, compensaciones, mes) {
+            let compensacionesHTML = '';
+            
+            if (compensaciones.length > 0) {
+                compensacionesHTML = '<ul class="detalle-list" style="margin-bottom: 25px;">';
+                compensaciones.forEach(c => {
+                    const fecha = new Date(c.fecha_creacion).toLocaleString('es-CL');
+                    const esPositivo = c.rgu_adicional > 0;
+                    
+                    compensacionesHTML += `
+                        <li class="detalle-item">
+                            <div style="flex: 1;">
+                                <div class="detalle-fecha" style="color: ${esPositivo ? 'var(--accent-green)' : 'var(--accent-red)'};">
+                                    ${esPositivo ? '➕' : '➖'} ${Math.abs(c.rgu_adicional).toFixed(1)} RGU
+                                </div>
+                                <div class="detalle-tipo">${c.motivo}</div>
+                                <div style="font-size: 10px; color: var(--text-secondary); margin-top: 4px;">
+                                    Por ${c.usuario_autorizo} • ${fecha}
+                                </div>
+                            </div>
+                            <button onclick="eliminarCompensacion(${c.id}, '${tecnico.rut}')" 
+                                style="background: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.2s;"
+                                onmouseover="this.style.background='rgba(239, 68, 68, 0.3)'"
+                                onmouseout="this.style.background='rgba(239, 68, 68, 0.2)'">
+                                🗑️ Eliminar
+                            </button>
+                        </li>
+                    `;
+                });
+                compensacionesHTML += '</ul>';
+            } else {
+                compensacionesHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary); margin-bottom: 25px;">No hay compensaciones registradas</div>';
+            }
+            
+            document.getElementById('modalBody').innerHTML = `
+                <div style="background: rgba(32,58,67,0.3); border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                    <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">📊 Resumen</h3>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 28px; font-weight: 700; color: var(--accent-blue);">${tecnico.rgu_base.toFixed(1)}</div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">RGU BASE</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 28px; font-weight: 700; color: ${tecnico.rgu_compensado !== 0 ? (tecnico.rgu_compensado > 0 ? 'var(--accent-green)' : 'var(--accent-red)') : 'var(--text-secondary)'};">
+                                ${tecnico.rgu_compensado !== 0 ? (tecnico.rgu_compensado > 0 ? '+' : '') + tecnico.rgu_compensado.toFixed(1) : '0.0'}
+                            </div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">COMPENSADO</div>
+                        </div>
+                    </div>
+                    <div style="border-top: 2px solid var(--border); margin: 15px 0; padding-top: 15px; text-align: center;">
+                        <div style="font-size: 32px; font-weight: 700; color: var(--accent-green);">${tecnico.rgu_total.toFixed(1)}</div>
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 5px;">TOTAL RGU (BASE + COMPENSADO)</div>
+                    </div>
+                </div>
+                
+                <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">📝 Compensaciones Registradas</h3>
+                ${compensacionesHTML}
+                
+                <form id="formAgregarRGU" onsubmit="event.preventDefault(); agregarCompensacion('${tecnico.rut}', '${mes}')" style="background: rgba(59, 130, 246, 0.1); border-radius: 12px; padding: 20px;">
+                    <h3 style="color: var(--text-secondary); font-size: 13px; text-transform: uppercase; margin-bottom: 15px;">➕ Nueva Compensación</h3>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 15px; margin-bottom: 15px;">
+                        <div>
+                            <label style="display: block; margin-bottom: 8px; font-size: 12px; color: var(--text-secondary);">RGU (+/-)</label>
+                            <input type="number" id="inputRGU" step="0.1" placeholder="5.0 o -2.0" required
+                                style="width: 100%; padding: 10px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 14px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 8px; font-size: 12px; color: var(--text-secondary);">Motivo</label>
+                            <input type="text" id="inputMotivo" placeholder="Ej: Instalación compleja" required
+                                style="width: 100%; padding: 10px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-family: inherit; font-size: 14px;">
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn" style="width: 100%;">
+                        ✅ Guardar Compensación
+                    </button>
+                </form>
+            `;
+        }
+
+        async function agregarCompensacion(rutTecnico, mes) {
+            const rguAdicional = parseFloat(document.getElementById('inputRGU').value);
+            const motivo = document.getElementById('inputMotivo').value.trim();
+            
+            if (!rguAdicional || rguAdicional === 0) {
+                alert('❌ El RGU no puede ser 0');
+                return;
+            }
+            
+            if (!motivo) {
+                alert('❌ Debe ingresar un motivo');
+                return;
+            }
+            
+            try {
+                // Insertar en Supabase
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/rgu_adicionales`, {
+                    method: 'POST',
+                    headers: {
+                        'apikey': SUPABASE_KEY,
+                        'Authorization': `Bearer ${SUPABASE_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=representation'
+                    },
+                    body: JSON.stringify({
+                        rut_tecnico: rutTecnico,
+                        mes: mes,
+                        rgu_adicional: rguAdicional,
+                        motivo: motivo,
+                        usuario_autorizo: USUARIO_ADMIN
+                    })
+                });
+                
+                if (response.ok) {
+                    alert('✅ Compensación agregada correctamente');
+                    cerrarModal();
+                    cargarDatos(); // Recargar todos los datos
+                } else {
+                    const error = await response.json();
+                    alert('❌ Error al guardar: ' + (error.message || 'Error desconocido'));
+                }
+            } catch (error) {
+                console.error('Error agregando compensación:', error);
+                alert('❌ Error de conexión');
+            }
+        }
+
+        async function eliminarCompensacion(id, rutTecnico) {
+            if (!confirm('¿Estás seguro de eliminar esta compensación?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/rgu_adicionales?id=eq.${id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'apikey': SUPABASE_KEY,
+                        'Authorization': `Bearer ${SUPABASE_KEY}`
+                    }
+                });
+                
+                if (response.ok) {
+                    alert('✅ Compensación eliminada');
+                    cerrarModal();
+                    cargarDatos(); // Recargar todos los datos
+                } else {
+                    alert('❌ Error al eliminar');
+                }
+            } catch (error) {
+                console.error('Error eliminando compensación:', error);
+                alert('❌ Error de conexión');
+            }
+        }
+
+        function volverNivel() {
+            if (nivelActual === 'ordenes' || nivelActual === 'reiterados') {
+                nivelActual = 'tecnicos';
+                tecnicoSeleccionado = null;
+                document.getElementById('btnVolver').style.display = 'none';
+                document.getElementById('breadcrumb').innerHTML = '<span class="active">📋 Resumen Técnicos</span>';
+                renderizarTablaTecnicos(datosGlobales);
+            }
+        }
+
+        function ordenar(columna) {
+            if (sortColumn === columna) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortColumn = columna;
+                sortDirection = 'desc';
+            }
+            renderizarTablaTecnicos(datosGlobales);
+        }
+
+        function filtrarTabla() {
+            const busqueda = document.getElementById('searchInput').value.toLowerCase();
+            const datosFiltrados = datosGlobales.filter(t => 
+                (t.nombre && t.nombre.toLowerCase().includes(busqueda)) ||
+                (t.rut && t.rut.toLowerCase().includes(busqueda))
+            );
+            renderizarTablaTecnicos(datosFiltrados);
+        }
+
+        function exportarExcel() {
+            const mes = document.getElementById('mesFilter').value;
+            let csv = '';
+            let filename = '';
+
+            if (nivelActual === 'tecnicos') {
+                // Exportar resumen de técnicos
+                csv = 'Técnico,RUT,RGU Base,RGU Compensado,RGU Total,Prom/Día,Órdenes,Días Trabajados,Reiterados,% Reiteración,HHEE (hrs),Meta Producción,Semana Corrida,Bono Prod Bruto,Bono Calidad,Total Bono\n';
+                datosGlobales.forEach(t => {
+                    csv += `"${t.nombre}","${t.rut}",${t.rgu_base.toFixed(2)},${t.rgu_compensado.toFixed(2)},${t.rgu_total.toFixed(2)},${t.promedio_diario},${t.ot_count},${t.dias_trabajados},${t.reiterados},${t.porcentaje_reiteracion},${t.hhee_horas},${t.meta_produccion || 0},${t.semana_corrida || 0},${t.bono_produccion_bruto || 0},${t.bono_calidad || 0},${t.total_bono || 0}\n`;
+                });
+                filename = `dashboard_tecnicos_${mes}.csv`;
+            } else if (nivelActual === 'ordenes') {
+                // Exportar órdenes del técnico seleccionado
+                csv = 'Orden,Fecha,Tipo Orden,Estado,RGU Total,RGU Base,RGU Adicional,Hora Inicio,Hora Fin,Duración (min)\n';
+                tecnicoSeleccionado.ordenes.forEach(o => {
+                    csv += `"${o.orden_trabajo}","${o.fecha_trabajo}","${o.tipo_orden || ''}","${o.estado}",${parseFloat(o.rgu_total).toFixed(2)},${parseFloat(o.rgu_base || 0).toFixed(2)},${parseFloat(o.rgu_adicional || 0).toFixed(2)},"${o.hora_inicio || ''}","${o.hora_fin || ''}","${o.duracion_min || ''}"\n`;
+                });
+                filename = `ordenes_${tecnicoSeleccionado.rut}_${mes}.csv`;
+            } else if (nivelActual === 'reiterados') {
+                // Exportar reiterados del técnico seleccionado
+                csv = 'Orden Original,Fecha Original,Orden Reiterada,Fecha Reiteración,Tipo Falla\n';
+                // Necesitamos obtener los reiterados del DOM ya que no los guardamos globalmente
+                const tabla = document.querySelector('#tableContent table tbody');
+                if (tabla) {
+                    const filas = tabla.querySelectorAll('tr');
+                    filas.forEach(fila => {
+                        const celdas = fila.querySelectorAll('td');
+                        if (celdas.length >= 5) {
+                            csv += `"${celdas[0].textContent}","${celdas[1].textContent}","${celdas[2].textContent}","${celdas[3].textContent}","${celdas[4].textContent}"\n`;
+                        }
+                    });
+                }
+                filename = `reiterados_${tecnicoSeleccionado.rut}_${mes}.csv`;
+            }
+
+            // Crear y descargar el archivo
+            const BOM = '\uFEFF'; // BOM para UTF-8
+            const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+        }
+
+        function exportarPlantillaHaberes() {
+            if (nivelActual !== 'tecnicos') {
+                alert('Esta exportación solo está disponible en la vista de técnicos.');
+                return;
+            }
+
+            const [year, month] = document.getElementById('mesFilter').value.split('-').map(Number);
+            
+            // Calcular el mes/año del bono (mes siguiente al visualizado)
+            const [anioBono, mesBono] = calcularPeriodoBono(year, month);
+            
+            // Formato: Mes;Año;Rut o Código del Funcionario;Código del HB;Valor del HB;Descripción Adicional;Valor Adicional;;
+            let csv = 'Mes;Año;Rut o Código del Funcionario;Código del HB;Valor del HB;Descripción Adicional;Valor Adicional;;\n';
+            
+            // Códigos de haberes:
+            // 2 = Producción (Meta)
+            // 6 = Semana Corrida
+            // 4 = Calidad
+            // 107 = Horas Extras (valor va en columna "Valor Adicional")
+            
+            datosGlobales.forEach(t => {
+                const rut = t.rut;
+                
+                // 1. Meta Producción (Código 2)
+                if (t.meta_produccion > 0) {
+                    csv += `${mesBono};${anioBono};${rut};2;${Math.round(t.meta_produccion)};;;;Producción\n`;
+                }
+                
+                // 2. Semana Corrida (Código 6)
+                if (t.semana_corrida > 0) {
+                    csv += `${mesBono};${anioBono};${rut};6;${Math.round(t.semana_corrida)};;;;Semana Corrida\n`;
+                }
+                
+                // 3. Bono Calidad (Código 4)
+                if (t.bono_calidad > 0) {
+                    csv += `${mesBono};${anioBono};${rut};4;${Math.round(t.bono_calidad)};;;;Calidad\n`;
+                }
+                
+                // 4. Horas Extras (Código 107) - cantidad de horas en "Valor del HB"
+                if (t.hhee_horas > 0) {
+                    const horasDecimal = parseFloat(t.hhee_horas).toFixed(1).replace('.', ',');
+                    csv += `${mesBono};${anioBono};${rut};107;${horasDecimal};;;;Horas Extras\n`;
+                }
+            });
+            
+            const filename = `plantilla_haberes_${anioBono}-${String(mesBono).padStart(2, '0')}.csv`;
+            
+            // Crear y descargar el archivo (sin BOM, con encoding Windows-1252 para Excel)
+            const blob = new Blob([csv], { type: 'text/csv;charset=windows-1252;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+            
+            console.log(`✅ Exportado: ${filename} con ${datosGlobales.length} técnicos`);
+        }
+
+        async function generarAnexosMasivo() {
+            if (nivelActual !== 'tecnicos') {
+                alert('Esta exportación solo está disponible en la vista de técnicos.');
+                return;
+            }
+
+            if (!datosGlobales || datosGlobales.length === 0) {
+                alert('No hay datos disponibles para generar anexos.');
+                return;
+            }
+
+            const confirmar = confirm(`¿Generar ${datosGlobales.length} anexos en PDF?\n\nEsto puede tomar unos minutos...`);
+            if (!confirmar) return;
+
+            mostrarLoading();
+            document.querySelector('.loading div:last-child').textContent = 'Generando anexos PDF (0/' + datosGlobales.length + ')...';
+
+            const { jsPDF } = window.jspdf;
+            const JSZip = window.JSZip || null;
+
+            // Si no hay JSZip, descargar uno por uno
+            if (!JSZip) {
+                for (let i = 0; i < datosGlobales.length; i++) {
+                    const tecnico = datosGlobales[i];
+                    document.querySelector('.loading div:last-child').textContent = `Generando anexo ${i + 1}/${datosGlobales.length}: ${tecnico.nombre}...`;
+                    await generarAnexoPDF(tecnico, false);
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Pausa para evitar saturar el navegador
+                }
+                alert('✅ Se han generado todos los anexos.');
+                renderizarTablaTecnicos(datosGlobales);
+            } else {
+                // Generar ZIP con todos los anexos
+                alert('Función ZIP pendiente - se descargarán individualmente');
+                for (let i = 0; i < datosGlobales.length; i++) {
+                    const tecnico = datosGlobales[i];
+                    document.querySelector('.loading div:last-child').textContent = `Generando anexo ${i + 1}/${datosGlobales.length}: ${tecnico.nombre}...`;
+                    await generarAnexoPDF(tecnico, false);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                alert('✅ Se han generado todos los anexos.');
+                renderizarTablaTecnicos(datosGlobales);
+            }
+        }
+
+        async function generarAnexoPDF(tecnico, descargar = true) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            const [year, month] = document.getElementById('mesFilter').value.split('-').map(Number);
+            const [anioPago, mesPago] = calcularPeriodoBono(year, month);
+            
+            const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 
+                          'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+            const mesNombre = meses[month - 1];
+            const mesPagoNombre = meses[mesPago - 1];
+
+            // Encabezado
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.text('creaciones', 15, 15);
+            
+            doc.setFontSize(14);
+            doc.text('Anexo Remuneraciones', 15, 25);
+            
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`Periodo de cálculo ${mesNombre} ${year} pago ${mesPagoNombre} de ${anioPago}`, 15, 32);
+            
+            doc.setFont('helvetica', 'bold');
+            doc.text(tecnico.nombre, 15, 42);
+            doc.setFont('helvetica', 'normal');
+            doc.text(tecnico.rut, 15, 48);
+
+            // Obtener órdenes del técnico
+            const ordenes = tecnico.ordenes || [];
+            const diasMes = obtenerDiasDelMes(year, month);
+            
+            // Tabla de producción diaria
+            doc.setFontSize(11);
+            doc.setFont('helvetica', 'bold');
+            doc.text('Detalle de cálculo de producción', 15, 58);
+
+            const datosTabla = diasMes.map(dia => {
+                const ordenesDelDia = ordenes.filter(o => {
+                    const fecha = o.fecha_trabajo;
+                    if (!fecha) return false;
+                    const partes = fecha.split('/');
+                    if (partes.length !== 3) return false;
+                    return parseInt(partes[0]) === dia;
+                });
+
+                const cantOrdenes = ordenesDelDia.length;
+                const rguDia = ordenesDelDia.reduce((sum, o) => sum + (parseFloat(o.rgu_total) || 0), 0);
+                const estado = cantOrdenes > 0 ? 'Presente' : '';
+                
+                return [
+                    dia.toString(),
+                    cantOrdenes > 0 ? cantOrdenes.toString() : '',
+                    rguDia > 0 ? rguDia.toFixed(2) : '',
+                    estado,
+                    '', // Turno
+                    '', // Marcación
+                    ''  // Atraso
+                ];
+            });
+
+            doc.autoTable({
+                startY: 62,
+                head: [['Día', 'Órdenes', 'RGU', 'Estado', 'Turno', 'Marcación', 'Atraso']],
+                body: datosTabla,
+                theme: 'grid',
+                styles: { fontSize: 8, cellPadding: 1.5 },
+                headStyles: { fillColor: [32, 58, 67], textColor: 255, fontStyle: 'bold' },
+                columnStyles: {
+                    0: { halign: 'center', cellWidth: 15 },
+                    1: { halign: 'center', cellWidth: 20 },
+                    2: { halign: 'right', cellWidth: 20 },
+                    3: { halign: 'center', cellWidth: 25 },
+                    4: { halign: 'center', cellWidth: 25 },
+                    5: { halign: 'center', cellWidth: 30 },
+                    6: { halign: 'center', cellWidth: 20 }
+                }
+            });
+
+            let yPos = doc.lastAutoTable.finalY + 10;
+
+            // Resumen de Producción, Calidad y Asistencia en tabla
+            const periodoCalidad = calcularPeriodoCalidad(year, month);
+            const totalDiasDescanso = calcularDiasDescanso(year, month);
+            
+            // Calcular domingos y feriados por separado para el anexo
+            const anio = parseInt(year);
+            const mes = parseInt(month);
+            const primerDia = new Date(anio, mes - 1, 1);
+            const ultimoDia = new Date(anio, mes, 0);
+            let domingos = 0;
+            for (let dia = new Date(primerDia); dia <= ultimoDia; dia.setDate(dia.getDate() + 1)) {
+                if (dia.getDay() === 0) domingos++;
+            }
+            const feriados = totalDiasDescanso - domingos;
+            
+            doc.autoTable({
+                startY: yPos,
+                head: [['Producción', `Periodo 01-${month} al ${diasMes.length}-${month}`]],
+                body: [
+                    ['Cantidad RGU', tecnico.rgu_base.toFixed(2)],
+                    ['RGU adicional compensado', tecnico.rgu_compensado.toFixed(2)],
+                    ['Total RGU', tecnico.rgu_total.toFixed(2)]
+                ],
+                theme: 'grid',
+                styles: { fontSize: 9, cellPadding: 2 },
+                headStyles: { fillColor: [32, 58, 67], textColor: 255, fontStyle: 'bold' },
+                columnStyles: {
+                    0: { fontStyle: 'bold', cellWidth: 80 },
+                    1: { halign: 'right', cellWidth: 110 }
+                }
+            });
+
+            yPos = doc.lastAutoTable.finalY + 5;
+
+            doc.autoTable({
+                startY: yPos,
+                head: [['Calidad', `Periodo ${periodoCalidad.inicio.dia}-${periodoCalidad.inicio.mes} al ${periodoCalidad.fin.dia}-${periodoCalidad.fin.mes}`]],
+                body: [
+                    ['Órdenes Ejecutadas', tecnico.trabajos_calidad.toString()],
+                    ['Reiteradas', tecnico.reiterados.toString()],
+                    ['% Calidad', tecnico.porcentaje_reiteracion.toFixed(2) + '%']
+                ],
+                theme: 'grid',
+                styles: { fontSize: 9, cellPadding: 2 },
+                headStyles: { fillColor: [32, 58, 67], textColor: 255, fontStyle: 'bold' },
+                columnStyles: {
+                    0: { fontStyle: 'bold', cellWidth: 80 },
+                    1: { halign: 'right', cellWidth: 110 }
+                }
+            });
+
+            yPos = doc.lastAutoTable.finalY + 5;
+
+            doc.autoTable({
+                startY: yPos,
+                head: [['Asistencia', `Periodo 01-${month} al ${diasMes.length}-${month}`]],
+                body: [
+                    ['Días Presentes', tecnico.dias_trabajados.toString()],
+                    ['Días Laborables', tecnico.dias_trabajados.toString()],
+                    ['Ausencia', '0'],
+                    ['Domingos y festivos', totalDiasDescanso.toString()]
+                ],
+                theme: 'grid',
+                styles: { fontSize: 9, cellPadding: 2 },
+                headStyles: { fillColor: [32, 58, 67], textColor: 255, fontStyle: 'bold' },
+                columnStyles: {
+                    0: { fontStyle: 'bold', cellWidth: 80 },
+                    1: { halign: 'right', cellWidth: 110 }
+                }
+            });
+
+            yPos = doc.lastAutoTable.finalY + 5;
+
+            // Fórmula de Promedio
+            doc.autoTable({
+                startY: yPos,
+                head: [['Fórmula Promedio', 'Total RGU / (Días trabajados + Ausencias)']],
+                body: [
+                    ['Producción', '+ Promedio producción'],
+                    ['Total RGU', tecnico.rgu_total.toFixed(2)],
+                    ['Días Presentes + Ausencias', `${tecnico.dias_trabajados} + 0`],
+                    ['Promedio producción', tecnico.promedio_diario.toFixed(2)]
+                ],
+                theme: 'grid',
+                styles: { fontSize: 9, cellPadding: 2 },
+                headStyles: { fillColor: [32, 58, 67], textColor: 255, fontStyle: 'bold' },
+                columnStyles: {
+                    0: { fontStyle: 'bold', cellWidth: 80 },
+                    1: { halign: 'right', cellWidth: 110 }
+                }
+            });
+
+            // Nueva página para bonificación variable
+            doc.addPage();
+            yPos = 20;
+
+            doc.setFontSize(11);
+            doc.setFont('helvetica', 'bold');
+            doc.text('Detalle bonificación variable', 15, yPos);
+            yPos += 5;
+
+            doc.autoTable({
+                startY: yPos,
+                head: [['Bonificación variable', '']],
+                body: [
+                    ['Bono Calidad', '$ ' + (tecnico.bono_calidad || 0).toLocaleString('es-CL')],
+                    ['Bono producción', '$ ' + (tecnico.meta_produccion || 0).toLocaleString('es-CL')],
+                    ['Formula semana corrida', `(Bono producción / días Laborables) x Domingos y festivos = Semana Corrida`],
+                    ['Bono semana corrida', `(${(tecnico.meta_produccion || 0).toLocaleString('es-CL')}/${tecnico.dias_trabajados}) x ${totalDiasDescanso} = ${(tecnico.semana_corrida || 0).toLocaleString('es-CL')}`],
+                    ['Total variable', '$ ' + (tecnico.total_bono || 0).toLocaleString('es-CL')]
+                ],
+                theme: 'grid',
+                styles: { fontSize: 9, cellPadding: 2 },
+                headStyles: { fillColor: [32, 58, 67], textColor: 255, fontStyle: 'bold' },
+                columnStyles: {
+                    0: { fontStyle: 'bold', cellWidth: 80 },
+                    1: { halign: 'left', cellWidth: 110 }
+                }
+            });
+
+            yPos = doc.lastAutoTable.finalY + 15;
+
+            // Firma
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(0, 0, 0);
+            doc.text('Acuso recibo de este documento', 15, yPos);
+            yPos += 15;
+            doc.setFont('helvetica', 'bold');
+            doc.text(tecnico.nombre, 15, yPos);
+            yPos += 5;
+            doc.setFont('helvetica', 'normal');
+            doc.text(tecnico.rut, 15, yPos);
+
+            // NUEVA PÁGINA: Detalle de Órdenes
+            if (ordenes && ordenes.length > 0) {
+                doc.addPage();
+                yPos = 20;
+
+                doc.setFontSize(11);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(0, 0, 0);
+                doc.text('Detalle de Órdenes Ejecutadas', 15, yPos);
+                yPos += 5;
+
+                // Preparar datos de órdenes
+                const ordenesDetalle = ordenes.map(o => [
+                    o.orden_trabajo || '',
+                    o.fecha_trabajo || '',
+                    o.tipo_orden || 'N/A',
+                    (parseFloat(o.rgu_base) || 0).toFixed(2),
+                    (parseFloat(o.rgu_adicional) || 0).toFixed(2),
+                    (parseFloat(o.rgu_total) || 0).toFixed(2)
+                ]);
+
+                doc.autoTable({
+                    startY: yPos,
+                    head: [['Orden', 'Fecha', 'Tipo', 'RGU Base', 'RGU Adic.', 'RGU Total']],
+                    body: ordenesDetalle,
+                    theme: 'grid',
+                    styles: { fontSize: 7, cellPadding: 1.5 },
+                    headStyles: { fillColor: [32, 58, 67], textColor: 255, fontStyle: 'bold' },
+                    columnStyles: {
+                        0: { halign: 'left', cellWidth: 35 },
+                        1: { halign: 'center', cellWidth: 25 },
+                        2: { halign: 'left', cellWidth: 50 },
+                        3: { halign: 'right', cellWidth: 20 },
+                        4: { halign: 'right', cellWidth: 20 },
+                        5: { halign: 'right', cellWidth: 20 }
+                    },
+                    didDrawPage: function(data) {
+                        // Agregar número de página
+                        doc.setFontSize(8);
+                        doc.setTextColor(150);
+                        doc.text(`Página ${doc.internal.getNumberOfPages()}`, doc.internal.pageSize.width - 30, doc.internal.pageSize.height - 10);
+                    }
+                });
+            }
+
+            // NUEVA PÁGINA: Detalle de Reiterados
+            if (tecnico.reiterados > 0) {
+                // Cargar reiterados del técnico
+                const reiterados = await cargarReiteradosParaPDF(tecnico.rut, year, month);
+                
+                if (reiterados.length > 0) {
+                    doc.addPage();
+                    yPos = 20;
+
+                    doc.setFontSize(11);
+                    doc.setFont('helvetica', 'bold');
+                    doc.setTextColor(0, 0, 0);
+                    doc.text('Detalle de Órdenes Reiteradas', 15, yPos);
+                    yPos += 5;
+
+                    const reiteradosDetalle = reiterados.map(r => [
+                        r.orden_original || '',
+                        r.fecha_original ? formatearFecha(r.fecha_original) : '',
+                        r.orden_reiterada || '',
+                        r.fecha_reiterada ? formatearFecha(r.fecha_reiterada) : '',
+                        r.descripcion_reiterado || 'Sin descripción'
+                    ]);
+
+                    doc.autoTable({
+                        startY: yPos,
+                        head: [['Orden Original', 'Fecha Atención', 'Orden Reiterada', 'Fecha Reiteración', 'Causa']],
+                        body: reiteradosDetalle,
+                        theme: 'grid',
+                        styles: { fontSize: 7, cellPadding: 2 },
+                        headStyles: { fillColor: [239, 68, 68], textColor: 255, fontStyle: 'bold' },
+                        columnStyles: {
+                            0: { halign: 'left', cellWidth: 30 },
+                            1: { halign: 'center', cellWidth: 25 },
+                            2: { halign: 'left', cellWidth: 30 },
+                            3: { halign: 'center', cellWidth: 25 },
+                            4: { halign: 'left', cellWidth: 60 }
+                        },
+                        didDrawPage: function(data) {
+                            doc.setFontSize(8);
+                            doc.setTextColor(150);
+                            doc.text(`Página ${doc.internal.getNumberOfPages()}`, doc.internal.pageSize.width - 30, doc.internal.pageSize.height - 10);
+                        }
+                    });
+                }
+            }
+
+            // Descargar
+            if (descargar) {
+                const filename = `Anexo_${tecnico.rut}_${mesNombre}_${year}.pdf`;
+                doc.save(filename);
+            }
+
+            return doc;
+        }
+
+        async function cargarReiteradosParaPDF(rut, year, month) {
+            try {
+                const periodo = calcularPeriodoCalidad(year, month);
+                
+                const reiterados = await queryAll('calidad_crea',
+                    `select=orden_original,fecha_original,orden_reiterada,fecha_reiterada,descripcion_reiterado&rut_tecnico_original=eq.${rut}`
+                );
+                
+                // Filtrar por período
+                const reiteradosPeriodo = reiterados.filter(r => {
+                    if (!r.fecha_original) return false;
+                    const partes = r.fecha_original.split('-');
+                    if (partes.length !== 3) return false;
+                    
+                    const anio = parseInt(partes[0]);
+                    const mes = parseInt(partes[1]);
+                    const dia = parseInt(partes[2]);
+                    
+                    const fechaTrabajo = anio * 10000 + mes * 100 + dia;
+                    const fechaInicio = periodo.inicio.anio * 10000 + periodo.inicio.mes * 100 + periodo.inicio.dia;
+                    const fechaFin = periodo.fin.anio * 10000 + periodo.fin.mes * 100 + periodo.fin.dia;
+                    
+                    return fechaTrabajo >= fechaInicio && fechaTrabajo <= fechaFin;
+                });
+                
+                return reiteradosPeriodo;
+            } catch (error) {
+                console.error('Error cargando reiterados para PDF:', error);
+                return [];
+            }
+        }
+
+        function formatearFecha(fecha) {
+            // Convierte fecha de formato YYYY-MM-DD a DD/MM/YYYY
+            if (!fecha) return '';
+            const partes = fecha.split('-');
+            if (partes.length !== 3) return fecha;
+            return `${partes[2]}/${partes[1]}/${partes[0]}`;
+        }
+
+        function obtenerDiasDelMes(year, month) {
+            const dias = [];
+            const ultimoDia = new Date(year, month, 0).getDate();
+            for (let i = 1; i <= ultimoDia; i++) {
+                dias.push(i);
+            }
+            return dias;
+        }
+
+        function mostrarLoading() {
+            document.getElementById('tableContent').innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <div>Cargando datos...</div>
+                </div>
+            `;
+        }
+
+        function mostrarError(mensaje) {
+            document.getElementById('tableContent').innerHTML = `
+                <div class="loading">
+                    <div style="color: var(--accent-red); font-size: 48px;">❌</div>
+                    <div style="color: var(--accent-red); margin-top: 15px;">Error: ${mensaje}</div>
+                </div>
+            `;
+        }
+
+        // Cerrar modal al hacer clic fuera
+        document.getElementById('modalRGU').addEventListener('click', function(e) {
+            if (e.target === this) {
+                cerrarModal();
+            }
+        });
+
+        // Cargar datos al inicio
+        document.addEventListener('DOMContentLoaded', cargarDatos);
+    </script>
+</body>
+</html>
+

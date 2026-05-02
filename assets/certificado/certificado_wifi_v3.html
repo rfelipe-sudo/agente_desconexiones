@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CreaCheck · Certificado WiFi v3</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: #d0d7e2;
+  font-family: 'Nunito', sans-serif;
+  padding: 20px 12px 40px;
+  min-height: 100vh;
+}
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 16px 60px rgba(0,0,0,0.22);
+}
+
+/* HEADER */
+.hdr {
+  background: linear-gradient(135deg, #060d1a 0%, #0a1628 60%, #0d2241 100%);
+  padding: 24px 24px 20px;
+  position: relative;
+  overflow: hidden;
+}
+.hdr::before {
+  content:'';
+  position:absolute;
+  width:300px;height:300px;
+  border-radius:50%;
+  border:1px solid rgba(0,200,255,0.06);
+  top:-120px;right:-80px;
+}
+.hdr::after {
+  content:'';
+  position:absolute;
+  width:180px;height:180px;
+  border-radius:50%;
+  border:1px solid rgba(0,200,255,0.1);
+  top:-60px;right:-30px;
+}
+.hdr-top {
+  display:flex;justify-content:space-between;align-items:flex-start;
+  margin-bottom:18px;
+}
+.brand-row { display:flex;align-items:center;gap:10px; }
+.brand-icon {
+  width:42px;height:42px;
+  background:linear-gradient(135deg,#00c8ff,#0055ff);
+  border-radius:10px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;
+}
+.brand-name {
+  font-family:'Rajdhani',sans-serif;
+  font-size:21px;font-weight:700;
+  color:#fff;letter-spacing:2px;
+}
+.brand-sub { font-size:9px;color:rgba(255,255,255,0.3);letter-spacing:1.5px;text-transform:uppercase;margin-top:1px; }
+.doc-num { font-family:'Share Tech Mono',monospace;font-size:10px;color:rgba(255,255,255,0.25);text-align:right;line-height:1.8; }
+.hdr-cert { font-size:10px;letter-spacing:3px;text-transform:uppercase;color:rgba(0,200,255,0.7);margin-bottom:4px; }
+.hdr-title { font-size:23px;font-weight:800;color:#fff;line-height:1.1; }
+
+/* SCORE */
+.score-bar {
+  background:linear-gradient(90deg,#eef6ff,#e4f0ff);
+  border-bottom:3px solid #0a1628;
+  padding:18px 24px;
+  display:flex;align-items:center;justify-content:space-between;
+}
+.score-left { display:flex;align-items:center;gap:16px; }
+.score-ring {
+  width:74px;height:74px;border-radius:50%;
+  background:conic-gradient(#10b981 0deg 313deg,#e2e8f0 313deg 360deg);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+.score-inner {
+  width:58px;height:58px;border-radius:50%;
+  background:#eef6ff;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+}
+.score-num { font-family:'Rajdhani',sans-serif;font-size:23px;font-weight:700;color:#0a1628;line-height:1; }
+.score-den { font-size:9px;color:#94a3b8;font-weight:600;letter-spacing:0.5px; }
+.score-verdict { font-size:18px;font-weight:800;color:#10b981; }
+.score-sub { font-size:11px;color:#64748b;margin-top:3px; }
+.cert-badge { background:#10b981;color:#fff;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:6px 12px;border-radius:20px; }
+
+/* BODY */
+.body { padding:22px 24px; }
+.sec { margin-bottom:22px; }
+.sec-title {
+  font-size:9px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;
+  color:#94a3b8;padding-bottom:8px;border-bottom:1px solid #f1f5f9;
+  margin-bottom:12px;display:flex;align-items:center;gap:8px;
+}
+.sec-title::before { content:'';display:block;width:3px;height:12px;background:#0066ff;border-radius:2px; }
+
+/* INFO */
+.info-grid { display:grid;grid-template-columns:1fr 1fr;gap:7px; }
+.info-box { background:#f8fafc;border:1px solid #f1f5f9;border-radius:8px;padding:9px 12px; }
+.info-lbl { font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px; }
+.info-val { font-size:13px;font-weight:700;color:#1e293b; }
+
+/* ── MAPA MODERNO ── */
+.heatmap {
+  border-radius:14px;
+  overflow:hidden;
+  height:230px;
+  background:#060d1a;
+  position:relative;
+  border:1px solid #1a2535;
+}
+
+/* Capas de calor con CSS puro */
+.heat-layer {
+  position:absolute;
+  border-radius:50%;
+  transform:translate(-50%,-50%);
+}
+
+/* Router/ONT - centro de todo */
+.hl-ont {
+  width:260px;height:200px;
+  left:30%;top:52%;
+  background:radial-gradient(ellipse,
+    rgba(0,200,255,0.55) 0%,
+    rgba(16,185,129,0.4) 30%,
+    rgba(16,185,129,0.15) 60%,
+    transparent 80%);
+  filter:blur(16px);
+}
+/* Deco Living - buena señal */
+.hl-deco1 {
+  width:160px;height:130px;
+  left:48%;top:30%;
+  background:radial-gradient(ellipse,
+    rgba(16,185,129,0.7) 0%,
+    rgba(16,185,129,0.2) 60%,
+    transparent 85%);
+  filter:blur(14px);
+}
+/* Deco Pieza - señal media */
+.hl-deco2 {
+  width:150px;height:120px;
+  left:74%;top:62%;
+  background:radial-gradient(ellipse,
+    rgba(245,158,11,0.75) 0%,
+    rgba(239,68,68,0.2) 55%,
+    transparent 80%);
+  filter:blur(14px);
+}
+/* Extensor */
+.hl-ext {
+  width:130px;height:110px;
+  left:57%;top:70%;
+  background:radial-gradient(ellipse,
+    rgba(16,185,129,0.6) 0%,
+    rgba(16,185,129,0.15) 65%,
+    transparent 85%);
+  filter:blur(12px);
+}
+/* Zona sin cobertura */
+.hl-dead {
+  width:90px;height:75px;
+  left:90%;top:20%;
+  background:radial-gradient(ellipse,rgba(239,68,68,0.35) 0%,transparent 70%);
+  filter:blur(10px);
+}
+
+/* Grid de fondo */
+.heat-grid {
+  position:absolute;inset:0;
+  background-image:
+    linear-gradient(rgba(0,200,255,0.04) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,200,255,0.04) 1px,transparent 1px);
+  background-size:32px 32px;
+}
+
+/* Muro inferido */
+.heat-wall {
+  position:absolute;
+  left:60%;top:6%;bottom:6%;width:1px;
+  background:repeating-linear-gradient(
+    180deg,
+    rgba(255,255,255,0.25) 0px,
+    rgba(255,255,255,0.25) 4px,
+    transparent 4px,transparent 9px
+  );
+}
+.heat-wall-lbl {
+  position:absolute;left:61%;top:7%;
+  font-size:7px;color:rgba(255,255,255,0.2);
+  font-family:'Share Tech Mono',monospace;
+  letter-spacing:0.5px;writing-mode:vertical-rl;
+}
+
+/* Anillos de cobertura desde ONT */
+.coverage-ring {
+  position:absolute;
+  border-radius:50%;
+  transform:translate(-50%,-50%);
+  border:1px solid rgba(0,200,255,0.1);
+  left:30%;top:52%;
+}
+.cr1 { width:80px;height:64px; border-color:rgba(16,185,129,0.3); }
+.cr2 { width:160px;height:128px; border-color:rgba(16,185,129,0.15); }
+.cr3 { width:240px;height:192px; border-color:rgba(245,158,11,0.12); }
+.cr4 { width:320px;height:256px; border-color:rgba(239,68,68,0.08); }
+
+/* Etiquetas de metros en los anillos */
+.ring-lbl {
+  position:absolute;
+  font-family:'Share Tech Mono',monospace;
+  font-size:7px;
+  color:rgba(255,255,255,0.2);
+  transform:translate(-50%,-50%);
+  left:30%;
+  white-space:nowrap;
+}
+.rl1 { top:calc(52% - 33px); }
+.rl2 { top:calc(52% - 65px); }
+.rl3 { top:calc(52% - 97px); }
+
+/* Puntos de dispositivos */
+.map-pt {
+  position:absolute;
+  transform:translate(-50%,-50%);
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  z-index:20;
+}
+.map-dot {
+  border-radius:50%;
+  border:2px solid rgba(255,255,255,0.9);
+  position:relative;
+}
+.map-dot::after {
+  content:'';
+  position:absolute;
+  inset:-4px;
+  border-radius:50%;
+  border:1px solid currentColor;
+  opacity:0.3;
+  animation:pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,100% { transform:scale(1);opacity:0.3; }
+  50% { transform:scale(1.3);opacity:0; }
+}
+.md-ont  { width:14px;height:14px;background:#00c8ff;color:#00c8ff;box-shadow:0 0 12px #00c8ff; }
+.md-deco { width:11px;height:11px;background:#10b981;color:#10b981;box-shadow:0 0 8px #10b981; }
+.md-warn { width:11px;height:11px;background:#f59e0b;color:#f59e0b;box-shadow:0 0 8px #f59e0b; }
+.md-ext  { width:10px;height:10px;background:#f97316;color:#f97316;box-shadow:0 0 8px #f97316; }
+
+.map-lbl {
+  background:rgba(0,0,0,0.8);
+  color:#fff;font-size:8px;font-weight:700;
+  padding:2px 6px;border-radius:4px;
+  white-space:nowrap;letter-spacing:0.3px;
+  border:1px solid rgba(255,255,255,0.1);
+}
+.map-lbl-sub {
+  font-size:7px;color:rgba(255,255,255,0.5);
+  font-family:'Share Tech Mono',monospace;
+  text-align:center;
+}
+
+/* Leyenda metros */
+.heat-legend {
+  position:absolute;bottom:8px;left:10px;
+  background:rgba(0,0,0,0.7);
+  border-radius:6px;padding:5px 8px;
+  border:1px solid rgba(255,255,255,0.06);
+}
+.leg-title { font-size:7px;color:rgba(255,255,255,0.4);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px; }
+.leg-items { display:flex;flex-direction:column;gap:2px; }
+.leg-item { display:flex;align-items:center;gap:5px; }
+.leg-dot { width:7px;height:7px;border-radius:50%; }
+.leg-txt { font-size:7px;color:rgba(255,255,255,0.5);font-family:'Share Tech Mono',monospace; }
+
+/* Leyenda calor */
+.heat-legend-r {
+  position:absolute;bottom:8px;right:8px;
+  background:rgba(0,0,0,0.7);border-radius:6px;
+  padding:4px 8px;display:flex;align-items:center;gap:5px;
+  border:1px solid rgba(255,255,255,0.06);
+}
+.leg-bar { width:55px;height:5px;border-radius:3px;background:linear-gradient(90deg,#ef4444,#f59e0b,#10b981); }
+
+/* COBERTURA EN METROS */
+.metros-grid { display:grid;grid-template-columns:1fr 1fr;gap:8px; }
+.metro-card {
+  background:linear-gradient(135deg,#0d1b2a,#0f2240);
+  border:1px solid #1e3a5f;
+  border-radius:12px;padding:14px;
+  position:relative;overflow:hidden;
+}
+.metro-card::before {
+  content:'';position:absolute;
+  top:-20px;right:-20px;
+  width:60px;height:60px;
+  border-radius:50%;
+  background:radial-gradient(circle,rgba(0,200,255,0.08),transparent);
+}
+.metro-ico { font-size:20px;margin-bottom:6px; }
+.metro-dist {
+  font-family:'Rajdhani',sans-serif;
+  font-size:28px;font-weight:700;
+  line-height:1;
+}
+.metro-unit { font-size:12px;font-weight:400;opacity:0.6; }
+.metro-lbl { font-size:10px;color:#8fa8c8;margin-top:4px; }
+.metro-device { font-size:11px;font-weight:700;color:#fff;margin-top:2px; }
+.metro-rssi {
+  font-family:'Share Tech Mono',monospace;
+  font-size:10px;margin-top:3px;
+}
+
+/* DISPOSITIVOS */
+.dispo-list { display:flex;flex-direction:column;gap:7px; }
+.dispo {
+  display:flex;align-items:center;gap:12px;
+  padding:12px 14px;border-radius:10px;
+  border:1px solid #f1f5f9;background:#fafbfc;
+}
+.dispo-ico { width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0; }
+.ico-ont  { background:#eff6ff; }
+.ico-deco { background:#f0fdf4; }
+.ico-ext  { background:#fff7ed; }
+.ico-pc   { background:#f5f3ff; }
+.dispo-info { flex:1; }
+.dispo-name { font-size:13px;font-weight:700;color:#1e293b; }
+.dispo-mac  { font-size:10px;color:#94a3b8;font-family:'Share Tech Mono',monospace;margin-top:1px; }
+.dispo-serie { font-size:10px;color:#64748b;margin-top:1px;font-weight:600; }
+.dispo-r { text-align:right; }
+.rssi { font-family:'Share Tech Mono',monospace;font-size:14px;font-weight:700; }
+.rssi-lbl { font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-top:2px; }
+.dist-lbl { font-size:9px;color:#94a3b8;margin-top:2px;font-family:'Share Tech Mono',monospace; }
+.c-ok   { color:#10b981; }
+.c-warn { color:#f59e0b; }
+.c-bad  { color:#ef4444; }
+.c-blue { color:#00c8ff; }
+.badge-cable { background:#10b981;color:#fff;font-size:9px;font-weight:700;letter-spacing:1px;padding:3px 8px;border-radius:10px;text-transform:uppercase; }
+
+/* RF */
+.rf-grid { display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px; }
+.rf-card { background:#f8fafc;border:1px solid #f1f5f9;border-radius:10px;padding:10px 8px;text-align:center; }
+.rf-ico { font-size:18px;margin-bottom:4px; }
+.rf-v   { font-size:17px;font-weight:800;color:#1e293b; }
+.rf-l   { font-size:9px;color:#94a3b8;margin-top:2px; }
+.rf-s   { font-size:9px;font-weight:700;margin-top:3px; }
+
+/* ESPECTRO */
+.spectrum-wrap { margin-top:11px; }
+.spectrum-title { font-size:9px;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px; }
+.spectrum {
+  background:#060d1a;border-radius:8px;
+  padding:10px 10px 22px;
+  display:flex;align-items:flex-end;gap:2px;
+  height:72px;position:relative;
+}
+.sp-bar { flex:1;border-radius:2px 2px 0 0;position:relative;min-height:2px; }
+.sp-nb   { background:rgba(255,255,255,0.1); }
+.sp-busy { background:rgba(239,68,68,0.4); }
+.sp-mine { background:linear-gradient(180deg,#00c8ff,#0055ff);box-shadow:0 0 6px rgba(0,200,255,0.5); }
+.sp-lbl  { position:absolute;bottom:-16px;left:50%;transform:translateX(-50%);font-size:7px;color:rgba(255,255,255,0.25);font-family:'Share Tech Mono',monospace; }
+
+/* OBS */
+.obs-list { display:flex;flex-direction:column;gap:6px; }
+.obs { padding:9px 12px;border-radius:8px;font-size:12px;line-height:1.5; }
+.obs.ok   { background:#f0fdf4;border-left:3px solid #10b981;color:#166534; }
+.obs.warn { background:#fffbeb;border-left:3px solid #f59e0b;color:#92400e; }
+.obs.info { background:#eff6ff;border-left:3px solid #3b82f6;color:#1e40af; }
+
+/* FIRMA */
+.firma { display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px;padding-top:18px;border-top:1px dashed #e2e8f0; }
+.firma-b { text-align:center; }
+.firma-line { height:1px;background:#cbd5e1;margin:26px 0 6px; }
+.firma-lbl { font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px; }
+.firma-name { font-size:12px;font-weight:700;color:#1e293b;margin-top:3px; }
+.firma-rut  { font-size:10px;color:#94a3b8;font-family:'Share Tech Mono',monospace;margin-top:2px; }
+
+/* FOOTER */
+.footer { background:#f8fafc;border-top:1px solid #e2e8f0;padding:12px 24px;display:flex;align-items:center;justify-content:space-between; }
+.footer-txt { font-size:9px;color:#94a3b8;line-height:1.7; }
+.footer-qr  { font-size:28px;opacity:0.35; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HEADER -->
+  <div class="hdr">
+    <div class="hdr-top">
+      <div class="brand-row">
+        <div class="brand-icon">📡</div>
+        <div>
+          <div class="brand-name">CREABOX</div>
+          <div class="brand-sub">Plataforma Operativa</div>
+        </div>
+      </div>
+      <div class="doc-num">CERT-2025-04-00847<br>14 Abril 2025 · 15:44</div>
+    </div>
+    <div class="hdr-cert">Certificado de Instalación</div>
+    <div class="hdr-title">Cobertura WiFi Residencial</div>
+  </div>
+
+  <!-- SCORE -->
+  <div class="score-bar">
+    <div class="score-left">
+      <div class="score-ring">
+        <div class="score-inner">
+          <div class="score-num">87</div>
+          <div class="score-den">/100</div>
+        </div>
+      </div>
+      <div>
+        <div class="score-verdict">Instalación Aprobada</div>
+        <div class="score-sub">Cobertura satisfactoria · Radio ~18m</div>
+      </div>
+    </div>
+    <div class="cert-badge">✓ Certificado</div>
+  </div>
+
+  <div class="body">
+
+    <!-- INFO -->
+    <div class="sec">
+      <div class="sec-title">Información de la Instalación</div>
+      <div class="info-grid">
+        <div class="info-box"><div class="info-lbl">Cliente</div><div class="info-val">María González P.</div></div>
+        <div class="info-box"><div class="info-lbl">Dirección</div><div class="info-val">Los Aromos 2341, D502</div></div>
+        <div class="info-box"><div class="info-lbl">Propiedad</div><div class="info-val">Depto · Mediano</div></div>
+        <div class="info-box"><div class="info-lbl">Construcción</div><div class="info-val">Hormigón</div></div>
+        <div class="info-box"><div class="info-lbl">ONT</div><div class="info-val">Huawei HG8145X6-13</div></div>
+        <div class="info-box"><div class="info-lbl">Plan</div><div class="info-val">600 Mbps Fibra</div></div>
+      </div>
+    </div>
+
+    <!-- MAPA MODERNO -->
+    <div class="sec">
+      <div class="sec-title">Mapa de Cobertura · Vista Aérea</div>
+      <div class="heatmap">
+        <div class="heat-grid"></div>
+
+        <!-- anillos de cobertura -->
+        <div class="coverage-ring cr1"></div>
+        <div class="coverage-ring cr2"></div>
+        <div class="coverage-ring cr3"></div>
+        <div class="coverage-ring cr4"></div>
+
+        <!-- etiquetas metros -->
+        <div class="ring-lbl rl1">5m</div>
+        <div class="ring-lbl rl2">10m</div>
+        <div class="ring-lbl rl3">15m</div>
+
+        <!-- capas de calor -->
+        <div class="heat-layer hl-ont"></div>
+        <div class="heat-layer hl-deco1"></div>
+        <div class="heat-layer hl-deco2"></div>
+        <div class="heat-layer hl-ext"></div>
+        <div class="heat-layer hl-dead"></div>
+
+        <!-- muro inferido -->
+        <div class="heat-wall"></div>
+        <div class="heat-wall-lbl">muro</div>
+
+        <!-- ONT — centro -->
+        <div class="map-pt" style="left:30%;top:52%">
+          <div class="map-dot md-ont"></div>
+          <div class="map-lbl">📡 ONT · Router</div>
+          <div class="map-lbl-sub">192.168.1.1</div>
+        </div>
+
+        <!-- Deco Living -->
+        <div class="map-pt" style="left:48%;top:28%">
+          <div class="map-dot md-deco"></div>
+          <div class="map-lbl">📺 Deco Living</div>
+          <div class="map-lbl-sub">-54 dBm · 6.2m</div>
+        </div>
+
+        <!-- Deco Pieza -->
+        <div class="map-pt" style="left:74%;top:62%">
+          <div class="map-dot md-warn"></div>
+          <div class="map-lbl">📺 Deco Pieza</div>
+          <div class="map-lbl-sub">-69 dBm · 14.8m</div>
+        </div>
+
+        <!-- Extensor -->
+        <div class="map-pt" style="left:57%;top:72%">
+          <div class="map-dot md-ext"></div>
+          <div class="map-lbl">🔁 Extensor</div>
+          <div class="map-lbl-sub">Cable · 0m</div>
+        </div>
+
+        <!-- leyenda izq -->
+        <div class="heat-legend">
+          <div class="leg-title">Cobertura</div>
+          <div class="leg-items">
+            <div class="leg-item"><div class="leg-dot" style="background:#10b981"></div><div class="leg-txt">Excelente</div></div>
+            <div class="leg-item"><div class="leg-dot" style="background:#f59e0b"></div><div class="leg-txt">Aceptable</div></div>
+            <div class="leg-item"><div class="leg-dot" style="background:#ef4444"></div><div class="leg-txt">Débil</div></div>
+          </div>
+        </div>
+
+        <!-- leyenda der -->
+        <div class="heat-legend-r">
+          <span class="leg-txt">Débil</span>
+          <div class="leg-bar"></div>
+          <span class="leg-txt">Óptimo</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- COBERTURA EN METROS -->
+    <div class="sec">
+      <div class="sec-title">Cobertura en Metros</div>
+      <div class="metros-grid">
+        <div class="metro-card">
+          <div class="metro-ico">🟢</div>
+          <div class="metro-dist" style="color:#10b981">6.2<span class="metro-unit">m</span></div>
+          <div class="metro-device">Deco Living</div>
+          <div class="metro-rssi c-ok">-54 dBm · Excelente</div>
+          <div class="metro-lbl">5GHz · Canal 36</div>
+        </div>
+        <div class="metro-card">
+          <div class="metro-ico">🟡</div>
+          <div class="metro-dist" style="color:#f59e0b">14.8<span class="metro-unit">m</span></div>
+          <div class="metro-device">Deco Pieza</div>
+          <div class="metro-rssi c-warn">-69 dBm · Aceptable</div>
+          <div class="metro-lbl">2.4GHz · Canal 11</div>
+        </div>
+        <div class="metro-card" style="grid-column:1/-1">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div>
+              <div class="metro-ico">📡</div>
+              <div class="metro-dist" style="color:#00c8ff">~18<span class="metro-unit">m</span></div>
+            </div>
+            <div>
+              <div class="metro-device">Radio de cobertura total estimado</div>
+              <div class="metro-rssi c-blue">Basado en modelo de propagación · Hormigón n=2.7</div>
+              <div class="metro-lbl">Límite útil desde la ONT en condiciones actuales</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DISPOSITIVOS -->
+    <div class="sec">
+      <div class="sec-title">Dispositivos Detectados</div>
+      <div class="dispo-list">
+
+        <div class="dispo">
+          <div class="dispo-ico ico-ont">📡</div>
+          <div class="dispo-info">
+            <div class="dispo-name">ONT Huawei HG8145X6-13</div>
+            <div class="dispo-mac">A8:C8:3A:1F:44:02</div>
+            <div class="dispo-serie">Router principal · 2.4GHz + 5GHz</div>
+          </div>
+          <div class="dispo-r">
+            <div class="rssi c-blue">Fibra OK</div>
+            <div class="rssi-lbl c-blue">Central</div>
+          </div>
+        </div>
+
+        <div class="dispo">
+          <div class="dispo-ico ico-deco">📺</div>
+          <div class="dispo-info">
+            <div class="dispo-name">Decodificador · Living</div>
+            <div class="dispo-mac">3C:A8:2A:44:F1:09</div>
+            <div class="dispo-serie">S/N: ARS-2024-44F109 · Arris</div>
+          </div>
+          <div class="dispo-r">
+            <div class="rssi c-ok">-54 dBm</div>
+            <div class="rssi-lbl c-ok">Excelente</div>
+            <div class="dist-lbl">~6.2 metros</div>
+          </div>
+        </div>
+
+        <div class="dispo">
+          <div class="dispo-ico ico-deco">📺</div>
+          <div class="dispo-info">
+            <div class="dispo-name">Decodificador · Pieza</div>
+            <div class="dispo-mac">3C:A8:2A:44:F1:17</div>
+            <div class="dispo-serie">S/N: ARS-2024-44F117 · Arris</div>
+          </div>
+          <div class="dispo-r">
+            <div class="rssi c-warn">-69 dBm</div>
+            <div class="rssi-lbl c-warn">Aceptable</div>
+            <div class="dist-lbl">~14.8 metros</div>
+          </div>
+        </div>
+
+        <div class="dispo">
+          <div class="dispo-ico ico-ext">🔁</div>
+          <div class="dispo-info">
+            <div class="dispo-name">Extensor WiFi · Huawei</div>
+            <div class="dispo-mac">B4:C0:F5:22:88:A1</div>
+            <div class="dispo-serie">Huawei WS5200 · LAN</div>
+          </div>
+          <div class="dispo-r">
+            <span class="badge-cable">📎 Cableado</span>
+            <div class="dist-lbl" style="margin-top:4px">0 metros</div>
+          </div>
+        </div>
+
+        <div class="dispo">
+          <div class="dispo-ico ico-pc">💻</div>
+          <div class="dispo-info">
+            <div class="dispo-name">PC Técnico</div>
+            <div class="dispo-mac">D8:BB:C1:44:22:01</div>
+            <div class="dispo-serie">LAN · Puerto ETH1</div>
+          </div>
+          <div class="dispo-r">
+            <div class="rssi c-blue">Cable</div>
+            <div class="rssi-lbl c-blue">LAN</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- RF -->
+    <div class="sec">
+      <div class="sec-title">Análisis de Entorno RF</div>
+      <div class="rf-grid">
+        <div class="rf-card">
+          <div class="rf-ico">📶</div>
+          <div class="rf-v">14</div>
+          <div class="rf-l">Redes vecinas</div>
+          <div class="rf-s c-warn">Entorno denso</div>
+        </div>
+        <div class="rf-card">
+          <div class="rf-ico">📻</div>
+          <div class="rf-v">Ch 36</div>
+          <div class="rf-l">Canal 5GHz</div>
+          <div class="rf-s c-ok">Sin interferencia</div>
+        </div>
+        <div class="rf-card">
+          <div class="rf-ico">⚡</div>
+          <div class="rf-v">Alta</div>
+          <div class="rf-l">Interferencia 2.4G</div>
+          <div class="rf-s c-warn">8 vecinos Ch6</div>
+        </div>
+      </div>
+      <div class="spectrum-wrap">
+        <div class="spectrum-title">Espectro 2.4 GHz · Canales</div>
+        <div class="spectrum">
+          <div class="sp-bar sp-busy" style="height:65%"><span class="sp-lbl">1</span></div>
+          <div class="sp-bar sp-nb"   style="height:20%"><span class="sp-lbl">2</span></div>
+          <div class="sp-bar sp-nb"   style="height:28%"><span class="sp-lbl">3</span></div>
+          <div class="sp-bar sp-nb"   style="height:14%"><span class="sp-lbl">4</span></div>
+          <div class="sp-bar sp-nb"   style="height:10%"><span class="sp-lbl">5</span></div>
+          <div class="sp-bar sp-busy" style="height:82%"><span class="sp-lbl">6</span></div>
+          <div class="sp-bar sp-nb"   style="height:20%"><span class="sp-lbl">7</span></div>
+          <div class="sp-bar sp-nb"   style="height:16%"><span class="sp-lbl">8</span></div>
+          <div class="sp-bar sp-nb"   style="height:12%"><span class="sp-lbl">9</span></div>
+          <div class="sp-bar sp-nb"   style="height:8%"><span class="sp-lbl">10</span></div>
+          <div class="sp-bar sp-mine" style="height:92%"><span class="sp-lbl">11</span></div>
+          <div class="sp-bar sp-nb"   style="height:5%"><span class="sp-lbl">12</span></div>
+          <div class="sp-bar sp-nb"   style="height:5%"><span class="sp-lbl">13</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OBS -->
+    <div class="sec">
+      <div class="sec-title">Observaciones Técnicas</div>
+      <div class="obs-list">
+        <div class="obs ok">✅ Extensor cableado — máximo rendimiento garantizado</div>
+        <div class="obs ok">✅ Deco Living en 5GHz a 6.2m con señal excelente (-54 dBm)</div>
+        <div class="obs warn">⚠️ Deco Pieza a 14.8m en 2.4GHz — banda congestionada por vecinos en canal 6. Señal aceptable pero cerca del límite. Verificar reubicación del extensor.</div>
+        <div class="obs info">ℹ️ Radio de cobertura útil estimado: 18 metros desde la ONT en construcción de hormigón. Dispositivos dentro del rango óptimo.</div>
+      </div>
+    </div>
+
+    <!-- FIRMA -->
+    <div class="firma">
+      <div class="firma-b">
+        <div class="firma-line"></div>
+        <div class="firma-lbl">Técnico Instalador</div>
+        <div class="firma-name">Carlos Muñoz Rivas</div>
+        <div class="firma-rut">RUT 15.443.221-8</div>
+      </div>
+      <div class="firma-b">
+        <div class="firma-line"></div>
+        <div class="firma-lbl">Conforme Cliente</div>
+        <div class="firma-name">María González P.</div>
+        <div class="firma-rut">RUT 12.887.443-K</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="footer-txt">
+      Creaciones Tecnológicas SpA · RUT 76.968.645-2<br>
+      Generado por CreaBox v1.0 · cert.creabox.cl/00847
+    </div>
+    <div class="footer-qr">▦</div>
+  </div>
+
+</div>
+</body>
+</html>
