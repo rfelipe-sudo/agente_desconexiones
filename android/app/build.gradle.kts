@@ -7,6 +7,19 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Firebase / FCM: aplica el plugin de Google Services solo si está presente
+// `android/app/google-services.json`. Mientras ese archivo no exista, el build
+// procede sin Firebase (Firebase.initializeApp() en Dart fallará y la app
+// continuará gracias al try/catch en main.dart).
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+} else {
+    logger.warn(
+        "⚠ google-services.json no encontrado en android/app/. " +
+        "Firebase / FCM quedarán deshabilitados en este build."
+    )
+}
+
 // Leer secretos desde local.properties (nunca commitear este archivo)
 val localProps = Properties().apply {
     val f = rootProject.file("local.properties")

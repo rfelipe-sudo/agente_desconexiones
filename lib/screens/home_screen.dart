@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // TEMP: debug FCM — quitar junto con _mostrarTokenFcm
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -14,6 +15,7 @@ import 'package:agente_desconexiones/widgets/alerta_card.dart';
 import 'package:agente_desconexiones/services/alarm_audio_service.dart';
 import 'package:agente_desconexiones/services/alertas_cto_service.dart';
 import 'package:agente_desconexiones/services/auth_service.dart';
+import 'package:agente_desconexiones/services/fcm_service.dart'; // TEMP: debug FCM
 import 'package:agente_desconexiones/screens/tu_mes_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_equipo_screen.dart';
 
@@ -214,6 +216,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ],
       ),
       actions: [
+        // TEMP: debug FCM — quitar este IconButton, _mostrarTokenFcm y los
+        // imports marcados `TEMP:` cuando ya no haga falta capturar el token.
+        IconButton(
+          icon: const Icon(Icons.bug_report, color: Color(0xFF00D9FF)),
+          tooltip: 'Mostrar FCM token',
+          onPressed: _mostrarTokenFcm,
+        ),
         // Botón Tu Mes
         IconButton(
           icon: const Icon(Icons.calendar_month),
@@ -238,6 +247,54 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ),
       ],
     );
+  }
+
+  // TEMP: debug FCM — borrar este método junto con el IconButton del AppBar.
+  Future<void> _mostrarTokenFcm() async {
+    final token = await FcmService.instance.getToken();
+    if (!mounted) return;
+    final t = token ?? '';
+    if (t.isNotEmpty) {
+      await Clipboard.setData(ClipboardData(text: t));
+    }
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF0D1B2A),
+        title: const Text('FCM Token', style: TextStyle(color: Colors.white)),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            t.isEmpty ? '(token vacío — Firebase aún no entregó token)' : t,
+            style: const TextStyle(
+              color: Colors.white,
+              fontFamily: 'monospace',
+              fontSize: 12,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              if (t.isNotEmpty) {
+                await Clipboard.setData(ClipboardData(text: t));
+              }
+              if (mounted) Navigator.pop(context);
+            },
+            child: const Text('Copiar', style: TextStyle(color: Color(0xFF00D9FF))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar', style: TextStyle(color: Color(0xFF8FA8C8))),
+          ),
+        ],
+      ),
+    );
+    if (mounted && t.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('FCM token copiado al portapapeles')),
+      );
+    }
   }
 
   Widget _buildActionButtons(Usuario usuario) {
@@ -295,23 +352,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               Navigator.of(context).pushNamed('/ayuda-terreno');
             },
           ),
-          if (AppConstants.modulosHerramientasProximamente)
-            _buildProximamenteActionButton(
-              icon: Icons.speed,
-              label: 'Medición\nde Velocidad',
-            )
-          else
-            _buildActionButton(
-              icon: Icons.speed,
-              label: 'Medición\nde Velocidad',
-              color: const Color(0xFF00D4AA),
-              gradient: const LinearGradient(
-                colors: [Color(0xFF00D4AA), Color(0xFF0A84FF)],
-              ),
-              onTap: () {
-                Navigator.of(context).pushNamed('/speed-meter');
-              },
+          // Medición de velocidad: activa siempre (el flag de
+          // "próximamente" se ignora para esta tarjeta).
+          _buildActionButton(
+            icon: Icons.speed,
+            label: 'Medición\nde Velocidad',
+            color: const Color(0xFF00D4AA),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF00D4AA), Color(0xFF0A84FF)],
             ),
+            onTap: () {
+              Navigator.of(context).pushNamed('/speed-meter');
+            },
+          ),
           _buildActionButton(
             icon: Icons.assignment_outlined,
             label: 'Mis\nActividades',
@@ -321,6 +374,22 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
             onTap: () {
               Navigator.of(context).pushNamed('/mis-actividades');
+            },
+          ),
+          // AST sigue como stub.
+          _buildProximamenteActionButton(
+            icon: Icons.health_and_safety_outlined,
+            label: 'AST',
+          ),
+          _buildActionButton(
+            icon: Icons.fact_check_outlined,
+            label: 'Formulario\nFinalización',
+            color: const Color(0xFF10B981),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF10B981), Color(0xFF059669)],
+            ),
+            onTap: () {
+              Navigator.of(context).pushNamed('/finalizar-orden');
             },
           ),
           // Botón Mi Equipo solo para supervisores/ITOs

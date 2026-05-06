@@ -1,0 +1,3 @@
+function() {
+  return new Array(new stAssociatedDevice("InternetGatewayDevice\x2eLANDevice\x2e1\x2eWLANConfiguration\x2e5\x2eAssociatedDevice\x2e1","08\x3a6D\x3a41\x3aD9\x3aE6\x3aE8","1127","234","351","\x2d80","\x2d79","\x2d1","14","11ac","4294967295","0","0","192\x2e168\x2e1\x2e24","Air\x2dde\x2dJonathan","2\x2a2","0","0","1","1","0"),null);
+}

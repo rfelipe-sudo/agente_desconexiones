@@ -176,7 +176,8 @@ class CtoResultsActivity : AppCompatActivity() {
     private fun fetchNyquistPorts(accessId: String) {
         // Si el accessId ya trae el prefijo "02-" (viene de Kepler), no lo duplicamos
         val fullAccessId = if (accessId.startsWith("02-")) accessId else "02-$accessId"
-        val url = "https://nyquisttraza.sbip.cl/onfide/estado-vecino?access_id=$fullAccessId"
+        // Mismo endpoint que usa Flutter (nyquist.sbip.cl, sin "traza").
+        val url = "https://nyquist.sbip.cl/onfide/estado-vecino?access_id=$fullAccessId"
         val credential = Credentials.basic(BuildConfig.NYQUIST_USER, BuildConfig.NYQUIST_PASS)
         android.util.Log.d("CtoResults", "Nyquist URL: $url")
         val call = client.newCall(

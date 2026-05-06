@@ -84,6 +84,53 @@ class PuertoCTO {
   }
 }
 
+/// Una fila de la tabla `produccion_crea` representando una OT del técnico.
+/// Usada por el historial de "Revisar Estado CTO".
+class OrdenHistorial {
+  const OrdenHistorial({
+    required this.ordenTrabajo,
+    required this.accessIdPrefijado,
+    required this.tipoOrden,
+    required this.estado,
+    required this.fechaReferencia,
+    this.horaInicio,
+    this.horaTermino,
+  });
+
+  /// Número de OT (ej. "1-3FCTFPHL").
+  final String ordenTrabajo;
+
+  /// Access ID con prefijo VNO. Vacío si la fila no tiene access_id asignado.
+  final String accessIdPrefijado;
+
+  final String tipoOrden;
+  final String estado;
+
+  /// La fecha que se usa para agrupar en la UI: `hora_termino` si existe,
+  /// si no `hora_inicio`.
+  final DateTime fechaReferencia;
+
+  final DateTime? horaInicio;
+  final DateTime? horaTermino;
+
+  bool get tieneAccessId => accessIdPrefijado.isNotEmpty;
+  bool get esIniciada => estado.toLowerCase() == 'iniciado';
+}
+
+/// Orden activa del técnico devuelta por Kepler `get_pelo_db/$rut`. Trae
+/// los puertos con la numeración FÍSICA correcta (la misma que la web).
+class KeplerActiveOrder {
+  final String accessIdCorto;       // "1-3KSLBJ7G"
+  final String accessIdPrefijado;   // "02-1-3KSLBJ7G"
+  final EstadoCTO estado;
+
+  const KeplerActiveOrder({
+    required this.accessIdCorto,
+    required this.accessIdPrefijado,
+    required this.estado,
+  });
+}
+
 /// Resultado completo de la consulta al estado del vecino (CTO)
 class EstadoCTO {
   final String accessId;
@@ -129,8 +176,11 @@ class EstadoCTO {
   }
 }
 
-/// Servicio para consultar la API Nyquist (estado CTO / vecino)
-/// Las credenciales se almacenan en la tabla configuracion_app de Supabase
+/// Servicio para consultar la API Nyquist (estado CTO / vecino).
+///
+/// Credenciales hardcodeadas, idéntico al módulo `turing-android` original.
+/// **No** se leen desde Supabase — el lookup de `produccion_crea` por RUT/OT
+/// sí usa Supabase porque es data del propio CREABOX, no del proveedor.
 class NyquistService {
   static final NyquistService _instance = NyquistService._internal();
   factory NyquistService() => _instance;
@@ -138,95 +188,55 @@ class NyquistService {
 
   final _supabase = Supabase.instance.client;
 
-  // Valores por defecto (si configuracion_app no tiene las claves en Supabase)
-  static const String _defaultUser     = '0npVpRUG7MegtpmfdDuJ3A';
-  static const String _defaultPassword = 'Ddw3u241Y0MN_x7ezZixKIJtk1ZRHpG6Zz2tCYrhXVg';
-  static const String _defaultBaseUrl  = 'https://nyquisttraza.sbip.cl';
-  static const String _defaultVnoId   = '02';
-
-  // Cache en memoria para no releer Supabase en cada consulta
-  String? _user;
-  String? _password;
-  String? _baseUrl;
-  String? _vnoId;
-
-  /// Carga las credenciales desde Supabase (si no están en caché)
-  Future<void> _cargarCredenciales() async {
-    if (_user != null) return; // Ya cargadas
-
-    try {
-      final response = await _supabase
-          .from('configuracion_app')
-          .select('clave, valor')
-          .inFilter('clave', ['nyquist_user', 'nyquist_password', 'nyquist_base_url', 'nyquist_vno_id']);
-
-      final lista = List<Map<String, dynamic>>.from(response as List);
-      for (var item in lista) {
-        switch (item['clave']) {
-          case 'nyquist_user':     _user    = item['valor']; break;
-          case 'nyquist_password': _password = item['valor']; break;
-          case 'nyquist_base_url': _baseUrl  = item['valor']; break;
-          case 'nyquist_vno_id':   _vnoId    = item['valor']; break;
-        }
-      }
-      print('✅ [Nyquist] Credenciales cargadas desde Supabase');
-      print('   → nyquist_user: ${_user?.isNotEmpty == true ? "✅ (${_user!.length} chars)" : "❌ VACÍO"}');
-      print('   → nyquist_password: ${_password?.isNotEmpty == true ? "✅ (${_password!.length} chars)" : "❌ VACÍO"}');
-      print('   → nyquist_base_url: ${_baseUrl ?? "❌ VACÍO (usará default)"}');
-      print('   → nyquist_vno_id: ${_vnoId ?? "❌ VACÍO (usará 02)"}');
-    } catch (e) {
-      print('❌ [Nyquist] Error cargando credenciales: $e');
-      rethrow;
-    }
-  }
+  // Credenciales Basic Auth para Nyquist (turing-android baseline).
+  static const String _nyquistUser     = '0npVpRUG7MegtpmfdDuJ3A';
+  static const String _nyquistPassword = 'Ddw3u241Y0MN_x7ezZixKIJtk1ZRHpG6Zz2tCYrhXVg';
+  // Endpoint correcto: nyquist.sbip.cl (no nyquistbio).
+  static const String _nyquistBaseUrl  = 'https://nyquist.sbip.cl';
+  static const String _nyquistVnoId    = '02';
 
   /// Construye el access_id a partir del número de OT.
-  /// Carga las credenciales primero para usar el vno_id de Supabase.
   /// Formato: "{vnoId}-{ot}"  → ej: "02-1-3FCTFPHL"
-  Future<String> buildAccessId(String ot) async {
-    await _cargarCredenciales();
-    final vno = (_vnoId?.isNotEmpty == true) ? _vnoId! : _defaultVnoId;
-    return '$vno-$ot';
-  }
+  String buildAccessId(String ot) => '$_nyquistVnoId-$ot';
 
-  /// CREABOX: orden iniciada desde `produccion_crea` (Kepler/Nyquist).
-  /// Retorna mapa compatible con Asistente CTO: access_id, orden_de_trabajo, tipo_red_producto.
+  /// CREABOX: busca un access_id activo en `tabla_access_id` por RUT del
+  /// técnico. La tabla solo tiene 3 columnas: `rut_tecnico`, `access_id`,
+  /// `orden_trabajo` — sin estado/fecha/tipo. Por eso devolvemos cualquier
+  /// fila válida (la más reciente que el motor entregue), sin filtros de
+  /// estado ni `tipo_red_producto`.
   Future<Map<String, String>?> buscarAccessIdPorRut(String rut) async {
     try {
-      await _cargarCredenciales();
-      final vno = (_vnoId?.isNotEmpty == true) ? _vnoId! : _defaultVnoId;
-
-      print('🔍 [Nyquist/CREA] produccion_crea para RUT: $rut');
+      print('🔍 [Nyquist/CREA] tabla_access_id para RUT: $rut');
 
       final response = await _supabase
-          .from('produccion_crea')
-          .select('orden_trabajo, access_id, tipo_orden')
+          .from('tabla_access_id')
+          .select('rut_tecnico, access_id, orden_trabajo, fecha_trabajo')
           .eq('rut_tecnico', rut)
-          .eq('estado', 'Iniciado')
           .not('access_id', 'is', null)
           .neq('access_id', '')
-          .order('hora_inicio', ascending: false)
+          .order('fecha_trabajo', ascending: false)
           .limit(1)
           .maybeSingle();
 
-      if (response == null) return null;
-
-      final tipoRed = response['tipo_orden']?.toString() ?? '';
-      final accessRaw = response['access_id']?.toString().trim() ?? '';
-      final ot = response['orden_trabajo']?.toString().trim() ?? '';
-
-      var accessFull = accessRaw;
-      if (accessRaw.isNotEmpty) {
-        final tienePrefijoVno = RegExp(r'^\d{1,2}-').hasMatch(accessRaw);
-        accessFull = tienePrefijoVno ? accessRaw : '$vno-$accessRaw';
+      if (response == null) {
+        print('🔍 [Nyquist/CREA] sin filas en tabla_access_id para RUT=$rut');
+        return null;
       }
 
-      print('🔍 [Nyquist/CREA] OT: "$ot" | AccessID: "$accessFull"');
+      // En tabla_access_id el access_id viene PELADO (sin VNO). Nyquist
+      // exige el prefijo "{VNO}-" siempre, así que lo anteponemos.
+      final accessRaw = response['access_id']?.toString().trim() ?? '';
+      final accessFull = accessRaw.isEmpty ? '' : '$_nyquistVnoId-$accessRaw';
+      final ot = response['orden_trabajo']?.toString().trim() ?? '';
+
+      print('🔍 [Nyquist/CREA] OT: "$ot" | AccessID raw: "$accessRaw" → "$accessFull"');
 
       return {
         'access_id': accessFull,
         'id_actividad': ot,
-        'tipo_red_producto': tipoRed,
+        // tabla_access_id no expone tipo_red_producto. Devolvemos vacío para
+        // que el screen no caiga en `tecnologia_incompatible`.
+        'tipo_red_producto': '',
         'orden_de_trabajo': ot,
       };
     } catch (e, stack) {
@@ -240,8 +250,7 @@ class NyquistService {
   /// Retorna mapa con access_id prefijado, tipo_red_producto, etc. o null.
   Future<Map<String, String>?> buscarAccessIdPorOT(String ot) async {
     try {
-      await _cargarCredenciales();
-      final vno = (_vnoId?.isNotEmpty == true) ? _vnoId! : _defaultVnoId;
+      const vno = _nyquistVnoId;
 
       print('🔍 [Nyquist-Sup] Buscando por OT: $ot');
 
@@ -298,21 +307,109 @@ class NyquistService {
     }
   }
 
-  /// Consulta el estado del vecino para un access_id dado
+  /// Trae las órdenes del técnico desde `tabla_access_id`, filtradas a los
+  /// últimos [dias] días por `fecha_trabajo` y ordenadas descendente.
+  /// La tabla no tiene `estado` ni `tipo_orden`, así que esos campos quedan
+  /// vacíos en el resultado.
+  Future<List<OrdenHistorial>> buscarHistorialPorRut(
+    String rut, {
+    int dias = 30,
+  }) async {
+    final r = rut.trim();
+    if (r.isEmpty) return [];
+
+    // Sin prefiltro de fecha: si la columna `fecha_trabajo` viene como
+    // `date` (no `timestamptz`), el `gte` con `toIso8601String()` falla.
+    // Mejor traemos todo y ordenamos local; el filtro de [dias] lo
+    // aplicamos después contra la fecha parseada.
+    List<dynamic> rows;
+    try {
+      final resp = await _supabase
+          .from('tabla_access_id')
+          .select('rut_tecnico, access_id, orden_trabajo, fecha_trabajo')
+          .eq('rut_tecnico', r)
+          .order('fecha_trabajo', ascending: false);
+      rows = List<dynamic>.from(resp as List);
+    } catch (e) {
+      print('❌ [Nyquist/CREA] historial error: $e');
+      rows = <dynamic>[];
+    }
+
+    print('🔍 [Nyquist/CREA] historial RUT="$r" → ${rows.length} filas');
+    if (rows.isNotEmpty) {
+      final f = (rows.first as Map);
+      print('🔍 [Nyquist/CREA] sample row → '
+          'fecha_trabajo=${f['fecha_trabajo']} | '
+          'access_id=${f['access_id']} | '
+          'orden_trabajo=${f['orden_trabajo']}');
+    }
+    final hoyLog = DateTime.now();
+    print('🔍 [Nyquist/CREA] now=$hoyLog (local). Detalle por fila:');
+    for (var i = 0; i < rows.length && i < 5; i++) {
+      final raw = rows[i] as Map;
+      final fc = raw['fecha_trabajo'];
+      print('  [$i] raw=$fc | ot=${raw['orden_trabajo']}');
+    }
+
+    DateTime? parseDate(dynamic v) {
+      if (v == null) return null;
+      final s = v.toString().trim();
+      if (s.isEmpty) return null;
+      // Cualquier cadena que empiece por `YYYY-MM-DD` la tratamos como
+      // fecha LOCAL pura, ignorando hora/timezone. Cubre `date`,
+      // `timestamp` y `timestamptz` de Postgres por igual y evita el
+      // shift de zona horaria que descalza el filtro de "hoy" (ej:
+      // "2026-05-05T00:00:00Z" → 2026-05-04 20:00 en Chile).
+      final ymd = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(s);
+      if (ymd != null) {
+        return DateTime(
+          int.parse(ymd.group(1)!),
+          int.parse(ymd.group(2)!),
+          int.parse(ymd.group(3)!),
+        );
+      }
+      // Formato chileno `dd/MM/yy` o `dd/MM/yyyy` (con o sin hora detrás).
+      // Acepta año de 2 o 4 dígitos: "26" se asume 2026, "2026" tal cual.
+      final m = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{2,4})').firstMatch(s);
+      if (m != null) {
+        var y = int.parse(m.group(3)!);
+        if (y < 100) y += 2000;
+        return DateTime(y, int.parse(m.group(2)!), int.parse(m.group(1)!));
+      }
+      return null;
+    }
+
+    final corte = DateTime.now().subtract(Duration(days: dias));
+    final out = <OrdenHistorial>[];
+    for (final m in rows.whereType<Map>()) {
+      final raw = Map<String, dynamic>.from(m);
+      final ot = (raw['orden_trabajo'] ?? '').toString().trim();
+      final accessRaw = (raw['access_id'] ?? '').toString().trim();
+      // Mismo criterio que buscarAccessIdPorRut: prefijar siempre con VNO.
+      final accessFull = accessRaw.isEmpty ? '' : '$_nyquistVnoId-$accessRaw';
+      final fecha = parseDate(raw['fecha_trabajo']);
+      // Filtro de [dias] aplicado en cliente (sólo si pudimos parsear fecha).
+      if (fecha != null && fecha.isBefore(corte)) continue;
+      out.add(OrdenHistorial(
+        ordenTrabajo: ot,
+        accessIdPrefijado: accessFull,
+        tipoOrden: '',
+        estado: '',
+        fechaReferencia: fecha ?? DateTime.now(),
+        horaInicio: fecha,
+        horaTermino: null,
+      ));
+    }
+    return out;
+  }
+
+  /// Consulta el estado del vecino para un access_id dado.
+  /// Credenciales hardcodeadas (idéntico a turing-android).
   Future<EstadoCTO> consultarEstado(String accessId) async {
-    await _cargarCredenciales();
+    final basicAuth = base64.encode(utf8.encode('$_nyquistUser:$_nyquistPassword'));
+    final url = Uri.parse('$_nyquistBaseUrl/onfide/estado-vecino?access_id=$accessId');
 
-    final user     = (_user?.isNotEmpty == true)     ? _user!     : _defaultUser;
-    final password = (_password?.isNotEmpty == true) ? _password! : _defaultPassword;
-    final baseUrl  = (_baseUrl?.isNotEmpty == true)  ? _baseUrl!  : _defaultBaseUrl;
-
-    final bytes = utf8.encode('$user:$password');
-    final basicAuth = base64.encode(bytes);
-
-    final url = Uri.parse('$baseUrl/onfide/estado-vecino?access_id=$accessId');
-
-    print('🌐 [Nyquist] Llamando: $url');
-    print('🌐 [Nyquist] User presente: ${user.isNotEmpty} | Pass presente: ${password.isNotEmpty}');
+    print('🌐 [Nyquist] GET $url');
 
     final response = await http.get(
       url,
@@ -326,7 +423,7 @@ class NyquistService {
       throw Exception('HTTP ${response.statusCode}: ${response.body}');
     }
 
-    print('📡 [Nyquist] Respuesta raw (primeros 300 chars): ${response.body.substring(0, response.body.length.clamp(0, 300))}');
+    print('📡 [Nyquist] Respuesta (300 chars): ${response.body.substring(0, response.body.length.clamp(0, 300))}');
 
     final dynamic decoded = jsonDecode(response.body);
 
@@ -347,9 +444,71 @@ class NyquistService {
     return EstadoCTO.fromJson(json);
   }
 
-  /// Invalida la caché de credenciales (útil si se cambian en Supabase)
-  void invalidarCache() {
-    _user = _password = _baseUrl = _vnoId = null;
+  // ── Kepler v2 (orden activa por RUT) ───────────────────────────────────
+
+  /// Endpoint que devuelve la **orden activa** del técnico, con la
+  /// numeración FÍSICA de puertos (port1..port8 con gaps en los no usados),
+  /// idéntica a la que muestra la web. Esto resuelve la inconsistencia con
+  /// Nyquist, que usa una numeración compacta por sufijo de `position`.
+  ///
+  /// Devuelve `null` si Kepler no encuentra la orden o no hay snapshot
+  /// con datos de puertos. Lanza excepción solo en errores de red/HTTP.
+  ///
+  /// El resultado expone:
+  /// - `accessIdCorto`   ej. "1-3KSLBJ7G"
+  /// - `accessIdPrefijado` ej. "02-1-3KSLBJ7G"
+  /// - `estado`          un `EstadoCTO` listo para pintar la tabla.
+  Future<KeplerActiveOrder?> fetchActiveOrderFromKepler(String rut) async {
+    final url = Uri.parse('https://keplerv2.sbip.cl/api/v1/toa/get_pelo_db/$rut');
+    print('🌐 [Kepler/get_pelo_db] $url');
+
+    final response = await http.get(url).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) {
+      throw Exception('Kepler get_pelo_db HTTP ${response.statusCode}');
+    }
+    final body = jsonDecode(response.body);
+    if (body is! Map<String, dynamic>) return null;
+    final data = body['data'];
+    if (data is! Map<String, dynamic>) {
+      print('🌐 [Kepler/get_pelo_db] sin "data" para RUT=$rut');
+      return null;
+    }
+
+    // Snapshot con datos: completado > final > intermedio > inicial.
+    Map<String, dynamic>? niveles;
+    String? snapKey;
+    for (final key in const [
+      'niveles_completado',
+      'niveles_final',
+      'niveles_intermedio',
+      'niveles_inicial',
+    ]) {
+      final n = data[key];
+      if (n is Map<String, dynamic>) {
+        final hasData = List<int>.generate(16, (i) => i + 1)
+            .any((i) => n['u_cto_port${i}_ID'] != null);
+        if (hasData) { niveles = n; snapKey = key; break; }
+      }
+    }
+    if (niveles == null) {
+      print('🌐 [Kepler/get_pelo_db] data sin niveles_*');
+      return null;
+    }
+    print('🌐 [Kepler/get_pelo_db] usando snapshot=$snapKey');
+
+    final accessIdCorto = data['access_id']?.toString() ?? '';
+    final accessIdPrefijado =
+        niveles['u_access_id_vno']?.toString() ??
+            (accessIdCorto.isEmpty ? '' : '$_nyquistVnoId-$accessIdCorto');
+
+    // Reusamos EstadoCTO.fromJson — espera un mapa con clave `result`.
+    final estado = EstadoCTO.fromJson({'result': niveles});
+
+    return KeplerActiveOrder(
+      accessIdCorto: accessIdCorto,
+      accessIdPrefijado: accessIdPrefijado,
+      estado: estado,
+    );
   }
 
   // ── Kepler Traza ──────────────────────────────────────────────────────────

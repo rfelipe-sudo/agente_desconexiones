@@ -12,10 +12,10 @@ dependencies:
   
   cupertino_icons: ^1.0.8
   
-  # Firebase para notificaciones push (descomentar cuando tengas google-services.json)
-  # firebase_core: ^3.8.1
-  # firebase_messaging: ^15.2.0
-  
+  # Firebase para notificaciones push
+  firebase_core: ^3.8.1
+  firebase_messaging: ^15.2.0
+
   # Notificaciones locales con sonido custom
   flutter_local_notifications: ^18.0.1
   
@@ -92,8 +92,10 @@ dependencies:
   flutter_background_service_android: ^6.2.2
   
   # Paquete compartido para Tester de Red v2 (Mapa de Calor)
-  tester_red_shared:
-    path: ../tester_red_shared
+  # tester_red_shared: deshabilitado — el flujo del Mapa de Calor se reescribió
+  # en lib/screens/mapa_calor_screen.dart usando OntWifiService directamente.
+  # tester_red_shared:
+  #   path: ../tester_red_shared
   
   # Supabase
   supabase_flutter: ^2.3.0

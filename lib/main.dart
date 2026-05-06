@@ -1,3 +1,5 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -9,6 +11,8 @@ import 'package:agente_desconexiones/constants/app_colors.dart';
 import 'package:agente_desconexiones/config/supabase_config.dart';
 import 'package:agente_desconexiones/providers/auth_provider.dart';
 import 'package:agente_desconexiones/providers/alertas_provider.dart';
+import 'package:agente_desconexiones/providers/alerta_provider.dart';
+import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/services/local_notification_service.dart';
 import 'package:agente_desconexiones/services/alerta_contexto_service.dart';
 import 'package:agente_desconexiones/services/churn_service.dart';
@@ -31,6 +35,7 @@ import 'package:agente_desconexiones/screens/ayuda_terreno_screen.dart';
 import 'package:agente_desconexiones/screens/speed_meter_screen.dart';
 import 'package:agente_desconexiones/screens/fiber_microscope_screen.dart';
 import 'package:agente_desconexiones/screens/mis_actividades_screen.dart';
+import 'package:agente_desconexiones/screens/finalizar_orden_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_equipo_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/solicitudes_ayuda_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_actividad_screen.dart';
@@ -49,6 +54,19 @@ final supabaseService = SupabaseService();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Firebase + FCM background handler ANTES de cualquier otra cosa async,
+  // para que aplique tanto en cold start como en wake-from-terminated.
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    await FcmService.instance.init();
+    print('✅ Firebase + FCM inicializados');
+  } catch (e) {
+    // Si google-services.json no está presente, Firebase falla pero el resto
+    // de la app debe seguir funcionando.
+    print('⚠️ [Main] Firebase no inicializado: $e');
+  }
 
   try {
     // Inicializar notificaciones
@@ -378,6 +396,13 @@ class AgenteDesconexionesApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => AlertasProvider()),
+        ChangeNotifierProvider<AlertaProvider>(
+          create: (_) {
+            final p = AlertaProvider()..initialize();
+            FcmService.instance.setAlertaProvider(p);
+            return p;
+          },
+        ),
         ChangeNotifierProvider(create: (_) => ChurnService()),
         ChangeNotifierProvider(create: (_) => AyudaService()),
       ],
@@ -419,6 +444,7 @@ class AgenteDesconexionesApp extends StatelessWidget {
           '/speed-meter': (context) => const SpeedMeterScreen(),
           '/microscope': (context) => const FiberMicroscopeScreen(),
           '/mis-actividades': (context) => const MisActividadesScreen(),
+          '/finalizar-orden': (context) => const FinalizarOrdenScreen(),
           '/supervisor-equipo': (context) => const MiEquipoScreen(),
           '/solicitudes-ayuda': (context) => const SolicitudesAyudaScreen(),
           '/mi-actividad': (context) => const MiActividadScreen(),

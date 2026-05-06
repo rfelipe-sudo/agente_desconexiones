@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:agente_desconexiones/constants/app_constants.dart';
 import 'package:agente_desconexiones/providers/auth_provider.dart';
+import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/utils/device_helper.dart';
 import 'package:agente_desconexiones/utils/rut_helper.dart';
 import 'package:agente_desconexiones/utils/session_manager.dart';
@@ -196,6 +197,16 @@ class _RegistroRutScreenState extends State<RegistroRutScreen> {
       await SessionManager.marcarNombreGuardadoParaRut(rutFinal);
 
       print('[RegistroRut] Guardado: $rutFinal → $nombreFinal');
+
+      // Registrar token FCM en Kepler. Solo se reenvía si cambió respecto
+      // al guardado en SharedPreferences. Errores no bloquean el login.
+      try {
+        final ok = await FcmService.instance
+            .registrarTokenSiCambio(rut: rutFinal);
+        print('[RegistroRut] FCM registro Kepler: $ok');
+      } catch (e) {
+        print('[RegistroRut] FCM registro fallo: $e');
+      }
 
       if (mounted) {
         await context.read<AuthProvider>().syncUsuarioDesdePrefs();

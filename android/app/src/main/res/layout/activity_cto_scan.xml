@@ -51,17 +51,54 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
 
-    <!-- Marco guía centrado (ayuda a encuadrar la CTO) -->
+    <!-- Marco guía estilo "marco fotográfico" — ocupa ~88% del ancho con
+         relación 4:3 y se ubica casi al borde de la pantalla. -->
     <View
         android:id="@+id/scanFrame"
-        android:layout_width="270dp"
-        android:layout_height="195dp"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
         android:background="@drawable/scan_frame_border"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintVertical_bias="0.40" />
+        app:layout_constraintWidth_percent="0.92"
+        app:layout_constraintDimensionRatio="W,4:3"
+        app:layout_constraintVertical_bias="0.42" />
+
+    <!-- 4 esquinas L (vector) constreñidas a las esquinas de scanFrame -->
+    <ImageView
+        android:id="@+id/scanCornerTL"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:src="@drawable/scan_corner_tl"
+        android:contentDescription="@null"
+        app:layout_constraintTop_toTopOf="@id/scanFrame"
+        app:layout_constraintStart_toStartOf="@id/scanFrame" />
+    <ImageView
+        android:id="@+id/scanCornerTR"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:src="@drawable/scan_corner_tr"
+        android:contentDescription="@null"
+        app:layout_constraintTop_toTopOf="@id/scanFrame"
+        app:layout_constraintEnd_toEndOf="@id/scanFrame" />
+    <ImageView
+        android:id="@+id/scanCornerBL"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:src="@drawable/scan_corner_bl"
+        android:contentDescription="@null"
+        app:layout_constraintBottom_toBottomOf="@id/scanFrame"
+        app:layout_constraintStart_toStartOf="@id/scanFrame" />
+    <ImageView
+        android:id="@+id/scanCornerBR"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:src="@drawable/scan_corner_br"
+        android:contentDescription="@null"
+        app:layout_constraintBottom_toBottomOf="@id/scanFrame"
+        app:layout_constraintEnd_toEndOf="@id/scanFrame" />
 
     <!-- Texto "Escaneando..." animado -->
     <TextView
