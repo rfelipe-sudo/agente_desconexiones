@@ -125,6 +125,7 @@ class FcmService {
   StreamSubscription<List<Map<String, dynamic>>>? _solicitudStreamSub;
   final Set<String> _solicitudesAlerteadas = {};
   bool _solicitudInit = false;
+  String? _solicitudMonitorRut;
 
   // Monitor de traspasos (stream, igual que PIN monitor)
   StreamSubscription<List<Map<String, dynamic>>>? _traspasoSubA;
@@ -132,6 +133,7 @@ class FcmService {
   final Map<String, String> _traspasoEstados = {};
   final Map<String, bool>   _traspasoSapOk   = {};
   final Set<String>         _traspasoIdsInit  = {};
+  String? _traspasoMonitorRut;
 
   /// Conecta el provider para que los handlers en foreground puedan
   /// notificar cambios a la UI sin esperar a un refresh manual.
@@ -154,6 +156,13 @@ class FcmService {
       return;
     }
 
+    // Ya está corriendo para el mismo rut — no resetear
+    if (_solicitudStreamSub != null && _solicitudMonitorRut == rut) {
+      debugPrint('🔔 [SOL] ya activo para rut=$rut — sin resetear');
+      return;
+    }
+
+    _solicitudMonitorRut = rut;
     await _solicitudStreamSub?.cancel();
     _solicitudStreamSub = null;
     _solicitudesAlerteadas.clear();
@@ -206,6 +215,14 @@ class FcmService {
   /// Muestra snack cuando estado cambia a aprobado (KRP) o sap_ok pasa a true.
   Future<void> initTraspasoMonitor(String rut) async {
     debugPrint('📦 [TRP] initTraspasoMonitor llamado para rut=$rut');
+
+    // Ya está corriendo para el mismo rut — no resetear
+    if (_traspasoSubA != null && _traspasoMonitorRut == rut) {
+      debugPrint('📦 [TRP] ya activo para rut=$rut — sin resetear');
+      return;
+    }
+
+    _traspasoMonitorRut = rut;
     await _traspasoSubA?.cancel();
     await _traspasoSubB?.cancel();
     _traspasoEstados.clear();
