@@ -416,10 +416,21 @@ class FcmService {
     final token = await getToken();
     if (token == null || token.isEmpty) return false;
 
+    // Guardar en Supabase siempre — edge functions necesitan este token
+    try {
+      await Supabase.instance.client
+          .from('nomina_tecnicos')
+          .update({'fcm_token': token})
+          .eq('rut', rut);
+      debugPrint('[FCM] token guardado en nomina_tecnicos (registrarTokenSiCambio)');
+    } catch (e) {
+      debugPrint('[FCM] error guardando token en Supabase: $e');
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final anterior = prefs.getString(kPrefFcmTokenRegistrado);
     if (anterior == token) {
-      debugPrint('[FCM] token sin cambios, no se reenvía');
+      debugPrint('[FCM] token sin cambios en Kepler, no se reenvía');
       return true;
     }
 
@@ -456,25 +467,29 @@ class FcmService {
       debugPrint('[FCM] sin RUT en prefs, registro diferido al login');
       return;
     }
+
+    // Guardar en Supabase siempre — edge functions necesitan este token
+    // independiente de si Kepler acepta el registro
+    try {
+      await Supabase.instance.client
+          .from('nomina_tecnicos')
+          .update({'fcm_token': token})
+          .eq('rut', rut);
+      debugPrint('[FCM] token guardado en nomina_tecnicos');
+    } catch (e) {
+      debugPrint('[FCM] no se pudo guardar token en Supabase: $e');
+    }
+
+    // Registrar en Kepler (best-effort, solo si cambió)
     final anterior = prefs.getString(kPrefFcmTokenRegistrado);
     if (anterior == token) {
-      debugPrint('[FCM] token sin cambios, no se reenvía');
+      debugPrint('[FCM] token sin cambios en Kepler, no se reenvía');
       return;
     }
     final ok = await _postToken(token: token, rut: rut);
     if (ok) {
       await prefs.setString(kPrefFcmTokenRegistrado, token);
       debugPrint('[FCM] token registrado en Kepler');
-      // Guardar también en Supabase para que Edge Functions puedan enviar pushes
-      try {
-        await Supabase.instance.client
-            .from('nomina_tecnicos')
-            .update({'fcm_token': token})
-            .eq('rut', rut);
-        debugPrint('[FCM] token guardado en nomina_tecnicos');
-      } catch (e) {
-        debugPrint('[FCM] no se pudo guardar token en Supabase: $e');
-      }
     }
   }
 
