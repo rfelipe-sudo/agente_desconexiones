@@ -552,7 +552,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _tipoSesion = tipo;
       });
     }
-    if (rut.isNotEmpty) _suscribirSolicitudesMaterial(rut);
+    if (rut.isNotEmpty) {
+      _suscribirSolicitudesMaterial(rut);
+      unawaited(FcmService.instance.initTraspasoMonitor(rut));
+    }
     // Cargar historial del día si es supervisor
     final usuario = mounted ? context.read<AuthProvider>().usuario : null;
     if (usuario != null && usuario.esSupervisor) {

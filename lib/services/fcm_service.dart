@@ -115,12 +115,23 @@ class FcmService {
   /// para evitar que el stream de la pantalla vuelva a sonar si ya sonó aquí.
   static final Set<String> solicitudesNotificadas = {};
 
-  RealtimeChannel? _solicitudChannel;
   StreamSubscription<List<Map<String, dynamic>>>? _pinSub;
   String? _pinUltimo;
 
   AlertaProvider? _alertaProvider;
   bool _initialized = false;
+
+  // Monitor de solicitudes de material (stream, igual que PIN monitor)
+  StreamSubscription<List<Map<String, dynamic>>>? _solicitudStreamSub;
+  final Set<String> _solicitudesAlerteadas = {};
+  bool _solicitudInit = false;
+
+  // Monitor de traspasos (stream, igual que PIN monitor)
+  StreamSubscription<List<Map<String, dynamic>>>? _traspasoSubA;
+  StreamSubscription<List<Map<String, dynamic>>>? _traspasoSubB;
+  final Map<String, String> _traspasoEstados = {};
+  final Map<String, bool>   _traspasoSapOk   = {};
+  final Set<String>         _traspasoIdsInit  = {};
 
   /// Conecta el provider para que los handlers en foreground puedan
   /// notificar cambios a la UI sin esperar a un refresh manual.
@@ -128,10 +139,9 @@ class FcmService {
     _alertaProvider = provider;
   }
 
-  /// Suscripción Realtime a `solicitudes_material_destinatarios` para el RUT
-  /// del técnico actual. Suena cuando llega una solicitud, incluso si el
-  /// usuario no tiene SolicitudMaterialScreen abierta.
-  /// Llamar desde HomeScreen.initState() (después de que Supabase esté listo).
+  /// Monitor de solicitudes de material usando .stream() — mismo mecanismo
+  /// que el PIN monitor, funciona sin REPLICA IDENTITY FULL.
+  /// Suena cuando llega una solicitud nueva pendiente.
   Future<void> initSolicitudMonitor() async {
     final prefs = await SharedPreferences.getInstance();
     final rut = prefs.getString('rut_tecnico') ??
@@ -139,40 +149,98 @@ class FcmService {
         prefs.getString('rut');
     if (rut == null || rut.isEmpty) return;
 
-    // Cancelar suscripción anterior si existe.
-    if (_solicitudChannel != null) {
-      await Supabase.instance.client.removeChannel(_solicitudChannel!);
-      _solicitudChannel = null;
+    await _solicitudStreamSub?.cancel();
+    _solicitudStreamSub = null;
+    _solicitudesAlerteadas.clear();
+    _solicitudInit = false;
+
+    _solicitudStreamSub = Supabase.instance.client
+        .from('solicitudes_material_destinatarios')
+        .stream(primaryKey: ['id'])
+        .eq('rut_tecnico', rut)
+        .listen((rows) {
+      if (!_solicitudInit) {
+        // Primera carga: marcar todas como vistas sin sonar
+        for (final row in rows) {
+          final sId = row['solicitud_id'] as String?;
+          if (sId != null) _solicitudesAlerteadas.add(sId);
+        }
+        _solicitudInit = true;
+        debugPrint('[FCM] solicitudMonitor stream iniciado (${rows.length} existentes)');
+        return;
+      }
+      for (final row in rows) {
+        final sId    = row['solicitud_id'] as String?;
+        final estado = row['estado'] as String? ?? '';
+        if (sId == null || estado != 'pendiente') continue;
+        if (_solicitudesAlerteadas.contains(sId)) continue;
+        _solicitudesAlerteadas.add(sId);
+        solicitudesNotificadas.add(sId);
+        debugPrint('[FCM] solicitudMonitor stream → nueva solicitud $sId → playAlerta');
+        try {
+          _soundChannel.invokeMethod<void>('playAlerta');
+        } catch (e) {
+          debugPrint('[FCM] solicitudMonitor → error playAlerta: $e');
+        }
+      }
+    });
+  }
+
+  /// Monitor de traspasos via .stream() para técnico A y B.
+  /// Muestra snack cuando estado cambia a aprobado (KRP) o sap_ok pasa a true.
+  Future<void> initTraspasoMonitor(String rut) async {
+    await _traspasoSubA?.cancel();
+    await _traspasoSubB?.cancel();
+    _traspasoEstados.clear();
+    _traspasoSapOk.clear();
+    _traspasoIdsInit.clear();
+
+    void procesarRows(List<Map<String, dynamic>> rows) {
+      for (final row in rows) {
+        final id = row['id'] as String?;
+        if (id == null) continue;
+        final estado = row['estado'] as String? ?? 'pendiente';
+        final sapOk  = row['sap_ok']  as bool?   ?? false;
+
+        if (!_traspasoIdsInit.contains(id)) {
+          // Primera vez que vemos este traspaso — registrar sin notificar
+          _traspasoIdsInit.add(id);
+          _traspasoEstados[id] = estado;
+          _traspasoSapOk[id]   = sapOk;
+          continue;
+        }
+
+        final estadoPrev = _traspasoEstados[id] ?? 'pendiente';
+        final sapOkPrev  = _traspasoSapOk[id]   ?? false;
+
+        if (estadoPrev == 'pendiente' && estado == 'aprobado') {
+          debugPrint('[FCM] traspasoMonitor → KRP aprobado $id');
+          _mostrarSnackTraspasoAprobado(
+            'TRANSFERENCIA EN KRP LISTA, TRANSFERENCIA EN TOA EN PROCESO');
+        }
+        if (!sapOkPrev && sapOk) {
+          debugPrint('[FCM] traspasoMonitor → SAP confirmado $id');
+          _mostrarSnackTraspasoAprobado('TRANSFERENCIA EN TOA REALIZADA ✓');
+        }
+
+        _traspasoEstados[id] = estado;
+        _traspasoSapOk[id]   = sapOk;
+      }
     }
 
-    _solicitudChannel = Supabase.instance.client
-        .channel('solicitud_monitor_$rut')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.insert,
-          schema: 'public',
-          table: 'solicitudes_material_destinatarios',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'rut_tecnico',
-            value: rut,
-          ),
-          callback: (payload) async {
-            final solicitudId =
-                payload.newRecord['solicitud_id'] as String?;
-            if (solicitudId == null) return;
-            if (solicitudesNotificadas.contains(solicitudId)) return;
-            solicitudesNotificadas.add(solicitudId);
-            debugPrint('[FCM] solicitudMonitor → nueva solicitud $solicitudId → playAlerta');
-            try {
-              await _soundChannel.invokeMethod<void>('playAlerta');
-            } catch (e) {
-              debugPrint('[FCM] solicitudMonitor → error playAlerta: $e');
-            }
-          },
-        )
-        .subscribe((status, [error]) {
-          debugPrint('[FCM] solicitudMonitor canal: $status error=$error');
-        });
+    _traspasoSubA = Supabase.instance.client
+        .from('traspasos_bodega')
+        .stream(primaryKey: ['id'])
+        .eq('rut_tecnico_a', rut)
+        .listen(procesarRows);
+
+    _traspasoSubB = Supabase.instance.client
+        .from('traspasos_bodega')
+        .stream(primaryKey: ['id'])
+        .eq('rut_tecnico_b', rut)
+        .listen(procesarRows);
+
+    debugPrint('[FCM] traspasoMonitor iniciado para rut=$rut');
   }
 
   /// Monitor de PIN para el solicitante (A).
