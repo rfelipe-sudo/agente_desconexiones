@@ -552,10 +552,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _tipoSesion = tipo;
       });
     }
+    debugPrint('🏠 [HOME] _refrescarEtiquetasSesion rut=$rut');
     if (rut.isNotEmpty) {
       _suscribirSolicitudesMaterial(rut);
       unawaited(FcmService.instance.initSolicitudMonitor());
       unawaited(FcmService.instance.initTraspasoMonitor(rut));
+    } else {
+      debugPrint('🏠 [HOME] ⚠️  rut vacío — monitores no iniciados');
     }
     // Cargar historial del día si es supervisor
     final usuario = mounted ? context.read<AuthProvider>().usuario : null;

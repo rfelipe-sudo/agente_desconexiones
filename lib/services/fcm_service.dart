@@ -143,52 +143,69 @@ class FcmService {
   /// que el PIN monitor, funciona sin REPLICA IDENTITY FULL.
   /// Suena cuando llega una solicitud nueva pendiente.
   Future<void> initSolicitudMonitor() async {
+    debugPrint('🔔 [SOL] initSolicitudMonitor llamado');
     final prefs = await SharedPreferences.getInstance();
     final rut = prefs.getString('rut_tecnico') ??
         prefs.getString('user_rut') ??
         prefs.getString('rut');
-    if (rut == null || rut.isEmpty) return;
+    debugPrint('🔔 [SOL] rut encontrado en prefs: $rut');
+    if (rut == null || rut.isEmpty) {
+      debugPrint('🔔 [SOL] ⚠️  RUT vacío — monitor no iniciado');
+      return;
+    }
 
     await _solicitudStreamSub?.cancel();
     _solicitudStreamSub = null;
     _solicitudesAlerteadas.clear();
     _solicitudInit = false;
 
+    debugPrint('🔔 [SOL] creando stream para rut=$rut en solicitudes_material_destinatarios');
     _solicitudStreamSub = Supabase.instance.client
         .from('solicitudes_material_destinatarios')
         .stream(primaryKey: ['id'])
         .eq('rut_tecnico', rut)
-        .listen((rows) {
-      if (!_solicitudInit) {
-        // Primera carga: marcar todas como vistas sin sonar
+        .listen(
+      (rows) {
+        debugPrint('🔔 [SOL] stream disparado → ${rows.length} filas, _solicitudInit=$_solicitudInit');
+        if (!_solicitudInit) {
+          for (final row in rows) {
+            final sId = row['solicitud_id'] as String?;
+            if (sId != null) _solicitudesAlerteadas.add(sId);
+          }
+          _solicitudInit = true;
+          debugPrint('🔔 [SOL] carga inicial OK — ${rows.length} solicitudes marcadas como vistas');
+          return;
+        }
         for (final row in rows) {
-          final sId = row['solicitud_id'] as String?;
-          if (sId != null) _solicitudesAlerteadas.add(sId);
+          final sId    = row['solicitud_id'] as String?;
+          final estado = row['estado'] as String? ?? '';
+          debugPrint('🔔 [SOL] fila: solicitud_id=$sId estado=$estado');
+          if (sId == null || estado != 'pendiente') continue;
+          if (_solicitudesAlerteadas.contains(sId)) {
+            debugPrint('🔔 [SOL] solicitud $sId ya alerteada, ignorando');
+            continue;
+          }
+          _solicitudesAlerteadas.add(sId);
+          solicitudesNotificadas.add(sId);
+          debugPrint('🔔 [SOL] ✅ nueva solicitud $sId → invoking playAlerta');
+          try {
+            _soundChannel.invokeMethod<void>('playAlerta');
+          } catch (e) {
+            debugPrint('🔔 [SOL] ❌ error playAlerta: $e');
+          }
         }
-        _solicitudInit = true;
-        debugPrint('[FCM] solicitudMonitor stream iniciado (${rows.length} existentes)');
-        return;
-      }
-      for (final row in rows) {
-        final sId    = row['solicitud_id'] as String?;
-        final estado = row['estado'] as String? ?? '';
-        if (sId == null || estado != 'pendiente') continue;
-        if (_solicitudesAlerteadas.contains(sId)) continue;
-        _solicitudesAlerteadas.add(sId);
-        solicitudesNotificadas.add(sId);
-        debugPrint('[FCM] solicitudMonitor stream → nueva solicitud $sId → playAlerta');
-        try {
-          _soundChannel.invokeMethod<void>('playAlerta');
-        } catch (e) {
-          debugPrint('[FCM] solicitudMonitor → error playAlerta: $e');
-        }
-      }
-    });
+      },
+      onError: (Object e) {
+        debugPrint('🔔 [SOL] ❌ error en stream: $e');
+      },
+    );
+    debugPrint('🔔 [SOL] stream suscrito OK');
   }
 
   /// Monitor de traspasos via .stream() para técnico A y B.
   /// Muestra snack cuando estado cambia a aprobado (KRP) o sap_ok pasa a true.
   Future<void> initTraspasoMonitor(String rut) async {
+    debugPrint('📦 [TRP] initTraspasoMonitor llamado para rut=$rut');
     await _traspasoSubA?.cancel();
     await _traspasoSubB?.cancel();
     _traspasoEstados.clear();
@@ -196,30 +213,33 @@ class FcmService {
     _traspasoIdsInit.clear();
 
     void procesarRows(List<Map<String, dynamic>> rows) {
+      debugPrint('📦 [TRP] stream disparado → ${rows.length} filas');
       for (final row in rows) {
         final id = row['id'] as String?;
         if (id == null) continue;
         final estado = row['estado'] as String? ?? 'pendiente';
         final sapOk  = row['sap_ok']  as bool?   ?? false;
+        debugPrint('📦 [TRP] fila id=$id estado=$estado sapOk=$sapOk init=${_traspasoIdsInit.contains(id)}');
 
         if (!_traspasoIdsInit.contains(id)) {
-          // Primera vez que vemos este traspaso — registrar sin notificar
           _traspasoIdsInit.add(id);
           _traspasoEstados[id] = estado;
           _traspasoSapOk[id]   = sapOk;
+          debugPrint('📦 [TRP] id=$id registrado (primera vez, sin notificar)');
           continue;
         }
 
         final estadoPrev = _traspasoEstados[id] ?? 'pendiente';
         final sapOkPrev  = _traspasoSapOk[id]   ?? false;
+        debugPrint('📦 [TRP] id=$id cambio: estado $estadoPrev→$estado  sapOk $sapOkPrev→$sapOk');
 
         if (estadoPrev == 'pendiente' && estado == 'aprobado') {
-          debugPrint('[FCM] traspasoMonitor → KRP aprobado $id');
+          debugPrint('📦 [TRP] ✅ KRP aprobado → mostrando snack');
           _mostrarSnackTraspasoAprobado(
             'TRANSFERENCIA EN KRP LISTA, TRANSFERENCIA EN TOA EN PROCESO');
         }
         if (!sapOkPrev && sapOk) {
-          debugPrint('[FCM] traspasoMonitor → SAP confirmado $id');
+          debugPrint('📦 [TRP] ✅ SAP confirmado → mostrando snack');
           _mostrarSnackTraspasoAprobado('TRANSFERENCIA EN TOA REALIZADA ✓');
         }
 
@@ -232,15 +252,21 @@ class FcmService {
         .from('traspasos_bodega')
         .stream(primaryKey: ['id'])
         .eq('rut_tecnico_a', rut)
-        .listen(procesarRows);
+        .listen(
+          procesarRows,
+          onError: (Object e) => debugPrint('📦 [TRP] ❌ error subA: $e'),
+        );
 
     _traspasoSubB = Supabase.instance.client
         .from('traspasos_bodega')
         .stream(primaryKey: ['id'])
         .eq('rut_tecnico_b', rut)
-        .listen(procesarRows);
+        .listen(
+          procesarRows,
+          onError: (Object e) => debugPrint('📦 [TRP] ❌ error subB: $e'),
+        );
 
-    debugPrint('[FCM] traspasoMonitor iniciado para rut=$rut');
+    debugPrint('📦 [TRP] streams A y B suscritos para rut=$rut');
   }
 
   /// Monitor de PIN para el solicitante (A).
