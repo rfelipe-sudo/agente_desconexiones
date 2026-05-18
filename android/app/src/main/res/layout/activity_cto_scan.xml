@@ -128,6 +128,23 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Botón Volver al inicio (parte inferior, sobre el status) -->
+    <Button
+        android:id="@+id/volverInicioScanButton"
+        android:layout_width="0dp"
+        android:layout_height="44dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="52dp"
+        android:text="Volver al inicio"
+        android:textAllCaps="false"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:background="@drawable/button_green"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <!-- Estado del modelo (esquina inferior, texto pequeño) -->
     <TextView
         android:id="@+id/statusText"
@@ -135,12 +152,12 @@
         android:layout_height="wrap_content"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
-        android:layout_marginBottom="28dp"
+        android:layout_marginBottom="12dp"
         android:gravity="center"
         android:text="@string/cto_loading_models"
         android:textColor="#AAFFFFFF"
         android:textSize="12sp"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/volverInicioScanButton"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 

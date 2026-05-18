@@ -249,15 +249,36 @@ class AyudaService extends ChangeNotifier {
   /// Devuelve los RUTs de los técnicos asignados a este supervisor
   Future<List<String>> obtenerRutsEquipo(String rutSupervisor) async {
     try {
-      // Columnas reales: rut_supervisor, rut_tecnico
+      // 1. Obtener el número de equipo del supervisor en equipos_crea
+      final supRow = await _supabase
+          .from('equipos_crea')
+          .select('equipo')
+          .eq('rut_tecnico', rutSupervisor)
+          .eq('rol', 'supervisor')
+          .maybeSingle();
+
+      if (supRow == null) {
+        debugPrint('⚠️ [AyudaService] Supervisor $rutSupervisor no encontrado en equipos_crea');
+        return [];
+      }
+
+      final equipo = supRow['equipo'] as int;
+
+      // 2. Obtener todos los técnicos de ese equipo
       final resp = await _supabase
-          .from('supervisor_tecnicos_crea')
+          .from('equipos_crea')
           .select('rut_tecnico')
-          .eq('rut_supervisor', rutSupervisor);
+          .eq('equipo', equipo)
+          .eq('rol', 'tecnico')
+          .not('rut_tecnico', 'is', null);
+
       final lista = resp as List;
-      debugPrint(
-          '👥 [AyudaService] Equipo de $rutSupervisor: ${lista.length} técnicos');
-      return lista.map((e) => e['rut_tecnico'] as String).toList();
+      debugPrint('👥 [AyudaService] Equipo $equipo de $rutSupervisor: ${lista.length} técnicos');
+      return lista
+          .map((e) => e['rut_tecnico'] as String?)
+          .where((r) => r != null && r.isNotEmpty)
+          .cast<String>()
+          .toList();
     } catch (e) {
       debugPrint('❌ [AyudaService] Error obteniendo equipo: $e');
       return [];
@@ -336,24 +357,48 @@ class AyudaService extends ChangeNotifier {
     }
   }
 
-  /// Lista de supervisores/ITOs para traspasar (excluye rutActual)
+  /// Lista de supervisores + ITOs para traspasar (excluye rutActual).
+  /// Supervisores vienen de `supervisores_crea`, ITOs de `equipos_crea`.
   Future<List<Map<String, String>>> obtenerSupervisoresParaTraspasar(
       String rutActual) async {
     try {
-      final resp = await _supabase
+      // 1. Supervisores
+      final respSup = await _supabase
           .from('supervisores_crea')
           .select('rut, nombre')
           .neq('rut', rutActual)
           .order('nombre');
-      return (resp as List)
+      final supervisores = (respSup as List)
           .map((r) => {
                 'rut': r['rut'] as String? ?? '',
-                'nombre': r['nombre'] as String? ?? r['rut']?.toString() ?? '',
+                'nombre': r['nombre'] as String? ?? '',
+                'tipo': 'Supervisor',
               })
           .where((m) => m['rut']!.isNotEmpty)
           .toList();
+
+      // 2. ITOs
+      final respIto = await _supabase
+          .from('equipos_crea')
+          .select('rut_tecnico, nombre')
+          .eq('rol', 'ito')
+          .neq('rut_tecnico', rutActual)
+          .order('nombre');
+      final rutsSup = supervisores.map((m) => m['rut']!).toSet();
+      final itos = (respIto as List)
+          .map((r) => {
+                'rut': r['rut_tecnico'] as String? ?? '',
+                'nombre': r['nombre'] as String? ?? '',
+                'tipo': 'ITO',
+              })
+          .where((m) => m['rut']!.isNotEmpty && !rutsSup.contains(m['rut']!))
+          .toList();
+
+      final todos = [...supervisores, ...itos];
+      todos.sort((a, b) => (a['nombre'] ?? '').compareTo(b['nombre'] ?? ''));
+      return todos;
     } catch (e) {
-      debugPrint('❌ [AyudaService] Error supervisores: $e');
+      debugPrint('❌ [AyudaService] Error supervisores/ITOs: $e');
       return [];
     }
   }
@@ -418,16 +463,28 @@ class AyudaService extends ChangeNotifier {
             .gte('created_at', hoy.toIso8601String())
             .order('created_at', ascending: false);
       } else {
-        // 2. Buscar solicitudes donde rut_tecnico esté en el equipo (últimas 24h)
-        // Excluir movimiento_material (no son solicitudes de ayuda del técnico)
+        // 2. Buscar solicitudes del equipo + traspasadas directamente a este supervisor
         final hoy = DateTime.now().subtract(const Duration(hours: 24));
-        resp = await _supabase
+        final resp1 = await _supabase
             .from('ayuda_terreno_crea')
             .select()
             .inFilter('rut_tecnico', rutsEquipo)
             .neq('tipo', 'movimiento_material')
             .gte('created_at', hoy.toIso8601String())
             .order('created_at', ascending: false);
+        final resp2 = await _supabase
+            .from('ayuda_terreno_crea')
+            .select()
+            .eq('rut_supervisor', rutSupervisor)
+            .neq('tipo', 'movimiento_material')
+            .gte('created_at', hoy.toIso8601String())
+            .order('created_at', ascending: false);
+        final byId = <String, dynamic>{};
+        for (final r in [...resp1 as List, ...resp2 as List]) {
+          final row = r as Map<String, dynamic>;
+          byId[row['ticket_id'] as String] = row;
+        }
+        resp = byId.values.toList();
       }
 
       _solicitudesSupervisor =
@@ -451,10 +508,9 @@ class AyudaService extends ChangeNotifier {
   }) {
     _canalSupervisor?.unsubscribe();
 
-    // Suscribir SIN filtro de columna — cualquier INSERT en la tabla
-    // El callback filtra si el técnico pertenece al equipo del supervisor
     _canalSupervisor = _supabase
         .channel('ayuda_equipo_$rutSupervisor')
+        // INSERT: nueva solicitud de un técnico del equipo
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
@@ -462,12 +518,10 @@ class AyudaService extends ChangeNotifier {
           callback: (payload) async {
             final raw = payload.newRecord as Map<String, dynamic>;
             if (raw['tipo'] == 'movimiento_material') return;
-            final nueva =
-                SolicitudAyuda.fromJson(raw);
+            final nueva = SolicitudAyuda.fromJson(raw);
             debugPrint(
                 '📡 [AyudaService] Nueva solicitud recibida de: ${nueva.rutTecnico}');
 
-            // Verificar si el técnico pertenece al equipo de este supervisor
             final rutsEquipo = await obtenerRutsEquipo(rutSupervisor);
             final esMiEquipo = rutsEquipo.contains(nueva.rutTecnico) ||
                 nueva.rutSupervisor == rutSupervisor;
@@ -478,15 +532,41 @@ class AyudaService extends ChangeNotifier {
               return;
             }
 
-            // Agregar a la lista local si no está ya
             final yaExiste = _solicitudesSupervisor
                 .any((s) => s.ticketId == nueva.ticketId);
             if (!yaExiste) {
               _solicitudesSupervisor = [nueva, ..._solicitudesSupervisor];
               notifyListeners();
               // NO reproducir sonido aquí: el canal GLOBAL ya lo hace
-              // para evitar doble alerta cuando la pantalla está abierta.
               onNuevaSolicitud();
+            }
+          },
+        )
+        // UPDATE sin filtro: recibe todos los updates y filtra manualmente
+        // (los filtros de columna en UPDATE son poco confiables incluso con REPLICA IDENTITY FULL)
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'ayuda_terreno_crea',
+          callback: (payload) {
+            final raw = payload.newRecord as Map<String, dynamic>;
+            if (raw['tipo'] == 'movimiento_material') return;
+            final solicitud = SolicitudAyuda.fromJson(raw);
+
+            final idx = _solicitudesSupervisor
+                .indexWhere((s) => s.ticketId == solicitud.ticketId);
+
+            if (idx == -1 && solicitud.rutSupervisor == rutSupervisor) {
+              // Traspaso: la solicitud es nueva para este supervisor
+              debugPrint('📡 [AyudaService] Traspaso detectado — ticket ${solicitud.ticketId}');
+              _solicitudesSupervisor = [solicitud, ..._solicitudesSupervisor];
+              notifyListeners();
+              onNuevaSolicitud();
+            } else if (idx != -1) {
+              // Actualización de estado en solicitud ya conocida
+              _solicitudesSupervisor = List.from(_solicitudesSupervisor)
+                ..[idx] = solicitud;
+              notifyListeners();
             }
           },
         )
@@ -527,6 +607,7 @@ class AyudaService extends ChangeNotifier {
 
     _canalGlobal = _supabase
         .channel('global_ayuda_$rutSupervisor')
+        // INSERT: nueva solicitud generada por un técnico del equipo
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
@@ -539,19 +620,12 @@ class AyudaService extends ChangeNotifier {
                 '🔔 [AyudaService][GLOBAL] INSERT: tecnico=${nueva.rutTecnico}'
                 ' supAsignado=${nueva.rutSupervisor} equipo=$rutsEquipo');
 
-            // Verificar si pertenece al equipo de este supervisor.
-            // Si el equipo está vacío (carga fallida) re-intentar obtenerlo.
             List<String> equipo = rutsEquipo;
             if (equipo.isEmpty) {
               equipo = await obtenerRutsEquipo(rutSupervisor);
               if (equipo.isNotEmpty) rutsEquipo.addAll(equipo);
             }
 
-            // Es "mi equipo" si:
-            //  1. El técnico aparece en la lista de mi equipo
-            //  2. La solicitud fue asignada a este supervisor
-            //  3. La solicitud no tiene supervisor asignado aún
-            //     (puede ser para mí — no descartar sin datos)
             final esMiEquipo = equipo.contains(nueva.rutTecnico) ||
                 nueva.rutSupervisor == rutSupervisor ||
                 (equipo.isEmpty && nueva.rutSupervisor == null);
@@ -560,7 +634,6 @@ class AyudaService extends ChangeNotifier {
 
             if (!esMiEquipo) return;
 
-            // Agregar a la lista interna si no está
             final yaExiste = _solicitudesSupervisor
                 .any((s) => s.ticketId == nueva.ticketId);
             if (!yaExiste) {
@@ -568,16 +641,47 @@ class AyudaService extends ChangeNotifier {
               notifyListeners();
             }
 
-            // Vibración SIEMPRE (funciona aunque el dispositivo esté en silencio)
             NotificationService().vibrarParaAlerta();
-            // Notificación PRIMERO (sonido del sistema, funciona aunque
-            // la app esté en otra pantalla o minimizada)
             await NotificationService().alertaSupervisorNuevaSolicitud(
               tecnicoNombre: nueva.tecnicoNombre,
               tipoAyuda: nueva.tipo.displayName,
             );
-            // Sonido in-app como refuerzo (cuando la app está en primer plano)
             await _reproducirSonido();
+          },
+        )
+        // UPDATE sin filtro: recibe todos los updates y filtra manualmente
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'ayuda_terreno_crea',
+          callback: (payload) async {
+            final raw = payload.newRecord as Map<String, dynamic>;
+            if (raw['tipo'] == 'movimiento_material') return;
+            final solicitud = SolicitudAyuda.fromJson(raw);
+            debugPrint(
+                '🔔 [AyudaService][GLOBAL] UPDATE ticket=${solicitud.ticketId} rut_supervisor=${solicitud.rutSupervisor}');
+
+            final idx = _solicitudesSupervisor
+                .indexWhere((s) => s.ticketId == solicitud.ticketId);
+
+            if (idx == -1 && solicitud.rutSupervisor == rutSupervisor) {
+              // Traspaso: la solicitud es nueva para este supervisor
+              debugPrint('🔔 [AyudaService][GLOBAL] Traspaso recibido — ticket ${solicitud.ticketId}');
+              _solicitudesSupervisor = [solicitud, ..._solicitudesSupervisor];
+              notifyListeners();
+
+              NotificationService().vibrarParaAlerta();
+              await NotificationService().alertaSupervisorNuevaSolicitud(
+                tecnicoNombre: solicitud.tecnicoNombre,
+                tipoAyuda: solicitud.tipo.displayName,
+              );
+              await _reproducirSonido();
+            } else if (idx != -1) {
+              // Actualización de estado: refrescar en lista
+              _solicitudesSupervisor = List.from(_solicitudesSupervisor)
+                ..[idx] = solicitud;
+              notifyListeners();
+            }
           },
         )
         .subscribe();
@@ -697,23 +801,38 @@ class AyudaService extends ChangeNotifier {
     required double lngTecnico,
   }) async {
     try {
-      // 1. Obtener supervisores asignados a este técnico
-      // Columnas reales: rut_supervisor, rut_tecnico
-      final relaciones = await _supabase
-          .from('supervisor_tecnicos_crea')
-          .select('rut_supervisor')
-          .eq('rut_tecnico', rutTecnico);
+      // 1. Obtener el equipo del técnico en equipos_crea
+      final tecRow = await _supabase
+          .from('equipos_crea')
+          .select('equipo')
+          .eq('rut_tecnico', rutTecnico)
+          .eq('rol', 'tecnico')
+          .maybeSingle();
 
-      if (relaciones == null || (relaciones as List).isEmpty) {
-        debugPrint(
-            '⚠️ [AyudaService] Sin supervisor asignado para $rutTecnico');
+      if (tecRow == null) {
+        debugPrint('⚠️ [AyudaService] Técnico $rutTecnico no encontrado en equipos_crea');
         return null;
       }
 
-      final rutsSuper =
-          (relaciones as List).map((e) => e['rut_supervisor'] as String).toList();
+      final equipo = tecRow['equipo'] as int;
 
-      // 2. Obtener ubicaciones de esos supervisores
+      // 2. Obtener el supervisor de ese equipo
+      final supRows = await _supabase
+          .from('equipos_crea')
+          .select('rut_tecnico')
+          .eq('equipo', equipo)
+          .eq('rol', 'supervisor')
+          .not('rut_tecnico', 'is', null);
+
+      final supList = supRows as List;
+      if (supList.isEmpty) {
+        debugPrint('⚠️ [AyudaService] Sin supervisor en equipo $equipo para $rutTecnico');
+        return null;
+      }
+
+      final rutsSuper = supList.map((e) => e['rut_tecnico'] as String).toList();
+
+      // 3. Obtener ubicaciones de esos supervisores
       final supervisores = await _supabase
           .from('supervisores_crea')
           .select('rut, nombre, lat_ultima, lng_ultima')
@@ -820,6 +939,42 @@ class AyudaService extends ChangeNotifier {
     required double longitud,
   }) async {
     return [];
+  }
+
+  /// Retorna la última ubicación GPS guardada en `supervisores_crea` para el
+  /// supervisor dado. Útil como fallback inmediato mientras se obtiene el GPS real.
+  Future<Map<String, double>?> obtenerUltimaUbicacionSupervisor(
+      String rutSupervisor) async {
+    try {
+      final row = await _supabase
+          .from('supervisores_crea')
+          .select('lat_ultima, lng_ultima')
+          .eq('rut', rutSupervisor)
+          .maybeSingle();
+      if (row == null) return null;
+      final lat = (row['lat_ultima'] as num?)?.toDouble();
+      final lng = (row['lng_ultima'] as num?)?.toDouble();
+      if (lat == null || lng == null) return null;
+      return {'lat': lat, 'lng': lng};
+    } catch (e) {
+      debugPrint('⚠️ [AyudaService] última ubicación supervisor: $e');
+      return null;
+    }
+  }
+
+  /// Guarda el FCM token del supervisor en `supervisores_crea` para que la
+  /// Edge Function de Supabase pueda enviarlo notificaciones cuando la app esté cerrada.
+  Future<void> guardarTokenFcmSupervisor(
+      String rutSupervisor, String fcmToken) async {
+    try {
+      await _supabase
+          .from('supervisores_crea')
+          .update({'fcm_token': fcmToken})
+          .eq('rut', rutSupervisor);
+      debugPrint('🔑 [AyudaService] FCM token guardado en supervisores_crea');
+    } catch (e) {
+      debugPrint('⚠️ [AyudaService] No se pudo guardar FCM token: $e');
+    }
   }
 
   /// El singleton NUNCA se dispone; cancelar solo los canales Realtime

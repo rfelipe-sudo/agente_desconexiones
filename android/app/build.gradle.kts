@@ -75,9 +75,9 @@ android {
         buildConfig = true
     }
 
-    // Los modelos ONNX no deben comprimirse
+    // Archivos que no deben comprimirse (ya son formatos comprimidos)
     aaptOptions {
-        noCompress("onnx", "onnx.data")
+        noCompress("onnx", "onnx.data", "apk")
     }
 }
 

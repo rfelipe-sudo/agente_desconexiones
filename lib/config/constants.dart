@@ -12,6 +12,15 @@ const String kKeplerPassword = 'lercito';
 // Endpoint registro de token FCM
 const String kKeplerRegisterTokenPath = '/api/v1/toa/devices/register-token';
 
+// Endpoint reporte de transacción de material (POST al completar guía)
+// TODO: actualizar la ruta cuando el endpoint esté disponible en Kepler
+const String kKeplerTransaccionPath = '/api/v1/toa/material/transaccion';
+
+// Endpoint intercambio entre técnicos (servidor logística, no keplerv2)
+const String kKeplerIntercambioBaseUrl = 'https://logistica.sbip.cl';
+const String kKeplerIntercambioPath    = '/intercambio/api/solicitar';
+const String kKeplerApiToken           = '5de53e7b5f89b6b547c5c93d635f162ae2594756';
+
 // Plataforma única por ahora
 const String kFcmPlatform = 'android';
 

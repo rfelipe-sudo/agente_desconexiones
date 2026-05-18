@@ -110,12 +110,24 @@
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:layout_marginTop="16dp"
-            android:layout_marginBottom="48dp"
             android:text="Reescanear"
             android:textAllCaps="false"
             android:textColor="#FFFFFF"
             android:textSize="15sp"
             android:background="@drawable/button_primary" />
+
+        <!-- Volver al inicio Button -->
+        <Button
+            android:id="@+id/volverInicioButton"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="48dp"
+            android:text="Volver al inicio"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:background="@drawable/button_green" />
 
     </LinearLayout>
 </ScrollView>

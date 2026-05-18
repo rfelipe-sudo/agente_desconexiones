@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'bodega_screen.dart';
 import 'configuracion_screen.dart';
+import 'guias_entrega_bodeguero_screen.dart';
 
 class BodegueroMenuScreen extends StatefulWidget {
   const BodegueroMenuScreen({super.key});
@@ -14,7 +14,8 @@ class BodegueroMenuScreen extends StatefulWidget {
 class _BodegueroMenuScreenState extends State<BodegueroMenuScreen> {
   final supabase = Supabase.instance.client;
 
-  int _pendientes = 0;
+  int _pendientes       = 0;
+  int _guiasFirmadas    = 0;
   bool _cargando = true;
 
   @override
@@ -27,22 +28,24 @@ class _BodegueroMenuScreenState extends State<BodegueroMenuScreen> {
     setState(() => _cargando = true);
 
     try {
-      print('🔍 [BodegueroMenu] Consultando contador...');
-      
-      final count = await supabase
-          .from('equipos_reversa')
-          .select('id')
-          .eq('estado', 'en_revision');
-
-      print('🔍 [BodegueroMenu] Equipos encontrados: ${count.length}');
+      final results = await Future.wait([
+        supabase
+            .from('equipos_reversa')
+            .select('id')
+            .eq('estado', 'en_revision'),
+        supabase
+            .from('solicitudes_bodega')
+            .select('id')
+            .eq('estado', 'firmada'),
+      ]);
 
       setState(() {
-        _pendientes = count.length;
-        _cargando = false;
+        _pendientes    = (results[0] as List).length;
+        _guiasFirmadas = (results[1] as List).length;
+        _cargando      = false;
       });
     } catch (e) {
       setState(() => _cargando = false);
-      print('❌ [BodegueroMenu] Error cargando pendientes: $e');
     }
   }
 
@@ -118,6 +121,23 @@ class _BodegueroMenuScreenState extends State<BodegueroMenuScreen> {
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const BodegaScreen()),
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // Card Guías de Entrega
+                    _buildMenuCard(
+                      icon: Icons.swap_horiz_outlined,
+                      color: Colors.teal,
+                      titulo: 'Guías de Entrega',
+                      valor: _guiasFirmadas.toString(),
+                      subtitulo: 'Traspasos firmados por confirmar',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) =>
+                                const GuiasEntregaBodegueroScreen()),
                       ),
                     ),
 

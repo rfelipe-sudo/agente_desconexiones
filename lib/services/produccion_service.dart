@@ -2008,44 +2008,57 @@ class ProduccionService {
   /// (misma lógica que el resumen RGU de Producción).
   Future<Map<String, dynamic>> obtenerCalidadPeriodos(String rutTecnico) async {
     try {
-      final periodoCerrado = getPeriodoMesPagoProduccionCerrado();
-      final periodoEnCurso = getPeriodoMesPagoProduccionEnCurso();
+      final now = DateTime.now();
+      final periodoEnCurso  = getPeriodoMesPagoProduccionEnCurso();
+      final periodoCerrado  = getPeriodoMesPagoProduccionCerrado();
+      final pPagado         = DateTime(now.year, now.month - 1, 1);
+      final periodoPagado   = '${pPagado.year}-${pPagado.month.toString().padLeft(2, '0')}';
 
       print('📊 [Calidad] ══════════════════════════════════════════');
       print('📊 [Calidad] RUT: $rutTecnico');
-      print('📊 [Calidad] CERRADO (pago=mes actual): $periodoCerrado → ${periodoAFormatoCalidad(periodoCerrado)}');
+      print('📊 [Calidad] PAGADO   (pago=mes ant.): $periodoPagado → ${periodoAFormatoCalidad(periodoPagado)}');
+      print('📊 [Calidad] CERRADO  (pago=mes act.): $periodoCerrado → ${periodoAFormatoCalidad(periodoCerrado)}');
       print('📊 [Calidad] EN CURSO (pago=mes sig.): $periodoEnCurso → ${periodoAFormatoCalidad(periodoEnCurso)}');
       print('📊 [Calidad] Consultando calidad_api_crea en paralelo...');
 
       final resultados = await Future.wait([
+        obtenerCalidadPorPeriodo(rutTecnico, periodoPagado),
         obtenerCalidadPorPeriodo(rutTecnico, periodoCerrado),
         obtenerCalidadPorPeriodo(rutTecnico, periodoEnCurso),
       ]);
 
-      final cerrado = resultados[0];
-      final enCurso = resultados[1];
+      final pagado  = resultados[0];
+      final cerrado = resultados[1];
+      final enCurso = resultados[2];
 
       print('📊 [Calidad] Resultados:');
+      print('   - Pagado  ($periodoPagado): ${pagado  != null ? "✅ ${pagado['total_reiterados']} reit. / ${pagado['total_completadas']} comp. = ${pagado['porcentaje_reiteracion']}%"  : "❌ sin datos"}');
       print('   - Cerrado ($periodoCerrado): ${cerrado != null ? "✅ ${cerrado['total_reiterados']} reit. / ${cerrado['total_completadas']} comp. = ${cerrado['porcentaje_reiteracion']}%" : "❌ sin datos"}');
-      print('   - En curso ($periodoEnCurso): ${enCurso != null ? "✅ ${enCurso['total_reiterados']} reit. / ${enCurso['total_completadas']} comp. = ${enCurso['porcentaje_reiteracion']}%" : "❌ sin datos"}');
+      print('   - En curso ($periodoEnCurso): ${enCurso != null ? "✅ ${enCurso['total_reiterados']} reit. / ${enCurso['total_completadas']} comp. = ${enCurso['porcentaje_reiteracion']}%"  : "❌ sin datos"}');
       print('📊 [Calidad] ══════════════════════════════════════════');
 
       return {
-        'cerrado': cerrado,
-        'actual': enCurso,
-        'anterior': enCurso,
-        'periodo_cerrado': periodoCerrado,
-        'periodo_actual': periodoEnCurso,
+        'pagado':           pagado,
+        'cerrado':          cerrado,
+        'actual':           enCurso,
+        'anterior':         enCurso,
+        'periodo_pagado':   periodoPagado,
+        'periodo_cerrado':  periodoCerrado,
+        'periodo_actual':   periodoEnCurso,
         'periodo_anterior': periodoEnCurso,
       };
     } catch (e) {
       print('❌ [Calidad] Error obteniendo calidad por períodos: $e');
+      final now = DateTime.now();
+      final pPagado = DateTime(now.year, now.month - 1, 1);
       return {
-        'cerrado': null,
-        'actual': null,
-        'anterior': null,
-        'periodo_cerrado': getPeriodoMesPagoProduccionCerrado(),
-        'periodo_actual': getPeriodoMesPagoProduccionEnCurso(),
+        'pagado':           null,
+        'cerrado':          null,
+        'actual':           null,
+        'anterior':         null,
+        'periodo_pagado':   '${pPagado.year}-${pPagado.month.toString().padLeft(2, '0')}',
+        'periodo_cerrado':  getPeriodoMesPagoProduccionCerrado(),
+        'periodo_actual':   getPeriodoMesPagoProduccionEnCurso(),
         'periodo_anterior': getPeriodoMesPagoProduccionEnCurso(),
       };
     }

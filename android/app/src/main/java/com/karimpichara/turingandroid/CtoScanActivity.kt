@@ -3,13 +3,14 @@ package com.karimpichara.turingandroid
 import android.Manifest
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
-import android.content.Intent
+import android.widget.Button
 import android.widget.ImageButton
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -119,9 +120,20 @@ class CtoScanActivity : AppCompatActivity() {
         // El rutValue sigue existente en el layout pero oculto (visibility=gone)
         // No necesitamos actualizarlo porque no se muestra al usuario.
 
-        // Botón cerrar: vuelve a CREABOX
+        // Botón cerrar (X): vuelve a CREABOX
         val closeButton = findViewById<ImageButton>(R.id.closeButton)
         closeButton.setOnClickListener { finish() }
+
+        // Botón Volver al inicio: cancela el scan y regresa a Flutter home
+        findViewById<Button>(R.id.volverInicioScanButton).setOnClickListener {
+            val intent = Intent(
+                this,
+                com.creacionestecnologicas.agente_desconexiones.MainActivity::class.java
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            intent.putExtra("CTO_CANCELLED", true)
+            startActivity(intent)
+        }
 
         try {
             modelManager = OnnxModelManager(this)

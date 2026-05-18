@@ -22,6 +22,8 @@
     <!-- Permisos para alarmas que ignoran modo silencioso (Android 12+) -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <!-- Instalación de APKs desde la app (App Técnicos) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     
     <!-- Sistema Anti-Fraude "Sin Moradores" -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION"/>
@@ -58,10 +60,14 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Deshabilitar Impeller (Vulkan) — incompatible con Google Maps SDK (OpenGL ES) -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
         <!-- Google Maps API Key -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyCqWYl4MzfnLi6okjCJozltYT6ssnHdXvY" />
+            android:value="AIzaSyBY14w076XgTfwyOPjLnE-ov1I1upnp5Ak" />
         
         <!-- Servicio en segundo plano para detección de caminata -->
         <!-- El plugin flutter_background_service_android lo declara automáticamente -->
@@ -83,6 +89,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- ── FileProvider para instalación de APKs ──────────────────── -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
+
         <!-- ── Asistente Visual CTO (turing) ────────────────────────────── -->
         <activity
             android:name="com.karimpichara.turingandroid.CtoScanActivity"
@@ -102,5 +119,7 @@
         </intent>
         <!-- Permite lanzar la app Asistente Visual CTO (turing-android) -->
         <package android:name="com.karimpichara.turingandroid" />
+        <!-- App Técnicos (formulario de finalización) -->
+        <package android:name="com.vtrapp.tecnico" />
     </queries>
 </manifest>

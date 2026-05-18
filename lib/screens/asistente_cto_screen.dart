@@ -1,6 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:agente_desconexiones/providers/alerta_provider.dart';
 import 'package:agente_desconexiones/services/nyquist_service.dart';
 
 // ── Colores globales ────────────────────────────────────────────────────────
@@ -48,7 +52,7 @@ class AsistenteCtoScreen extends StatefulWidget {
 }
 
 /// Vista actual de la pantalla
-enum _Vista { inicio, historial, potencias }
+enum _Vista { inicio, menuRevisarEstado, iniciadaCto, finalizadasCto, potencias }
 
 class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
   final NyquistService _nyquist = NyquistService();
@@ -65,9 +69,15 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
   String? _nyquistError;
   /// Hora a la que Nyquist respondió la última consulta exitosa.
   String? _horaConsulta;
+  /// Ruta local de la imagen del CTO capturada por el scanner nativo.
+  String? _imagenCTO;
+  /// Número de OT asociado a la medición actual (distinto del access_id).
+  String? _ordenTrabajo;
 
   // ── Estado de la vista historial ───────────────────────────────────────
   List<OrdenHistorial> _historial = [];
+  List<OrdenHistorial> _ordenesPendientes = [];
+  List<OrdenHistorial> _ordenesIniciadas = [];
   OrdenHistorial? _ordenIniciada;
   bool _cargandoHistorial = false;
   String? _historialError;
@@ -82,6 +92,16 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
   /// Cuántas consultas Nyquist en paralelo siguen activas (para mostrar
   /// un indicador discreto en el header del historial).
   int _alertasPendientes = 0;
+
+  // ── Estado de la sección "Trabajo Iniciado" en revisarEstado ───────────
+  EstadoCTO? _resultadoIniciada;
+  bool       _cargandoIniciada     = false;
+  String?    _accessIdIniciadaNyquist;
+  bool       _actualizandoIniciada = false;
+  String?    _horaConsultaIniciada;
+  String?    _nyquistErrorIniciada;
+  /// access_id_corto → estado (de produccion_crea, usado para filtrar completados)
+  Map<String, String> _estadosHoy = {};
 
   static const _ctoChannel = MethodChannel(
     'com.creacionestecnologicas.agente_desconexiones/cto_scan',
@@ -107,9 +127,14 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
     final prefs = await SharedPreferences.getInstance();
     final rut = prefs.getString('rut_tecnico') ?? '';
     try {
-      await _ctoChannel.invokeMethod('openCtoScan', {'rut': rut});
+      // Espera hasta que el scanner cierre. Kotlin devuelve la ruta de la
+      // imagen del CTO si la encontró, o null si no.
+      final imagePath = await _ctoChannel.invokeMethod<String>('openCtoScan', {'rut': rut});
+      if (!mounted) return;
+      setState(() => _imagenCTO = imagePath);
+      _cargarPotencias();
     } on PlatformException catch (e) {
-      if (mounted) {
+      if (mounted && e.code != 'CTO_CANCELLED') {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error al abrir escáner CTO: ${e.message}'),
@@ -120,11 +145,11 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
     }
   }
 
-  // ── Vista historial: lista de OTs últimos 30 días + iniciada ──────────
+  // ── Vista revisarEstado: potencias iniciada + completados del día ──────
 
-  Future<void> _cargarHistorial() async {
+  Future<void> _cargarRevisarEstado() async {
     setState(() {
-      _vista = _Vista.historial;
+      _vista = _Vista.iniciadaCto;
       _cargandoHistorial = true;
       _historialError = null;
       _historial = [];
@@ -132,6 +157,12 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       _vinoDelHistorial = false;
       _alertasPorOt.clear();
       _alertasPendientes = 0;
+      _resultadoIniciada = null;
+      _cargandoIniciada = false;
+      _nyquistErrorIniciada = null;
+      _horaConsultaIniciada = null;
+      _accessIdIniciadaNyquist = null;
+      _estadosHoy = {};
     });
 
     try {
@@ -139,53 +170,150 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       await prefs.reload();
       final rut = prefs.getString('rut_tecnico') ?? '';
       if (rut.isEmpty) {
-        if (mounted) {
-          setState(() {
-            _cargandoHistorial = false;
-            _historialError = 'No hay RUT registrado en la sesión.';
-          });
-        }
+        if (mounted) setState(() { _cargandoHistorial = false; _historialError = 'No hay RUT registrado en la sesión.'; });
         return;
       }
-      final lista = await _nyquist.buscarHistorialPorRut(rut);
+
+      // Ejecutar en paralelo: historial (acceso_ids) + orden activa Kepler + estados produccion_crea
+      final results = await Future.wait([
+        _nyquist.buscarHistorialPorRut(rut),
+        _nyquist.fetchActiveOrderFromKepler(rut).catchError((_) => null),
+        _fetchEstadosHoy(rut),
+      ]);
       if (!mounted) return;
 
-      // Filtrado a HOY (comparación por año/mes/día contra fechaReferencia).
-      final hoy = DateTime.now();
-      bool esHoy(DateTime d) =>
-          d.year == hoy.year && d.month == hoy.month && d.day == hoy.day;
-      final hoyOnly = lista.where((o) => esHoy(o.fechaReferencia)).toList();
-      debugPrint('🔍 [AsistenteCTO] hoy=${hoy.year}-${hoy.month.toString().padLeft(2, "0")}-${hoy.day.toString().padLeft(2, "0")} | recibidas=${lista.length} | matchHoy=${hoyOnly.length}');
-      for (final o in lista.take(5)) {
-        final f = o.fechaReferencia;
-        debugPrint('  → OT=${o.ordenTrabajo} | fechaRef=${f.year}-${f.month.toString().padLeft(2, "0")}-${f.day.toString().padLeft(2, "0")} | esHoy=${esHoy(f)}');
-      }
+      final lista      = results[0] as List<OrdenHistorial>;
+      final activeOrder = results[1] as KeplerActiveOrder?;
+      final estadosMap = results[2] as Map<String, String>;
 
-      // "Trabajo iniciado": primero en hoy; si no hay, buscamos en toda la
-      // lista por si arrastra de ayer.
+      final hoy = DateTime.now();
+      bool esHoy(DateTime d) => d.year == hoy.year && d.month == hoy.month && d.day == hoy.day;
+      final hoyOnly = lista.where((o) => esHoy(o.fechaReferencia)).toList();
+
+      // Identificar la orden iniciada:
+      // 1°: Kepler nos da el access_id_corto del trabajo activo.
+      //     En tabla_access_id, orden_trabajo puede contener ese mismo valor.
+      // 2°: Fallback por estado en produccion_crea.
       OrdenHistorial? iniciada;
-      for (final o in hoyOnly) {
-        if (o.esIniciada) { iniciada = o; break; }
+      if (activeOrder != null) {
+        final aid = activeOrder.accessIdCorto;
+        for (final o in hoyOnly) {
+          if (o.ordenTrabajo == aid || o.accessIdPrefijado == activeOrder.accessIdPrefijado) {
+            iniciada = o; break;
+          }
+        }
+        // Si no está en hoyOnly, buscar en toda la lista (puede ser de ayer)
+        if (iniciada == null) {
+          for (final o in lista) {
+            if (o.ordenTrabajo == aid || o.accessIdPrefijado == activeOrder.accessIdPrefijado) {
+              iniciada = o; break;
+            }
+          }
+        }
       }
+      // Fallback: estado 'iniciado' en produccion_crea
       if (iniciada == null) {
-        for (final o in lista) {
-          if (o.esIniciada) { iniciada = o; break; }
+        for (final o in hoyOnly) {
+          final est = estadosMap[o.ordenTrabajo]?.toLowerCase() ?? '';
+          if (est == 'iniciado') { iniciada = o; break; }
         }
       }
 
       setState(() {
-        _historial = hoyOnly;
+        _historial    = hoyOnly;
         _ordenIniciada = iniciada;
+        _estadosHoy   = estadosMap;
         _cargandoHistorial = false;
+        // Si Kepler devolvió datos Nyquist, usarlos directamente (sin llamada extra)
+        if (activeOrder != null) {
+          _resultadoIniciada    = activeOrder.estado;
+          _horaConsultaIniciada = _formatHoraAhora();
+          _accessIdIniciadaNyquist = activeOrder.accessIdPrefijado;
+        } else if (iniciada != null) {
+          _cargandoIniciada = true; // se cargará aparte
+        }
       });
 
       _evaluarAlertasHistorial(hoyOnly);
+
+      // Solo llamar _cargarIniciadaPotencias si Kepler no trajo datos
+      if (activeOrder == null && iniciada != null && iniciada.tieneAccessId) {
+        _cargarIniciadaPotencias(iniciada);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _cargandoHistorial = false; _historialError = 'Error al cargar: $e'; });
+    }
+  }
+
+  /// Consulta produccion_crea para obtener el estado de cada OT de hoy.
+  /// Retorna Map<access_id_corto, estado>.
+  Future<Map<String, String>> _fetchEstadosHoy(String rut) async {
+    try {
+      final hoy = DateTime.now();
+      final hoyStr = '${hoy.year}-${hoy.month.toString().padLeft(2, '0')}-${hoy.day.toString().padLeft(2, '0')}';
+      final rows = await Supabase.instance.client
+          .from('produccion_crea')
+          .select('access_id, estado')
+          .eq('rut_tecnico', rut)
+          .gte('hora_inicio', hoyStr)
+          .order('hora_inicio', ascending: false);
+      final map = <String, String>{};
+      for (final r in (rows as List)) {
+        final aid = r['access_id']?.toString().trim() ?? '';
+        final est = r['estado']?.toString() ?? '';
+        if (aid.isNotEmpty) map[aid] = est;
+      }
+      return map;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _cargarIniciadaPotencias(OrdenHistorial orden) async {
+    setState(() {
+      _cargandoIniciada = true;
+      _resultadoIniciada = null;
+      _nyquistErrorIniciada = null;
+      _accessIdIniciadaNyquist = orden.accessIdPrefijado;
+    });
+    try {
+      final r = await _nyquist.consultarEstado(orden.accessIdPrefijado);
+      if (!mounted) return;
+      setState(() {
+        _resultadoIniciada = r;
+        _horaConsultaIniciada = _formatHoraAhora();
+        _cargandoIniciada = false;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _cargandoHistorial = false;
-        _historialError = 'Error al cargar el historial: $e';
+        _nyquistErrorIniciada = e.toString().replaceFirst('Exception: ', '');
+        _cargandoIniciada = false;
       });
+    }
+  }
+
+  Future<void> _actualizarIniciadaPotencias() async {
+    if (_accessIdIniciadaNyquist == null) return;
+    setState(() => _actualizandoIniciada = true);
+    try {
+      final r = await _nyquist.consultarEstado(_accessIdIniciadaNyquist!);
+      if (!mounted) return;
+      setState(() {
+        _resultadoIniciada = r;
+        _horaConsultaIniciada = _formatHoraAhora();
+        _actualizandoIniciada = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _actualizandoIniciada = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.toString().replaceFirst("Exception: ", "")}'),
+          backgroundColor: _alertRed,
+        ),
+      );
     }
   }
 
@@ -237,6 +365,11 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       );
       return;
     }
+
+    // accessIdCorto: sin prefijo VNO (ej. "1-3L47FQ8J")
+    final accessIdCorto =
+        orden.accessIdPrefijado.replaceFirst(RegExp(r'^\d{1,2}-'), '');
+
     setState(() {
       _vinoDelHistorial = true;
       _vista = _Vista.potencias;
@@ -247,13 +380,33 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       _resultado = null;
       _horaConsulta = null;
       _accessIdNyquist = orden.accessIdPrefijado;
-      _accessIdCorto = orden.ordenTrabajo.isNotEmpty
-          ? orden.ordenTrabajo
-          : orden.accessIdPrefijado.replaceFirst(RegExp(r'^\d{1,2}-'), '');
+      _ordenTrabajo = orden.ordenTrabajo.isNotEmpty ? orden.ordenTrabajo : null;
+      _accessIdCorto = accessIdCorto;
     });
 
     try {
-      final r = await _nyquist.consultarEstado(orden.accessIdPrefijado);
+      // 1. Busca el access_id real de la CTO en tabla_access_id cruzando
+      //    por orden_trabajo. Eso nos da el identificador correcto para Nyquist
+      //    (produccion_creaciones.access_id guarda el nº de orden, no la CTO).
+      String accessIdNyquist;
+      if (orden.ordenTrabajo.isNotEmpty) {
+        final real = await _nyquist
+            .buscarAccessIdEnTablaAccesId(orden.ordenTrabajo);
+        if (real != null) {
+          accessIdNyquist = '02-$real'; // ej. "02-1-3CIZ1NIJ"
+          debugPrint('🔍 [CTO] OT=${orden.ordenTrabajo} → CTO access_id=$accessIdNyquist');
+        } else {
+          // Fallback: usa el access_id que vino del historial (puede ser el nº OT)
+          accessIdNyquist = orden.accessIdPrefijado;
+          debugPrint('⚠️ [CTO] Sin match en tabla_access_id, usando ${orden.accessIdPrefijado}');
+        }
+      } else {
+        accessIdNyquist = orden.accessIdPrefijado;
+      }
+
+      setState(() => _accessIdNyquist = accessIdNyquist);
+
+      final r = await _nyquist.consultarEstado(accessIdNyquist);
       if (!mounted) return;
       setState(() {
         _resultado = r;
@@ -281,6 +434,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       _horaConsulta = null;
       _vista = _Vista.potencias;
       _vinoDelHistorial = desdeHistorial;
+      _ordenTrabajo = null;
     });
 
     try {
@@ -319,6 +473,10 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
           _resultado = activa!.estado;
           _horaConsulta = _formatHoraAhora();
           _cargando = false;
+          // Si venimos del historial, _ordenIniciada tiene el número de OT.
+          if (_ordenIniciada != null && _ordenIniciada!.ordenTrabajo.isNotEmpty) {
+            _ordenTrabajo = _ordenIniciada!.ordenTrabajo;
+          }
         });
       }
     } catch (e) {
@@ -332,10 +490,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
   Future<void> _actualizarEndpoint() async {
     setState(() => _actualizandoEndpoint = true);
     try {
-      // Si la vista vino del historial, refrescamos contra Nyquist (esa
-      // OT puede no ser la "activa" del técnico). En cualquier otro caso,
-      // re-consultamos Kepler para mantener la numeración física.
-      if (_vinoDelHistorial && _accessIdNyquist != null) {
+      if (_accessIdNyquist != null) {
         final r = await _nyquist.consultarEstado(_accessIdNyquist!);
         if (mounted) {
           setState(() {
@@ -343,6 +498,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
             _horaConsulta = _formatHoraAhora();
             _actualizandoEndpoint = false;
           });
+          await _verificarYDesbloquearSiSinAlertas();
         }
       } else {
         final prefs = await SharedPreferences.getInstance();
@@ -362,6 +518,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
             }
             _actualizandoEndpoint = false;
           });
+          await _verificarYDesbloquearSiSinAlertas();
         }
       }
     } catch (e) {
@@ -375,6 +532,251 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
         );
       }
     }
+  }
+
+  /// Si la card está bloqueada y la lectura actual no tiene ningún puerto
+  /// en alerta, levanta el bloqueo localmente y sincroniza con Supabase.
+  Future<void> _verificarYDesbloquearSiSinAlertas() async {
+    if (!mounted) return;
+    final alertaProvider = context.read<AlertaProvider>();
+    if (!alertaProvider.misActividadesBloqueada) return;
+
+    final puertos = _buildPuertosCombinados();
+    final hayAlerta = puertos.any((p) => p.esAlerta);
+    if (hayAlerta) return;
+
+    // Sin alertas → desbloquear
+    await alertaProvider.resolver();
+    debugPrint('[CTO] Sin alertas en niveles → card desbloqueada');
+
+    // Sincronizar con Supabase
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rut = prefs.getString('rut_tecnico') ?? '';
+      if (rut.isNotEmpty) {
+        await Supabase.instance.client.from('alertas_fcm').upsert({
+          'rut_tecnico':  rut,
+          'activa':       false,
+          'resuelto_en':  DateTime.now().toIso8601String(),
+          'resuelto_por': 'cto_niveles',
+          'updated_at':   DateTime.now().toIso8601String(),
+        }, onConflict: 'rut_tecnico');
+        debugPrint('[CTO] alertas_fcm actualizado: resuelta por cto_niveles');
+      }
+    } catch (e) {
+      debugPrint('[CTO] error actualizando alertas_fcm: $e');
+    }
+
+    if (mounted) {
+      _mostrarDialogoCtoSana();
+    }
+  }
+
+  void _mostrarDialogoCtoSana() {
+    var enviando = false;
+    String? errorEnvio;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateDlg) => Dialog(
+          backgroundColor: Colors.transparent,
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF0D2137), Color(0xFF0D1B2A)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                  color: const Color(0xFF22C55E).withValues(alpha: 0.45),
+                  width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF22C55E).withValues(alpha: 0.20),
+                  blurRadius: 32,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.fromLTRB(28, 32, 28, 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF22C55E).withValues(alpha: 0.15),
+                    border: Border.all(
+                        color: const Color(0xFF22C55E).withValues(alpha: 0.5),
+                        width: 2),
+                  ),
+                  child: const Icon(
+                    Icons.verified_rounded,
+                    color: Color(0xFF22C55E),
+                    size: 44,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  '¡FELICITACIONES!',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFF22C55E),
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'TU CTO ESTÁ SANA\nPUEDES AVANZAR',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                    height: 1,
+                    color: Colors.white.withValues(alpha: 0.08)),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: _cyanColor.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: _cyanColor.withValues(alpha: 0.25)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.monitor_heart_outlined,
+                          color: _cyanColor, size: 20),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Recuerda que estaremos monitoreando la CTO hasta el final de la actividad.',
+                          style: TextStyle(
+                            color: _cyanColor,
+                            fontSize: 13,
+                            height: 1.45,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Banner de error si el POST falla
+                if (errorEnvio != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: _alertRed.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: _alertRed.withValues(alpha: 0.45)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline,
+                            color: _alertRed, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            errorEnvio!,
+                            style: const TextStyle(
+                                color: _alertRed, fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: enviando
+                        ? null
+                        : () async {
+                            final accessId = _accessIdNyquist;
+                            final resultado = _resultado;
+                            // Si por alguna razón no hay datos, cerrar directo.
+                            if (accessId == null || resultado == null) {
+                              Navigator.of(ctx).pop();
+                              return;
+                            }
+                            setStateDlg(() {
+                              enviando = true;
+                              errorEnvio = null;
+                            });
+                            try {
+                              final ok = await _nyquist.certificarNiveles(
+                                  accessId, resultado);
+                              if (!ctx.mounted) return;
+                              if (ok) {
+                                Navigator.of(ctx).pop();
+                              } else {
+                                setStateDlg(() {
+                                  enviando = false;
+                                  errorEnvio =
+                                      'El servidor no confirmó la certificación. Intenta de nuevo.';
+                                });
+                              }
+                            } catch (e) {
+                              if (!ctx.mounted) return;
+                              setStateDlg(() {
+                                enviando = false;
+                                errorEnvio =
+                                    'Error de red: ${e.toString().replaceFirst("Exception: ", "")}';
+                              });
+                            }
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: enviando
+                          ? const Color(0xFF22C55E).withValues(alpha: 0.6)
+                          : const Color(0xFF22C55E),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      elevation: 0,
+                    ),
+                    child: enviando
+                        ? const SizedBox(
+                            height: 22,
+                            width: 22,
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 2.5),
+                          )
+                        : const Text(
+                            'Continuar',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   // ── Build ───────────────────────────────────────────────────────────────────
@@ -394,15 +796,17 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
             if (_vista == _Vista.potencias) {
               if (_vinoDelHistorial) {
                 setState(() {
-                  _vista = _Vista.historial;
+                  _vista = _Vista.finalizadasCto;
                   _error = null;
                   _resultado = null;
                   _nyquistError = null;
                 });
               } else {
-                setState(() { _vista = _Vista.inicio; _error = null; });
+                setState(() { _vista = _Vista.inicio; _error = null; _imagenCTO = null; });
               }
-            } else if (_vista == _Vista.historial) {
+            } else if (_vista == _Vista.iniciadaCto || _vista == _Vista.finalizadasCto) {
+              setState(() => _vista = _Vista.menuRevisarEstado);
+            } else if (_vista == _Vista.menuRevisarEstado) {
               setState(() => _vista = _Vista.inicio);
             } else {
               Navigator.pop(context);
@@ -425,32 +829,32 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
         ),
       ),
       body: switch (_vista) {
-        _Vista.inicio => _buildInicio(),
-        _Vista.historial => _buildHistorial(),
-        _Vista.potencias => _buildPotencias(),
+        _Vista.inicio           => _buildInicio(),
+        _Vista.menuRevisarEstado => _buildMenuRevisarEstado(),
+        _Vista.iniciadaCto      => _buildIniciadaView(),
+        _Vista.finalizadasCto   => _buildFinalizadasView(),
+        _Vista.potencias        => _buildPotencias(),
       },
     );
   }
 
   IconData _iconoTitulo() {
     switch (_vista) {
-      case _Vista.inicio:
-        return Icons.router;
-      case _Vista.historial:
-        return Icons.history;
-      case _Vista.potencias:
-        return Icons.bar_chart;
+      case _Vista.inicio:            return Icons.router;
+      case _Vista.menuRevisarEstado: return Icons.cable;
+      case _Vista.iniciadaCto:       return Icons.play_circle_outline;
+      case _Vista.finalizadasCto:    return Icons.checklist_rounded;
+      case _Vista.potencias:         return Icons.bar_chart;
     }
   }
 
   String _tituloVista() {
     switch (_vista) {
-      case _Vista.inicio:
-        return 'Asistente de CTO';
-      case _Vista.historial:
-        return 'Estado CTO';
-      case _Vista.potencias:
-        return 'Potencias CTO';
+      case _Vista.inicio:            return 'Asistente de CTO';
+      case _Vista.menuRevisarEstado: return 'Estado CTO';
+      case _Vista.iniciadaCto:       return 'Orden Iniciada';
+      case _Vista.finalizadasCto:    return 'Órdenes del Día';
+      case _Vista.potencias:         return 'Potencias CTO';
     }
   }
 
@@ -479,7 +883,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
                     icono: Icons.cable,
                     titulo: 'Revisar Estado CTO',
                     color: const Color(0xFFFFA94D),
-                    onTap: _cargarHistorial,
+                    onTap: () => setState(() => _vista = _Vista.menuRevisarEstado),
                   ),
                 ],
               ),
@@ -682,11 +1086,14 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
 
     return Column(
       children: [
+        // Botón refrescar: SIEMPRE visible. Mientras actualiza muestra spinner
+        // en el ícono y queda deshabilitado para evitar llamadas dobles.
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: _actualizandoEndpoint
-              ? const SizedBox(height: 48, child: Center(child: CircularProgressIndicator(color: _cyanColor)))
-              : _buildBotonActualizar(onPressed: _actualizarEndpoint),
+          child: _buildBotonActualizar(
+            onPressed: _actualizandoEndpoint ? null : _actualizarEndpoint,
+            isLoading: _actualizandoEndpoint,
+          ),
         ),
         Expanded(
           child: SingleChildScrollView(
@@ -694,6 +1101,8 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Imagen del CTO capturada por el scanner (si está disponible)
+                if (_imagenCTO != null) _buildImagenCTO(_imagenCTO!),
                 _buildHeaderResultado(resumen),
                 if (_nyquistError != null) ...[
                   const SizedBox(height: 12),
@@ -708,6 +1117,23 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildImagenCTO(String path) {
+    final file = File(path);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Image.file(
+          file,
+          width: double.infinity,
+          height: 220,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        ),
+      ),
     );
   }
 
@@ -749,25 +1175,65 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
               ),
             ),
           ]),
-          if (_accessIdCorto != null) ...[
+          if (_ordenTrabajo != null || _accessIdCorto != null) ...[
             const SizedBox(height: 12),
-            Row(children: [
-              const Icon(Icons.cable, color: _cyanColor, size: 14),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  _accessIdCorto!,
-                  style: const TextStyle(
-                    color: _cyanColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
-                    fontFamily: 'monospace',
+            if (_ordenTrabajo != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(children: [
+                  const Icon(Icons.work_outline, color: Colors.white54, size: 14),
+                  const SizedBox(width: 6),
+                  Text(
+                    'OT  ',
+                    style: const TextStyle(
+                      color: Colors.white38,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
+                    ),
                   ),
-                  overflow: TextOverflow.ellipsis,
-                ),
+                  Flexible(
+                    child: Text(
+                      _ordenTrabajo!,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                        fontFamily: 'monospace',
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ]),
               ),
-            ]),
+            if (_accessIdCorto != null)
+              Row(children: [
+                const Icon(Icons.cable, color: _cyanColor, size: 14),
+                const SizedBox(width: 6),
+                Text(
+                  'CTO ',
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                Flexible(
+                  child: Text(
+                    _accessIdCorto!,
+                    style: const TextStyle(
+                      color: _cyanColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                      fontFamily: 'monospace',
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ]),
           ],
           const SizedBox(height: 12),
           Row(children: [
@@ -820,15 +1286,15 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
 
   // ── Tabla de puertos ────────────────────────────────────────────────────────
 
-  /// Construye 8 filas de puertos. Ambos valores (anterior y actual)
-  /// vienen del mismo response Nyquist (`u_cto_portN_rx_before/_actual`).
-  List<_PuertoCombinado> _buildPuertosCombinados() {
+  List<_PuertoCombinado> _buildPuertosCombinadosFrom(EstadoCTO? estado) {
     final nyquistByNum = <int, PuertoCTO>{};
-    for (final p in (_resultado?.puertos ?? [])) {
+    for (final p in (estado?.puertos ?? [])) {
       nyquistByNum[p.numero] = p;
     }
-
-    return List.generate(8, (i) {
+    final maxPorts = nyquistByNum.keys.isEmpty
+        ? 8
+        : nyquistByNum.keys.fold(0, (a, b) => a > b ? a : b);
+    return List.generate(maxPorts, (i) {
       final portNum = i + 1;
       final n = nyquistByNum[portNum];
       return _PuertoCombinado(
@@ -839,6 +1305,9 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       );
     });
   }
+
+  List<_PuertoCombinado> _buildPuertosCombinados() =>
+      _buildPuertosCombinadosFrom(_resultado);
 
   ({int ok, int alerta, int total}) _resumenPuertos(List<_PuertoCombinado> puertos) {
     var ok = 0, alerta = 0, total = 0;
@@ -1050,16 +1519,16 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
     );
   }
 
-  /// Pie minimal: solo el timestamp de la consulta a Nyquist.
-  Widget _buildPieConsulta() {
-    if (_horaConsulta == null) return const SizedBox.shrink();
+  Widget _buildPieConsulta([String? horaOverride]) {
+    final hora = horaOverride ?? _horaConsulta;
+    if (hora == null) return const SizedBox.shrink();
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         const Icon(Icons.access_time, color: Colors.white38, size: 13),
         const SizedBox(width: 6),
         Text(
-          'Última consulta: ${_horaConsulta!}',
+          'Última consulta: $hora',
           style: const TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w500),
         ),
       ],
@@ -1082,102 +1551,569 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
         style: const TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w600, height: 1.3)),
   );
 
-  Widget _buildBotonActualizar({required VoidCallback onPressed}) {
+  Widget _buildBotonActualizar({required VoidCallback? onPressed, bool isLoading = false}) {
     return SizedBox(
       width: double.infinity,
       height: 48,
       child: ElevatedButton.icon(
         onPressed: onPressed,
-        icon: const Icon(Icons.refresh, color: Colors.white),
-        label: const Text('Actualizar', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        icon: isLoading
+            ? const SizedBox(
+                width: 18, height: 18,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+              )
+            : const Icon(Icons.refresh, color: Colors.white),
+        label: Text(
+          isLoading ? 'Actualizando...' : 'Actualizar',
+          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+        ),
         style: ElevatedButton.styleFrom(
-          backgroundColor: _cyanColor,
+          backgroundColor: isLoading ? _cyanColor.withValues(alpha: 0.6) : _cyanColor,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
     );
   }
 
-  // ── Vista historial ────────────────────────────────────────────────────
+  // ── Submenú "Revisar Estado CTO" ──────────────────────────────────────
 
-  Widget _buildHistorial() {
-    if (_cargandoHistorial) return _buildCargando();
-    if (_historialError != null) {
-      return _buildHistorialError(_historialError!);
+  Widget _buildMenuRevisarEstado() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildTarjetaSolida(
+                    icono: Icons.play_circle_outline,
+                    titulo: 'Orden Iniciada',
+                    color: const Color(0xFF1E88E5),
+                    onTap: _cargarIniciadaView,
+                  ),
+                  const SizedBox(height: 24),
+                  _buildTarjetaSolida(
+                    icono: Icons.checklist_rounded,
+                    titulo: 'Órdenes del Día',
+                    color: const Color(0xFF10B981),
+                    onTap: _cargarFinalizadasView,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _cargarIniciadaView() async {
+    setState(() {
+      _vista = _Vista.iniciadaCto;
+      _cargandoHistorial = false;
+      _historialError = null;
+      _resultadoIniciada = null;
+      _cargandoIniciada = true;
+      _nyquistErrorIniciada = null;
+      _horaConsultaIniciada = null;
+      _accessIdIniciadaNyquist = null;
+      _ordenIniciada = null;
+      _estadosHoy = {};
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final rut = prefs.getString('rut_tecnico') ?? '';
+      if (rut.isEmpty) {
+        if (mounted) setState(() => _cargandoIniciada = false);
+        return;
+      }
+      final activeOrder = await _nyquist.fetchActiveOrderFromKepler(rut);
+      if (!mounted) return;
+
+      // Intentar hacer coincidir con el historial para obtener la OT
+      OrdenHistorial? iniciada;
+      if (activeOrder != null) {
+        final historial = await _nyquist.buscarHistorialPorRut(rut);
+        for (final o in historial) {
+          if (o.ordenTrabajo == activeOrder.accessIdCorto ||
+              o.accessIdPrefijado == activeOrder.accessIdPrefijado) {
+            iniciada = o;
+            break;
+          }
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _ordenIniciada = iniciada;
+        _accessIdIniciadaNyquist = activeOrder?.accessIdPrefijado;
+        _resultadoIniciada = activeOrder?.estado;
+        _horaConsultaIniciada = activeOrder != null ? _formatHoraAhora() : null;
+        _cargandoIniciada = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _nyquistErrorIniciada = e.toString().replaceFirst('Exception: ', '');
+        _cargandoIniciada = false;
+      });
     }
+  }
+
+  Future<void> _cargarFinalizadasView() async {
+    setState(() {
+      _vista = _Vista.finalizadasCto;
+      _cargandoHistorial = true;
+      _historialError = null;
+      _historial = [];
+      _ordenesPendientes = [];
+      _ordenesIniciadas = [];
+      _ordenIniciada = null;
+      _alertasPorOt.clear();
+      _alertasPendientes = 0;
+      _estadosHoy = {};
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final rut = prefs.getString('rut_tecnico') ?? '';
+      if (rut.isEmpty) {
+        if (mounted) setState(() { _cargandoHistorial = false; _historialError = 'No hay RUT registrado.'; });
+        return;
+      }
+
+      // 1. Buscar órdenes de hoy y ayer en produccion_creaciones.
+      final hoy = DateTime.now();
+      final ayer = hoy.subtract(const Duration(days: 1));
+      final manana = hoy.add(const Duration(days: 1));
+      final ayerStr   = '${ayer.year}-${ayer.month.toString().padLeft(2, '0')}-${ayer.day.toString().padLeft(2, '0')}';
+      final mananaStr = '${manana.year}-${manana.month.toString().padLeft(2, '0')}-${manana.day.toString().padLeft(2, '0')}';
+      const vno = '02';
+
+      final rawRows = await Supabase.instance.client
+          .from('produccion_creaciones')
+          .select('orden_trabajo, estado, tipo_orden, hora_inicio, access_id, fecha_proceso')
+          .eq('rut_tecnico', rut)
+          .gte('fecha_proceso', ayerStr)
+          .lt('fecha_proceso', mananaStr)
+          .order('fecha_proceso', ascending: false);
+
+      if (!mounted) return;
+
+      // 2. Por cada orden_trabajo conservar solo la fila con el estado más reciente.
+      //    El orden DESC por fecha_proceso garantiza que la primera aparición de
+      //    cada OT es la más reciente.
+      final vistas = <String>{};
+      final ultimoEstadoRows = <dynamic>[];
+      for (final r in (rawRows as List)) {
+        final ot = r['orden_trabajo']?.toString() ?? '';
+        if (ot.isEmpty || vistas.contains(ot)) continue;
+        vistas.add(ot);
+        ultimoEstadoRows.add(r);
+      }
+
+      // 3. Clasificar por último estado (Cancelado excluido).
+      bool _esCompletada(dynamic r) =>
+          (r['estado']?.toString() ?? '').toLowerCase() == 'completado';
+      bool _esIniciada(dynamic r) =>
+          (r['estado']?.toString() ?? '').toLowerCase() == 'iniciado';
+      bool _esPendiente(dynamic r) {
+        final est = (r['estado']?.toString() ?? '').toLowerCase();
+        return !_esCompletada(r) && !_esIniciada(r) && est != 'cancelado';
+      }
+
+      final completadasRows = ultimoEstadoRows.where(_esCompletada).toList();
+      final iniciadasRows   = ultimoEstadoRows.where(_esIniciada).toList();
+      final pendientesRows  = ultimoEstadoRows.where(_esPendiente).toList();
+
+      // 4. Construir listas OrdenHistorial (access_id viene directo de produccion_creaciones).
+      OrdenHistorial _toOrden(dynamic r) {
+        final ot        = r['orden_trabajo']?.toString() ?? '';
+        final accessRaw = r['access_id']?.toString().trim() ?? '';
+        final accessFull = accessRaw.isEmpty ? '' : '$vno-$accessRaw';
+        return OrdenHistorial(
+          ordenTrabajo:      ot,
+          accessIdPrefijado: accessFull,
+          tipoOrden:         r['tipo_orden']?.toString() ?? '',
+          estado:            r['estado']?.toString() ?? '',
+          fechaReferencia:   hoy,
+          horaInicio:        hoy,
+          horaTermino:       null,
+        );
+      }
+
+      final completadas = completadasRows.map(_toOrden).toList();
+      final iniciadas   = iniciadasRows.map(_toOrden).toList();
+      final pendientes  = pendientesRows.map(_toOrden).toList();
+
+      setState(() {
+        _historial         = completadas;
+        _ordenesIniciadas  = iniciadas;
+        _ordenesPendientes = pendientes;
+        _cargandoHistorial = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _cargandoHistorial = false; _historialError = 'Error: $e'; });
+    }
+  }
+
+  // ── Vista revisarEstado (combinada, se mantiene para compatibilidad interna) ─
+
+  Widget _buildRevisarEstado() {
+    if (_cargandoHistorial) return _buildCargando();
+    if (_historialError != null) return _buildHistorialError(_historialError!);
+
     return RefreshIndicator(
       color: _cyanColor,
       backgroundColor: _surfaceColor,
-      onRefresh: _cargarHistorial,
+      onRefresh: _cargarRevisarEstado,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
-          _cardIniciada(),
-          const SizedBox(height: 22),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Row(
-              children: [
-                const Text(
-                  'Tu día',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: _cyanColor.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '${_historial.length}',
-                    style: const TextStyle(
-                      color: _cyanColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                if (_alertasPendientes > 0) ...[
-                  const SizedBox(
-                    width: 12, height: 12,
-                    child: CircularProgressIndicator(strokeWidth: 1.5, color: _cyanColor),
-                  ),
-                  const SizedBox(width: 6),
-                  const Text(
-                    'Verificando alertas…',
-                    style: TextStyle(color: Colors.white54, fontSize: 11),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          ..._historial.map((o) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _filaOrden(o),
-              )),
-          if (_historial.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: _surfaceColor,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: const Text(
-                'No hay órdenes para hoy.',
-                style: TextStyle(color: Colors.white54, fontSize: 13),
-              ),
-            ),
+          _buildSeccionIniciada(),
+          const SizedBox(height: 24),
+          _buildSeccionCompletados(),
         ],
       ),
+    );
+  }
+
+  // ── Vistas individuales ────────────────────────────────────────────────
+
+  Widget _buildIniciadaView() {
+    if (_cargandoIniciada) return _buildCargando();
+    return RefreshIndicator(
+      color: _cyanColor,
+      backgroundColor: _surfaceColor,
+      onRefresh: _cargarIniciadaView,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [_buildSeccionIniciada()],
+      ),
+    );
+  }
+
+  Widget _buildFinalizadasView() {
+    if (_cargandoHistorial) return _buildCargando();
+    if (_historialError != null) return _buildHistorialError(_historialError!);
+    return RefreshIndicator(
+      color: _cyanColor,
+      backgroundColor: _surfaceColor,
+      onRefresh: _cargarFinalizadasView,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          _buildSeccionCompletados(),
+          const SizedBox(height: 24),
+          _buildSeccionIniciadas(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSeccionIniciadas() {
+    final iniciadas = _ordenesIniciadas;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            children: [
+              const Text(
+                'Iniciadas',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E88E5).withValues(alpha: 0.20),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${iniciadas.length}',
+                  style: const TextStyle(
+                    color: Color(0xFF1E88E5),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (iniciadas.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _surfaceColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: const Text(
+              'No hay órdenes iniciadas.',
+              style: TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+          )
+        else
+          ...iniciadas.map((o) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _filaOrdenDelDia(o, grupo: _GrupoOrden.iniciada),
+              )),
+      ],
+    );
+  }
+
+  Widget _buildSeccionPendientes() {
+    final pendientes = _ordenesPendientes;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            children: [
+              const Text(
+                'Pendientes',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.20),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${pendientes.length}',
+                  style: const TextStyle(
+                    color: Color(0xFFF59E0B),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (pendientes.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _surfaceColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: const Text(
+              'No hay órdenes pendientes de iniciar.',
+              style: TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+          )
+        else
+          ...pendientes.map((o) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _filaOrdenDelDia(o, grupo: _GrupoOrden.pendiente),
+              )),
+      ],
+    );
+  }
+
+  // ── Sección superior: potencias del trabajo iniciado ──────────────────
+
+  Widget _buildSeccionIniciada() {
+    final iniciada = _ordenIniciada;
+    if (iniciada == null) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _surfaceColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: const Row(children: [
+          Icon(Icons.info_outline, color: Colors.white54, size: 22),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'No hay trabajo iniciado en este momento.',
+              style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+            ),
+          ),
+        ]),
+      );
+    }
+
+    final puertos = _buildPuertosCombinadosFrom(_resultadoIniciada);
+    final resumen = _resumenPuertos(puertos);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Cabecera azul: OT iniciada
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1E88E5), Color(0xFF1565C0)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [BoxShadow(color: const Color(0xFF1E88E5).withValues(alpha: 0.30), blurRadius: 14, offset: const Offset(0, 6))],
+          ),
+          child: Row(children: [
+            const Icon(Icons.play_circle_filled, color: Colors.white, size: 28),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('TRABAJO INICIADO',
+                    style: TextStyle(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+                const SizedBox(height: 2),
+                Text(
+                  iniciada.ordenTrabajo.isEmpty ? '(sin OT)' : iniciada.ordenTrabajo,
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
+                ),
+                if (iniciada.tipoOrden.isNotEmpty)
+                  Text(iniciada.tipoOrden, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                if (_accessIdIniciadaNyquist != null) ...[
+                  const SizedBox(height: 4),
+                  Row(children: [
+                    const Icon(Icons.cable, color: Colors.white54, size: 12),
+                    const SizedBox(width: 4),
+                    Text(
+                      iniciada.accessIdPrefijado.replaceFirst(RegExp(r'^\d{1,2}-'), ''),
+                      style: const TextStyle(color: Colors.white54, fontSize: 11, fontFamily: 'monospace'),
+                    ),
+                  ]),
+                ],
+              ]),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 10),
+        // Botón actualizar
+        _buildBotonActualizar(
+          onPressed: _actualizandoIniciada ? null : _actualizarIniciadaPotencias,
+          isLoading: _actualizandoIniciada,
+        ),
+        const SizedBox(height: 10),
+        // Contenido: loading / error / tabla
+        if (_cargandoIniciada)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 28),
+            child: Center(child: CircularProgressIndicator(color: _cyanColor, strokeWidth: 2)),
+          )
+        else if (_nyquistErrorIniciada != null)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orange.withOpacity(0.4)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 16),
+              const SizedBox(width: 8),
+              Expanded(child: Text(_nyquistErrorIniciada!, style: const TextStyle(color: Colors.orange, fontSize: 12))),
+            ]),
+          )
+        else ...[
+          Row(children: [
+            _ResumenChip(icon: Icons.check_circle_outline, label: 'OK',     value: resumen.ok,    color: const Color(0xFF22C55E)),
+            const SizedBox(width: 8),
+            _ResumenChip(icon: Icons.warning_amber_rounded, label: 'Alerta', value: resumen.alerta, color: _alertRed),
+            const SizedBox(width: 8),
+            _ResumenChip(icon: Icons.power_outlined,        label: 'Activos', value: resumen.total,  color: _cyanColor),
+          ]),
+          const SizedBox(height: 10),
+          _buildTablaPuertos(puertos),
+          const SizedBox(height: 8),
+          _buildPieConsulta(_horaConsultaIniciada),
+        ],
+      ],
+    );
+  }
+
+  // ── Sección inferior: completados del día ─────────────────────────────
+
+  Widget _buildSeccionCompletados() {
+    // _historial ya viene filtrado a completadas desde _cargarFinalizadasView()
+    final completados = _historial;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            children: [
+              const Text(
+                'Tu día',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _cyanColor.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${completados.length}',
+                  style: const TextStyle(color: _cyanColor, fontSize: 11, fontWeight: FontWeight.w800),
+                ),
+              ),
+              const Spacer(),
+              if (_alertasPendientes > 0) ...[
+                const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5, color: _cyanColor)),
+                const SizedBox(width: 6),
+                const Text('Verificando…', style: TextStyle(color: Colors.white54, fontSize: 11)),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        ...completados.map((o) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _filaOrdenDelDia(o, grupo: _GrupoOrden.completada),
+            )),
+        if (completados.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _surfaceColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: const Text(
+              'No hay órdenes completadas aún hoy.',
+              style: TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1197,7 +2133,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: _cargarHistorial,
+              onPressed: _cargarRevisarEstado,
               icon: const Icon(Icons.refresh),
               label: const Text('Reintentar'),
               style: ElevatedButton.styleFrom(
@@ -1211,105 +2147,193 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
     );
   }
 
-  Widget _cardIniciada() {
-    final iniciada = _ordenIniciada;
-    if (iniciada == null) {
-      return Container(
-        padding: const EdgeInsets.all(16),
+  Widget _filaOrdenDelDia(OrdenHistorial o, {required _GrupoOrden grupo}) {
+    final canTap = o.tieneAccessId;
+    final enAlerta = _alertasPorOt[o.ordenTrabajo] == true;
+
+    final Color puntoColor;
+    final Color fondoColor;
+    final Color bordeColor;
+    final Widget estadoChip;
+
+    if (grupo == _GrupoOrden.iniciada) {
+      puntoColor = const Color(0xFF1E88E5);
+      fondoColor = const Color(0xFF1E88E5).withValues(alpha: 0.07);
+      bordeColor = const Color(0xFF1E88E5).withValues(alpha: 0.30);
+      estadoChip = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: _surfaceColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white12),
+          color: const Color(0xFF1E88E5).withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFF1E88E5).withValues(alpha: 0.55)),
         ),
         child: Row(
-          children: const [
-            Icon(Icons.info_outline, color: Colors.white54, size: 22),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'No tienes trabajos iniciados.\nElige una OT del historial para consultar potencias.',
-                style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.play_circle_outline, color: Color(0xFF1E88E5), size: 11),
+            const SizedBox(width: 4),
+            Text(
+              o.estado.isEmpty ? 'Iniciado' : o.estado,
+              style: const TextStyle(
+                color: Color(0xFF1E88E5),
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else if (grupo == _GrupoOrden.pendiente) {
+      puntoColor = const Color(0xFFF59E0B);
+      fondoColor = const Color(0xFFF59E0B).withValues(alpha: 0.07);
+      bordeColor = const Color(0xFFF59E0B).withValues(alpha: 0.30);
+      estadoChip = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF59E0B).withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.55)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.schedule_rounded, color: Color(0xFFF59E0B), size: 11),
+            const SizedBox(width: 4),
+            Text(
+              o.estado.isEmpty ? 'Pendiente' : o.estado,
+              style: const TextStyle(
+                color: Color(0xFFF59E0B),
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else if (enAlerta) {
+      puntoColor = _alertRed;
+      fondoColor = _alertRed.withValues(alpha: 0.10);
+      bordeColor = _alertRed.withValues(alpha: 0.55);
+      estadoChip = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: _alertRed.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _alertRed.withValues(alpha: 0.6)),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.warning_amber_rounded, color: _alertRed, size: 11),
+            SizedBox(width: 4),
+            Text(
+              'Alerta',
+              style: TextStyle(
+                color: _alertRed,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else {
+      puntoColor = const Color(0xFF10B981);
+      fondoColor = const Color(0xFF10B981).withValues(alpha: 0.07);
+      bordeColor = const Color(0xFF10B981).withValues(alpha: 0.30);
+      estadoChip = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: const Color(0xFF10B981).withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.55)),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle_rounded, color: Color(0xFF10B981), size: 11),
+            SizedBox(width: 4),
+            Text(
+              'Completada',
+              style: TextStyle(
+                color: Color(0xFF10B981),
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
               ),
             ),
           ],
         ),
       );
     }
-    final enAlerta = _alertasPorOt[iniciada.ordenTrabajo] == true;
-    final coloresGradient = enAlerta
-        ? const [Color(0xFFB91C1C), Color(0xFF7F1D1D)]
-        : const [Color(0xFF1E88E5), Color(0xFF1565C0)];
-    final colorSombra = enAlerta
-        ? const Color(0xFFB91C1C)
-        : const Color(0xFF1E88E5);
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: iniciada.tieneAccessId
-            ? () => _cargarPotencias(desdeHistorial: true)
-            : () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Sin access_id, imposible leer potencias.')),
-                );
-              },
-        borderRadius: BorderRadius.circular(16),
+        onTap: canTap ? () => _consultarHistorial(o) : null,
+        borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: coloresGradient,
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: colorSombra.withValues(alpha: 0.35),
-                blurRadius: 16,
-                offset: const Offset(0, 8),
-              ),
-            ],
+            color: fondoColor,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: bordeColor, width: 1.2),
           ),
           child: Row(
             children: [
-              Icon(
-                enAlerta ? Icons.warning_amber_rounded : Icons.play_circle_filled,
-                color: Colors.white,
-                size: 36,
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(color: puntoColor, shape: BoxShape.circle),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      enAlerta ? 'TRABAJO INICIADO · ALERTA' : 'TRABAJO INICIADO',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.2,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            o.ordenTrabajo.isEmpty ? '(sin OT)' : o.ordenTrabajo,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                        ),
+                        estadoChip,
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      iniciada.ordenTrabajo.isEmpty ? '(sin OT)' : iniciada.ordenTrabajo,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 19,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    if (iniciada.tipoOrden.isNotEmpty)
+                    if (o.tipoOrden.isNotEmpty) ...[
+                      const SizedBox(height: 4),
                       Text(
-                        iniciada.tipoOrden,
-                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                        o.tipoOrden,
+                        style: const TextStyle(color: Colors.white54, fontSize: 11),
+                      ),
+                    ],
+                    if (!canTap)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Sin access_id — no disponible en Nyquist',
+                          style: TextStyle(
+                            color: Colors.white38,
+                            fontSize: 11,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
                       ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right, color: Colors.white, size: 28),
+              if (canTap)
+                const Icon(Icons.chevron_right, color: Colors.white38, size: 22),
             ],
           ),
         ),
@@ -1442,6 +2466,8 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
     );
   }
 }
+
+enum _GrupoOrden { iniciada, pendiente, completada }
 
 class _ResumenChip extends StatelessWidget {
   const _ResumenChip({

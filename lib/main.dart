@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_maps_flutter_android/google_maps_flutter_android.dart';
+import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart' as activity_recognition;
 
 import 'package:agente_desconexiones/constants/app_constants.dart';
@@ -36,11 +38,18 @@ import 'package:agente_desconexiones/screens/speed_meter_screen.dart';
 import 'package:agente_desconexiones/screens/fiber_microscope_screen.dart';
 import 'package:agente_desconexiones/screens/mis_actividades_screen.dart';
 import 'package:agente_desconexiones/screens/finalizar_orden_screen.dart';
+import 'package:agente_desconexiones/screens/solicitud_material_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_equipo_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/solicitudes_ayuda_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_actividad_screen.dart';
+import 'package:agente_desconexiones/screens/supervisor/asistente_supervisor_screen.dart';
+import 'package:agente_desconexiones/screens/supervisor/auditoria_prl_screen.dart';
+import 'package:agente_desconexiones/screens/ast_workflow_screen.dart';
+import 'package:agente_desconexiones/screens/ast_login_screen.dart';
+import 'package:agente_desconexiones/services/estado_supervisor_service.dart';
 import 'package:agente_desconexiones/services/notification_service.dart';
 import 'package:agente_desconexiones/screens/bodeguero_menu_screen.dart';
+import 'package:agente_desconexiones/screens/bodega/bodega_screen.dart';
 import 'package:agente_desconexiones/services/deteccion_caminata_service.dart';
 import 'package:agente_desconexiones/services/kepler_polling_service.dart';
 import 'package:agente_desconexiones/services/alertas_cto_service.dart';
@@ -54,6 +63,14 @@ final supabaseService = SupabaseService();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // LATEST renderer: soporta el parámetro style: en GoogleMap widget.
+  // LEGACY fue descartado porque el Maps SDK 18.2+ (bundled en google_maps_flutter ^2.9)
+  // ya no carga tiles correctamente con él (mapa negro sin errores visibles).
+  final mapsImpl = GoogleMapsFlutterPlatform.instance;
+  if (mapsImpl is GoogleMapsFlutterAndroid) {
+    mapsImpl.initializeWithRenderer(AndroidMapRenderer.latest);
+  }
 
   // Firebase + FCM background handler ANTES de cualquier otra cosa async,
   // para que aplique tanto en cold start como en wake-from-terminated.
@@ -405,6 +422,7 @@ class AgenteDesconexionesApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(create: (_) => ChurnService()),
         ChangeNotifierProvider(create: (_) => AyudaService()),
+        ChangeNotifierProvider(create: (_) => EstadoSupervisorService()),
       ],
       child: MaterialApp(
         navigatorKey: creaboxNavigatorKey,
@@ -445,9 +463,14 @@ class AgenteDesconexionesApp extends StatelessWidget {
           '/microscope': (context) => const FiberMicroscopeScreen(),
           '/mis-actividades': (context) => const MisActividadesScreen(),
           '/finalizar-orden': (context) => const FinalizarOrdenScreen(),
+          '/solicitud-material': (context) => const SolicitudMaterialScreen(),
           '/supervisor-equipo': (context) => const MiEquipoScreen(),
+          '/asistente-supervisor': (context) => const AsistenteSupervisorScreen(),
+          '/auditoria-prl': (context) => const AuditoriaPrlScreen(),
           '/solicitudes-ayuda': (context) => const SolicitudesAyudaScreen(),
           '/mi-actividad': (context) => const MiActividadScreen(),
+          '/ast':    (context) => const AstLoginScreen(),
+          '/bodega': (context) => const BodegaScreen(),
         },
       ),
     );
@@ -540,7 +563,7 @@ class _AppHomeByRolState extends State<_AppHomeByRol> {
           return const BodegueroMenuScreen();
         }
         if (rol == 'supervisor') {
-          return const MiEquipoScreen();
+          return const AsistenteSupervisorScreen(esRaiz: true);
         }
         return const HomeScreen();
       },

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -11,6 +12,7 @@ import 'package:intl/intl.dart';
 import 'package:agente_desconexiones/models/solicitud_ayuda.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
 import 'package:agente_desconexiones/services/estado_supervisor_service.dart';
+import 'package:agente_desconexiones/screens/supervisor/supervisor_tracking_screen.dart';
 
 class SolicitudesAyudaScreen extends StatefulWidget {
   const SolicitudesAyudaScreen({super.key});
@@ -92,9 +94,9 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
         return;
       }
 
-      // GPS inmediato y timer periódico cada 45s
+      // GPS inmediato y timer periódico cada 10s
       _obtenerGpsPropio();
-      _timerGps = Timer.periodic(const Duration(seconds: 45), (_) {
+      _timerGps = Timer.periodic(const Duration(seconds: 10), (_) {
         _actualizarGpsYTracking();
       });
 
@@ -137,6 +139,19 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
   }
 
   Future<void> _obtenerGpsPropio() async {
+    // 1. Carga instantánea desde BD como fallback (evita "Calculando distancia...")
+    if (_miLat == null && _rutSupervisor != null && _rutSupervisor!.isNotEmpty) {
+      final ultima =
+          await _ayudaService.obtenerUltimaUbicacionSupervisor(_rutSupervisor!);
+      if (ultima != null && mounted && _miLat == null) {
+        setState(() {
+          _miLat = ultima['lat'];
+          _miLng = ultima['lng'];
+        });
+      }
+    }
+
+    // 2. GPS real del dispositivo (más preciso, puede tardar hasta 15s)
     try {
       final pos = await _ayudaService.obtenerPosicion();
       if (mounted) {
@@ -546,7 +561,7 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
         _solicitudes.where((s) => s.estado == EstadoSolicitud.pendiente).toList();
     final enCamino =
         _solicitudes.where((s) => s.supervisorEnCamino).toList();
-    final resueltas = _solicitudes.where((s) => s.estaResuelta).toList();
+    final vigentes = [...pendientes, ...enCamino];
 
     return Column(
       children: [
@@ -556,7 +571,7 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
             onTap: _ayudaService.reproducirAlerta,
           ),
         Expanded(
-          child: _solicitudes.isEmpty
+          child: vigentes.isEmpty
               ? _buildEmpty()
               : RefreshIndicator(
                   onRefresh: _cargarSolicitudes,
@@ -581,13 +596,6 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
                             'EN CAMINO (${enCamino.length})',
                             _colorVerde),
                         ...enCamino.map((s) => _buildTarjeta(s)),
-                        const SizedBox(height: 16),
-                      ],
-                      if (resueltas.isNotEmpty) ...[
-                        _buildSeccionLabel(
-                            'HISTORIAL DEL DÍA', Colors.white38),
-                        ...resueltas.map(
-                            (s) => _buildTarjeta(s, opaco: true)),
                       ],
                     ],
                   ),
@@ -607,6 +615,134 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
             fontSize: 11,
             fontWeight: FontWeight.bold,
             letterSpacing: 1.5),
+      ),
+    );
+  }
+
+  CameraPosition _calcCamaraMini(SolicitudAyuda s) {
+    final tLat = s.latTecnico;
+    final tLng = s.lngTecnico;
+    if (_miLat == null || _miLng == null) {
+      return CameraPosition(target: LatLng(tLat, tLng), zoom: 14);
+    }
+    final centerLat = (tLat + _miLat!) / 2;
+    final centerLng = (tLng + _miLng!) / 2;
+    final maxDiff = math.max((tLat - _miLat!).abs(), (tLng - _miLng!).abs());
+    final zoom = maxDiff < 0.005 ? 15.0
+        : maxDiff < 0.02 ? 13.0
+        : maxDiff < 0.05 ? 12.0
+        : maxDiff < 0.1  ? 11.0
+        : maxDiff < 0.3  ? 10.0
+        : maxDiff < 1.0  ? 9.0
+        : 7.0;
+    return CameraPosition(target: LatLng(centerLat, centerLng), zoom: zoom);
+  }
+
+  Set<Marker> _marcadoresMini(SolicitudAyuda s) {
+    final markers = <Marker>{
+      Marker(
+        markerId: const MarkerId('tecnico'),
+        position: LatLng(s.latTecnico, s.lngTecnico),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+      ),
+    };
+    if (_miLat != null && _miLng != null) {
+      markers.add(Marker(
+        markerId: const MarkerId('supervisor'),
+        position: LatLng(_miLat!, _miLng!),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+      ));
+    }
+    return markers;
+  }
+
+  Widget _buildMiniMapa(SolicitudAyuda s, double? distanciaMia) {
+    return GestureDetector(
+      onTap: () {
+        if (s.supervisorEnCamino) {
+          Navigator.push(context, MaterialPageRoute(
+            builder: (_) => SupervisorTrackingScreen(solicitud: s, ticketId: s.ticketId),
+          ));
+        } else {
+          _preguntarAbrirEnMapa(s);
+        }
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          height: 160,
+          child: Stack(
+            children: [
+              GoogleMap(
+                key: ValueKey('minimap_${s.ticketId}'),
+                liteModeEnabled: true,
+                initialCameraPosition: _calcCamaraMini(s),
+                markers: _marcadoresMini(s),
+                myLocationEnabled: false,
+                myLocationButtonEnabled: false,
+                zoomControlsEnabled: false,
+                mapToolbarEnabled: false,
+                compassEnabled: false,
+                scrollGesturesEnabled: false,
+                zoomGesturesEnabled: false,
+                rotateGesturesEnabled: false,
+                tiltGesturesEnabled: false,
+              ),
+              // Badge distancia + tiempo
+              if (distanciaMia != null)
+                Positioned(
+                  bottom: 8,
+                  left: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.75),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: _colorCyan.withOpacity(0.4)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.navigation_rounded, color: _colorCyan, size: 13),
+                        const SizedBox(width: 5),
+                        Text(
+                          '${distanciaMia.toStringAsFixed(1)} km  ·  ~${(distanciaMia / 40 * 60).ceil()} min',
+                          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              // Badge acción
+              Positioned(
+                bottom: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.75),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        s.supervisorEnCamino ? Icons.directions_car_rounded : Icons.open_in_full_rounded,
+                        color: Colors.white70,
+                        size: 12,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        s.supervisorEnCamino ? 'Seguimiento' : 'Ampliar',
+                        style: const TextStyle(color: Colors.white70, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -848,78 +984,29 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
 
-                    // Distancia y coordenadas
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.03),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        children: [
-                          Row(
-                            children: [
-                              Icon(Icons.navigation_rounded,
-                                  color: distanciaMia != null
-                                      ? _colorCyan
-                                      : Colors.white24,
-                                  size: 16),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  distanciaMia != null
-                                      ? '${distanciaMia.toStringAsFixed(1)} km  ·  ~${(distanciaMia / 40 * 60).ceil()} min en auto'
-                                      : 'Calculando distancia...',
-                                  style: TextStyle(
-                                    color: distanciaMia != null
-                                        ? Colors.white70
-                                        : Colors.white38,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ),
-                            ],
+                    // Mini-mapa con ubicación del técnico y supervisor
+                    _buildMiniMapa(s, distanciaMia),
+                    const SizedBox(height: 8),
+                    if (s.latTecnico != null && s.lngTecnico != null)
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _preguntarAbrirEnMapa(s),
+                          icon: const Icon(Icons.map_outlined, size: 16),
+                          label: const Text('Abrir en Google Maps',
+                              style: TextStyle(fontSize: 13)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _colorCyan,
+                            side: BorderSide(color: _colorCyan.withOpacity(0.5)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Icon(Icons.location_on_outlined,
-                                  color: Colors.white.withOpacity(0.4),
-                                  size: 14),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  '${s.latTecnico.toStringAsFixed(5)}, ${s.lngTecnico.toStringAsFixed(5)}',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.4),
-                                    fontSize: 11,
-                                    fontFamily: 'monospace',
-                                  ),
-                                ),
-                              ),
-                              TextButton.icon(
-                                onPressed: () => _preguntarAbrirEnMapa(s),
-                                icon: const Icon(Icons.map_rounded, size: 16,
-                                    color: Color(0xFF00E5FF)),
-                                label: const Text('Abrir en mapa',
-                                    style: TextStyle(
-                                        color: Color(0xFF00E5FF),
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600)),
-                                style: TextButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 6),
-                                  minimumSize: Size.zero,
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
 
                     // Botones de respuesta
                     if (esPendiente) ...[
@@ -1145,14 +1232,20 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
                   itemCount: supervisores.length,
                   itemBuilder: (_, i) {
                     final sup = supervisores[i];
+                    final esIto = sup['tipo'] == 'ITO';
                     return ListTile(
-                      leading: const Icon(Icons.person, color: Color(0xFF00E5FF)),
+                      leading: Icon(
+                        esIto ? Icons.engineering : Icons.supervisor_account,
+                        color: esIto
+                            ? const Color(0xFFF59E0B)
+                            : const Color(0xFF00E5FF),
+                      ),
                       title: Text(
                         sup['nombre'] ?? sup['rut'] ?? '',
                         style: const TextStyle(color: Colors.white),
                       ),
                       subtitle: Text(
-                        'RUT: ${sup['rut'] ?? ''}',
+                        '${sup['tipo'] ?? 'Supervisor'} · ${sup['rut'] ?? ''}',
                         style: TextStyle(
                           color: Colors.white.withOpacity(0.5),
                           fontSize: 12,
@@ -1282,6 +1375,24 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
           return item;
         }).toList();
         if (mounted) setState(() {});
+
+        // Al aceptar → navegar directo al mapa de tracking
+        if (esAceptacion && mounted) {
+          final solicitudActualizada = s.copyWith(
+            estado: estado,
+            tiempoExtraMinutos: tiempoExtra,
+          );
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => SupervisorTrackingScreen(
+                solicitud: solicitudActualizada,
+                ticketId: s.ticketId,
+              ),
+            ),
+          );
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Solicitud ${estado.displayName.toLowerCase()}'),
           backgroundColor: _colorVerde,

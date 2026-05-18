@@ -9,6 +9,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:agente_desconexiones/constants/map_styles.dart';
 import 'package:agente_desconexiones/models/solicitud_ayuda.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
 
@@ -38,7 +39,7 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
   final Set<Marker> _markers = {};
   final Set<Polyline> _polylines = {};
   Timer? _timerElapsed;
-  Timer? _timerGps; // refresca GPS del supervisor cada 30s
+  Timer? _timerGps; // refresca GPS del supervisor cada 10s
   int _segundosEspera = 0;
   double? _distanciaActual;
   int? _etaMinutos;
@@ -50,6 +51,9 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
   // Iconos personalizados para el mapa
   BitmapDescriptor? _iconoTecnico;
   BitmapDescriptor? _iconoSupervisor;
+
+  // Diagnóstico de mapa
+  String? _mapaError;
 
   // ─────────────────────────────────────────────────────────────
   // Ciclo de vida
@@ -253,7 +257,7 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
   // Polling cada 30s para refrescar GPS del supervisor en Supabase
   void _iniciarTimerGps(String ticketId) {
     _timerGps?.cancel();
-    _timerGps = Timer.periodic(const Duration(seconds: 30), (_) async {
+    _timerGps = Timer.periodic(const Duration(seconds: 10), (_) async {
       if (!mounted) {
         _timerGps?.cancel();
         return;
@@ -412,7 +416,7 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
     _polylines.removeWhere((p) => p.polylineId == const PolylineId('ruta'));
 
     try {
-      const apiKey = 'AIzaSyCqWYl4MzfnLi6okjCJozltYT6ssnHdXvY';
+      const apiKey = 'AIzaSyBY14w076XgTfwyOPjLnE-ov1I1upnp5Ak';
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/directions/json?'
         'origin=${origen.latitude},${origen.longitude}&'
@@ -1127,15 +1131,37 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
             compassEnabled: false,
             tiltGesturesEnabled: false,
             mapType: MapType.normal,
-            style: _estiloMapaUber,
+            style: MapStyles.estiloMapaUberDark,
             onMapCreated: (ctrl) {
               _mapController = ctrl;
+              ctrl.setMapStyle(MapStyles.estiloMapaUberDark).catchError((e) {
+                if (mounted) setState(() => _mapaError = e.toString());
+              });
               Future.delayed(const Duration(milliseconds: 300), () {
                 if (mounted) _actualizarMarkers(s);
               });
             },
           ),
         ),
+
+        // ── Error de mapa (diagnóstico) ────────────────────────
+        if (_mapaError != null)
+          Positioned(
+            top: 80,
+            left: 12,
+            right: 12,
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red.shade900.withOpacity(0.92),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '⚠️ Map: $_mapaError',
+                style: const TextStyle(color: Colors.white, fontSize: 11),
+              ),
+            ),
+          ),
 
         // ── Top bar: botón atrás + chip de estado ─────────────
         SafeArea(
@@ -1571,34 +1597,6 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
     );
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // Estilo del mapa Uber (limpio y minimalista)
-  // ─────────────────────────────────────────────────────────────
-
-  static const String _estiloMapaUber = '''
-  [
-    {"featureType":"all","elementType":"geometry",
-      "stylers":[{"color":"#f5f5f5"}]},
-    {"featureType":"water","elementType":"geometry",
-      "stylers":[{"color":"#e9e9e9"}]},
-    {"featureType":"road","elementType":"geometry",
-      "stylers":[{"color":"#ffffff"}]},
-    {"featureType":"road.highway","elementType":"geometry",
-      "stylers":[{"color":"#dadada"}]},
-    {"featureType":"road.arterial","elementType":"geometry",
-      "stylers":[{"color":"#fafafa"}]},
-    {"featureType":"road.local","elementType":"geometry",
-      "stylers":[{"color":"#ffffff"}]},
-    {"featureType":"landscape","elementType":"geometry",
-      "stylers":[{"color":"#f5f5f5"}]},
-    {"featureType":"poi","elementType":"labels",
-      "stylers":[{"visibility":"off"}]},
-    {"featureType":"poi","elementType":"geometry",
-      "stylers":[{"visibility":"off"}]},
-    {"featureType":"transit","elementType":"geometry",
-      "stylers":[{"visibility":"off"}]}
-  ]
-  ''';
 }
 
 // ─────────────────────────────────────────────────────────────

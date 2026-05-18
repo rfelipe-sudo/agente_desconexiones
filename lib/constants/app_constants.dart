@@ -38,7 +38,7 @@ class AppConstants {
   static const String alertSoundFileName = 'alerta_urgente'; // Sin extensión
   
   /// Mapa calor, medición velocidad, microscopio fibra y Flota en Tu Mes: UI "Próximamente".
-  static const bool modulosHerramientasProximamente = true;
+  static const bool modulosHerramientasProximamente = false;
 
   /// Monitoreo fraude (background), alertas CTO, polling Kepler/detención; listeners a Supabase.
   static const bool monitoreoFraudeYAlertasCtoActivo = false;

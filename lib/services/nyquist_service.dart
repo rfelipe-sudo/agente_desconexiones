@@ -41,6 +41,7 @@ class PuertoCTO {
   final String? description;
   final double? rxActual;
   final double? rxBefore;
+  final bool isCurrent;
 
   PuertoCTO({
     required this.numero,
@@ -49,10 +50,11 @@ class PuertoCTO {
     this.description,
     this.rxActual,
     this.rxBefore,
+    this.isCurrent = false,
   });
 
   bool get activo => portId != null && portId!.isNotEmpty;
-  bool get ok => status == 'OK';
+  bool get ok => status != null && status!.startsWith('OK');
 
   /// Último segmento del portId (ej: "1/1/3/12" → "12"), para cruzar con Kepler.
   String? get portSuffix {
@@ -71,15 +73,15 @@ class PuertoCTO {
     return double.tryParse(val.replaceAll(RegExp(r'[^0-9.\-]'), '').trim());
   }
 
-  factory PuertoCTO.fromJson(int numero, Map<String, dynamic> result) {
-    final n = numero.toString();
+  factory PuertoCTO.fromJson(Map<String, dynamic> json) {
     return PuertoCTO(
-      numero: numero,
-      portId: result['u_cto_port${n}_ID']?.toString(),
-      status: result['u_cto_port${n}_status']?.toString(),
-      description: result['u_cto_port${n}_description_status']?.toString(),
-      rxActual: _parseRx(result['u_cto_port${n}_rx_actual']?.toString()),
-      rxBefore: _parseRx(result['u_cto_port${n}_rx_before']?.toString()),
+      numero: int.tryParse(json['physical_port']?.toString() ?? '0') ?? 0,
+      portId: json['id']?.toString(),
+      status: json['status']?.toString(),
+      description: json['description_status']?.toString(),
+      rxActual: _parseRx(json['rx_actual']?.toString()),
+      rxBefore: _parseRx(json['rx_before']?.toString()),
+      isCurrent: json['current_port'] == true,
     );
   }
 }
@@ -140,6 +142,8 @@ class EstadoCTO {
   final int puertosNok;
   final double porcentajeOk;
   final List<PuertoCTO> puertos;
+  /// Puerto físico del técnico actualmente instalado (0 si no se detecta).
+  final int currentPortNumber;
 
   EstadoCTO({
     required this.accessId,
@@ -149,29 +153,48 @@ class EstadoCTO {
     required this.puertosNok,
     required this.porcentajeOk,
     required this.puertos,
+    this.currentPortNumber = 0,
   });
 
   factory EstadoCTO.fromJson(Map<String, dynamic> json) {
-    final dynamic resultRaw = json['result'];
-    final Map<String, dynamic> r;
-    if (resultRaw is Map<String, dynamic>) {
-      r = resultRaw;
-    } else if (resultRaw is List && resultRaw.isNotEmpty && resultRaw.first is Map) {
-      r = Map<String, dynamic>.from(resultRaw.first as Map);
-    } else {
-      throw Exception('Campo "result" inválido en respuesta CTO');
+    if (json['success'] != true) {
+      throw Exception('Nyquist error: ${json['error']}');
     }
-    final puertos = List.generate(16, (i) => PuertoCTO.fromJson(i + 1, r))
-        .where((p) => p.activo)
+    final List<dynamic> portsRaw = json['ports'] as List<dynamic>? ?? [];
+    final puertos = portsRaw
+        .map((p) => PuertoCTO.fromJson(p as Map<String, dynamic>))
         .toList();
+
+    String accessId = '';
+    for (final p in portsRaw) {
+      final pm = p as Map<String, dynamic>;
+      if (pm['current_port'] == true) {
+        accessId = pm['access_id']?.toString() ?? '';
+        break;
+      }
+    }
+
+    int currentPortNumber = 0;
+    for (final p in puertos) {
+      if (p.isCurrent) { currentPortNumber = p.numero; break; }
+    }
+
+    final activePuertos = puertos.where((p) => p.activo).toList();
+    final puertosOk = activePuertos.where((p) => p.ok).length;
+    final puertosNok = activePuertos.length - puertosOk;
+    final porcentajeOk = activePuertos.isEmpty
+        ? 0.0
+        : puertosOk / activePuertos.length * 100;
+
     return EstadoCTO(
-      accessId: r['u_access_id_vno']?.toString() ?? '',
-      vnoId: r['u_id_vno']?.toString() ?? '',
-      totalPuertos: int.tryParse(r['u_cto_quantity_access']?.toString() ?? '0') ?? 0,
-      puertosOk: int.tryParse(r['u_cto_quantity_access_ok']?.toString() ?? '0') ?? 0,
-      puertosNok: int.tryParse(r['u_cto_quantity_access_nok']?.toString() ?? '0') ?? 0,
-      porcentajeOk: double.tryParse(r['u_cto_percentage_access_ok']?.toString() ?? '0') ?? 0,
+      accessId: accessId,
+      vnoId: '',
+      totalPuertos: puertos.length,
+      puertosOk: puertosOk,
+      puertosNok: puertosNok,
+      porcentajeOk: porcentajeOk,
       puertos: puertos,
+      currentPortNumber: currentPortNumber,
     );
   }
 }
@@ -242,6 +265,31 @@ class NyquistService {
     } catch (e, stack) {
       print('❌ [Nyquist] Error en buscarAccessIdPorRut: $e');
       print('❌ [Nyquist] Stack: $stack');
+      return null;
+    }
+  }
+
+  /// Busca el access_id real de la CTO en `tabla_access_id` a partir del
+  /// número de orden de trabajo. Devuelve el id corto (sin prefijo VNO),
+  /// p.ej. "1-3CIZ1NIJ", o null si no se encuentra o el valor es "Sin Datos".
+  Future<String?> buscarAccessIdEnTablaAccesId(String ordenTrabajo) async {
+    try {
+      final response = await _supabase
+          .from('tabla_access_id')
+          .select('access_id')
+          .eq('orden_trabajo', ordenTrabajo)
+          .not('access_id', 'is', null)
+          .neq('access_id', '')
+          .neq('access_id', 'Sin Datos')
+          .order('fecha_trabajo', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (response == null) return null;
+      final aid = response['access_id']?.toString().trim() ?? '';
+      return aid.isEmpty ? null : aid;
+    } catch (e) {
+      print('❌ [Nyquist] buscarAccessIdEnTablaAccesId: $e');
       return null;
     }
   }
@@ -407,7 +455,7 @@ class NyquistService {
   /// Credenciales hardcodeadas (idéntico a turing-android).
   Future<EstadoCTO> consultarEstado(String accessId) async {
     final basicAuth = base64.encode(utf8.encode('$_nyquistUser:$_nyquistPassword'));
-    final url = Uri.parse('$_nyquistBaseUrl/onfide/estado-vecino?access_id=$accessId');
+    final url = Uri.parse('$_nyquistBaseUrl/onfide/estado-vecino/complete?access_id=$accessId');
 
     print('🌐 [Nyquist] GET $url');
 
@@ -501,14 +549,184 @@ class NyquistService {
         niveles['u_access_id_vno']?.toString() ??
             (accessIdCorto.isEmpty ? '' : '$_nyquistVnoId-$accessIdCorto');
 
-    // Reusamos EstadoCTO.fromJson — espera un mapa con clave `result`.
-    final estado = EstadoCTO.fromJson({'result': niveles});
+    // Consultamos Nyquist en tiempo real con el nuevo endpoint.
+    final estado = await consultarEstado(accessIdPrefijado);
 
     return KeplerActiveOrder(
       accessIdCorto: accessIdCorto,
       accessIdPrefijado: accessIdPrefijado,
       estado: estado,
     );
+  }
+
+  // ── Kepler v2 (orden histórica por access_id) ──────────────────────────
+
+  /// Construye un [EstadoCTO] a partir del mapa `niveles_*` de Kepler.
+  /// Los campos siguen el esquema `u_cto_port{n}_ID/status/rx_actual/rx_before`.
+  EstadoCTO _buildEstadoFromNiveles(
+      Map<String, dynamic> niveles, String accessIdPrefijado) {
+    final currentPort =
+        (niveles['u_current_physical_port'] as num?)?.toInt() ?? 0;
+
+    final puertos = <PuertoCTO>[];
+    for (int i = 1; i <= 16; i++) {
+      final portId = niveles['u_cto_port${i}_ID']?.toString();
+      if (portId == null || portId.isEmpty) continue;
+      puertos.add(PuertoCTO.fromJson({
+        'physical_port': i.toString(),
+        'id': portId,
+        'status': niveles['u_cto_port${i}_status'],
+        'description_status': niveles['u_cto_port${i}_description_status'],
+        'rx_actual': niveles['u_cto_port${i}_rx_actual'],
+        'rx_before': niveles['u_cto_port${i}_rx_before'],
+        'current_port': currentPort == i,
+      }));
+    }
+
+    final activos = puertos.where((p) => p.activo).toList();
+    final ok = activos.where((p) => p.ok).length;
+    final nok = activos.length - ok;
+    final pct = activos.isEmpty ? 0.0 : ok / activos.length * 100;
+
+    return EstadoCTO(
+      accessId: accessIdPrefijado,
+      vnoId: _nyquistVnoId,
+      totalPuertos: puertos.length,
+      puertosOk: ok,
+      puertosNok: nok,
+      porcentajeOk: pct,
+      puertos: puertos,
+      currentPortNumber: currentPort,
+    );
+  }
+
+  /// Obtiene el estado de una orden **histórica** usando el mismo endpoint de
+  /// Kepler v2 que [fetchActiveOrderFromKepler], pero parametrizado por
+  /// access_id en lugar de RUT.
+  ///
+  /// Prioriza el snapshot más avanzado (completado > final > intermedio >
+  /// inicial) y construye [EstadoCTO] directamente desde datos Kepler, sin
+  /// llamar a Nyquist — que no tiene datos para órdenes ya completadas.
+  ///
+  /// Si Kepler no responde o no tiene snapshot válido, hace fallback a
+  /// Nyquist para cubrir órdenes que aún estén activas.
+  ///
+  /// [accessIdCorto] — sin prefijo VNO, ej: "1-3L47FQ8J".
+  Future<EstadoCTO> fetchEstadoByAccessId(String accessIdCorto) async {
+    final url = Uri.parse(
+        'https://keplerv2.sbip.cl/api/v1/toa/get_pelo_db_access_id/$accessIdCorto');
+    print('🌐 [Kepler/get_pelo_db_access_id] $url');
+
+    try {
+      final response = await http.get(url).timeout(const Duration(seconds: 20));
+      print('🌐 [Kepler/get_pelo_db_access_id] HTTP ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        if (body is Map<String, dynamic>) {
+          final data = body['data'];
+          if (data is Map<String, dynamic>) {
+            Map<String, dynamic>? niveles;
+            String? snapKey;
+            for (final key in const [
+              'niveles_completado',
+              'niveles_final',
+              'niveles_intermedio',
+              'niveles_inicial',
+            ]) {
+              final n = data[key];
+              if (n is Map<String, dynamic>) {
+                final hasData = List<int>.generate(16, (i) => i + 1)
+                    .any((i) => n['u_cto_port${i}_ID'] != null);
+                if (hasData) { niveles = n; snapKey = key; break; }
+              }
+            }
+            if (niveles != null) {
+              print('🌐 [Kepler/get_pelo_db_access_id] snapshot=$snapKey');
+              final accessIdPrefijado =
+                  niveles['u_access_id_vno']?.toString() ??
+                      '$_nyquistVnoId-$accessIdCorto';
+              return _buildEstadoFromNiveles(niveles, accessIdPrefijado);
+            }
+            print('🌐 [Kepler/get_pelo_db_access_id] sin snapshot con datos');
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ [Kepler/get_pelo_db_access_id] error: $e — usando Nyquist como fallback');
+    }
+
+    // Fallback: Nyquist en vivo (funciona para órdenes activas)
+    print('🌐 [Kepler/get_pelo_db_access_id] fallback → Nyquist');
+    return consultarEstado('$_nyquistVnoId-$accessIdCorto');
+  }
+
+  // ── Kepler: certificar niveles OK ─────────────────────────────────────────
+
+  /// Endpoint que recibirá el snapshot de niveles Nyquist cuando la CTO
+  /// queda sana (todos los puertos OK). URL provisional — actualizar cuando
+  /// Kepler habilite el endpoint en producción.
+  static const String _keplerCertificarUrl =
+      'https://keplerv2.sbip.cl/api/v1/toa/certificar_niveles';
+
+  /// Construye el payload con los datos de Nyquist y hace POST a Kepler.
+  /// Retorna `true` solo si la respuesta es HTTP 200.
+  Future<bool> certificarNiveles(String accessIdFull, EstadoCTO estado) async {
+    final portMap = <int, PuertoCTO>{};
+    for (final p in estado.puertos) {
+      portMap[p.numero] = p;
+    }
+
+    String? _fmtActual(double? v) =>
+        v != null ? '${v.toStringAsFixed(2)} dBm' : null;
+    String? _fmtBefore(double? v) =>
+        v != null ? '${v.toStringAsFixed(6)} dBm' : null;
+
+    final maxPorts = portMap.keys.isEmpty
+        ? 8
+        : portMap.keys.fold(0, (a, b) => a > b ? a : b);
+
+    final payload = <String, dynamic>{
+      'u_access_id_vno': accessIdFull,
+      'u_id_vno': _nyquistVnoId,
+      'u_return_code': 0,
+      'u_return_code_desc': 'Success',
+      'u_current_physical_port': estado.currentPortNumber,
+      'u_max_ports': maxPorts,
+    };
+
+    for (int i = 1; i <= maxPorts; i++) {
+      final p = portMap[i];
+      payload['u_cto_port${i}_ID']                 = p?.portId;
+      payload['u_cto_port${i}_description_status'] = p?.description;
+      payload['u_cto_port${i}_rx_actual']          = p != null ? _fmtActual(p.rxActual)  : null;
+      payload['u_cto_port${i}_rx_before']          = p != null ? _fmtBefore(p.rxBefore) : null;
+      payload['u_cto_port${i}_status']             = p?.status;
+    }
+
+    final activePuertos = estado.puertos.where((p) => p.activo).toList();
+    payload['u_quantity_access']        = '${activePuertos.length}';
+    payload['u_quantity_access_ok']     = '${estado.puertosOk}';
+    payload['u_quantity_access_nok']    = '${estado.puertosNok}';
+    payload['u_cto_percentage_access_ok'] =
+        '${estado.porcentajeOk.truncate()}';
+    payload['_secondary_access_id'] = null;
+
+    final url = Uri.parse(_keplerCertificarUrl);
+    print('🚀 [Kepler/certificar] POST $url');
+
+    final response = await http.post(
+      url,
+      headers: {
+        'Authorization': 'Bearer $_keplerTrazaApiKey',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode(payload),
+    ).timeout(const Duration(seconds: 30));
+
+    print('🚀 [Kepler/certificar] HTTP ${response.statusCode}');
+    return response.statusCode == 200;
   }
 
   // ── Kepler Traza ──────────────────────────────────────────────────────────

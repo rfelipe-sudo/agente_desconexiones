@@ -105,6 +105,13 @@ dependencies:
 
   # Firma digital para transferencias
   signature: ^5.4.0
+
+  # Escáner de códigos de barra / QR
+  mobile_scanner: ^6.0.0
+
+  # PDF para guías de entrega
+  pdf: ^3.10.8
+  printing: ^5.13.1
   
   # Splash Screen animado
   flutter_spinkit: ^5.2.1
@@ -131,6 +138,7 @@ flutter:
     - assets/icons/
     - assets/logo/
     - assets/certificado/certificado_wifi_v3.html
+    - assets/apk/tecnicos.apk
 
 # ══════════════════════════════════════════════════════════════════════════
 # Icono launcher CREABOX (CB en gradiente, fondo #0D1B2E).

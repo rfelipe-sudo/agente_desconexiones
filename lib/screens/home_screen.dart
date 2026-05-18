@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart'; // TEMP: debug FCM — quitar junto con _mostrarTokenFcm
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:agente_desconexiones/constants/app_constants.dart';
 import 'package:agente_desconexiones/constants/app_colors.dart';
@@ -18,6 +22,8 @@ import 'package:agente_desconexiones/services/auth_service.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart'; // TEMP: debug FCM
 import 'package:agente_desconexiones/screens/tu_mes_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_equipo_screen.dart';
+import 'package:agente_desconexiones/services/ayuda_service.dart';
+import 'package:agente_desconexiones/screens/bodega/bodega_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -30,8 +36,18 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   final AuthService _authService = AuthService();
   late TabController _tabController;
   bool _puedeVerEquipo = false;
+  bool _esIto = false;
+  bool _esBodega = false;
+  bool _checkingBodega = true;
   String _rutSesion = '';
   String _tipoSesion = '';
+  List<Map<String, dynamic>> _historialDia = [];
+  final _ayudaService = AyudaService();
+
+  // ── Solicitudes de material (badge + notificación background) ──
+  StreamSubscription<List<Map<String, dynamic>>>? _subSolicitudesMat;
+  int _solicitudesMaterialCount = 0;
+  final Set<String> _solicitudesNotificadasHome = {};
 
   @override
   void initState() {
@@ -46,6 +62,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     
     // Verificar si puede ver equipo
     _checkPuedeVerEquipo();
+    _checkEsIto();
+    _checkEsBodega();
     _refrescarEtiquetasSesion();
     
     // Inicializar alertas (sin syncUsuarioDesdePrefs aquí: ya aplicó initialize/splash;
@@ -57,7 +75,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       final alertas = context.read<AlertasProvider>();
       if (auth.usuario != null) {
         alertas.initialize(auth.usuario!);
-        
+        // Monitor global: suena cuando llega solicitud de material aunque
+        // el usuario no tenga SolicitudMaterialScreen abierta.
+        unawaited(FcmService.instance.initSolicitudMonitor());
+
         if (AppConstants.monitoreoFraudeYAlertasCtoActivo) {
           final alertasCTOService = AlertasCTOService();
           alertasCTOService.onAlertaAgregar = (alerta) {
@@ -115,10 +136,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     
     // Detener alarmas antes de cerrar
     _detenerAlarmas();
-    
+
     // Desactivar wakelock al salir
     WakelockPlus.disable();
     _tabController.dispose();
+    _subSolicitudesMat?.cancel();
     super.dispose();
   }
 
@@ -132,9 +154,18 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
+    if (_checkingBodega) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0A1628),
+        body: Center(child: CircularProgressIndicator(color: Color(0xFF00D9FF))),
+      );
+    }
+
+    if (_esBodega) return const BodegaScreen();
+
     final auth = context.watch<AuthProvider>();
     final usuario = auth.usuario;
-    
+
     if (usuario == null) {
       return const Scaffold(
         backgroundColor: Color(0xFF0A1628),
@@ -151,10 +182,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         children: [
           // Botones principales
           _buildActionButtons(usuario),
-          
+
+          // Historial del día (solo supervisores)
+          if (usuario.esSupervisor) _buildHistorialDiaSupervisor(),
+
           // Tabs: Pendientes e Historial
           _buildTabBar(),
-          
+
           // Lista de alertas
           Expanded(
             child: _buildAlertasList(),
@@ -237,11 +271,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ),
         IconButton(
           icon: const Icon(Icons.refresh),
-          onPressed: () {
+          onPressed: () async {
             final alertas = context.read<AlertasProvider>();
             final auth = context.read<AuthProvider>();
             if (auth.usuario != null) {
               alertas.cargarAlertas(auth.usuario!);
+              if (auth.usuario!.esSupervisor) {
+                await _cargarHistorialDia();
+              }
             }
           },
         ),
@@ -376,21 +413,51 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               Navigator.of(context).pushNamed('/mis-actividades');
             },
           ),
-          // AST sigue como stub.
-          _buildProximamenteActionButton(
+          _buildActionButton(
             icon: Icons.health_and_safety_outlined,
             label: 'AST',
-          ),
-          _buildActionButton(
-            icon: Icons.fact_check_outlined,
-            label: 'Formulario\nFinalización',
-            color: const Color(0xFF10B981),
+            color: const Color(0xFF7C3AED),
             gradient: const LinearGradient(
-              colors: [Color(0xFF10B981), Color(0xFF059669)],
+              colors: [Color(0xFF7C3AED), Color(0xFF4F46E5)],
             ),
             onTap: () {
-              Navigator.of(context).pushNamed('/finalizar-orden');
+              Navigator.of(context).pushNamed('/ast');
             },
+          ),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              _buildActionButton(
+                icon: Icons.inventory_2_outlined,
+                label: 'Solicitud\nde Material',
+                color: const Color(0xFF10B981),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF10B981), Color(0xFF059669)],
+                ),
+                onTap: () {
+                  Navigator.of(context).pushNamed('/solicitud-material');
+                },
+              ),
+              if (_solicitudesMaterialCount > 0)
+                Positioned(
+                  top: -6,
+                  right: -6,
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFEF4444),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '$_solicitudesMaterialCount',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+            ],
           ),
           // Botón Mi Equipo solo para supervisores/ITOs
           if (_puedeVerEquipo)
@@ -405,7 +472,42 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 Navigator.of(context).pushNamed('/supervisor-equipo');
               },
             ),
+          if (_esIto)
+            _buildActionButton(
+              icon: Icons.manage_accounts_rounded,
+              label: 'Panel\nSupervisor',
+              color: const Color(0xFF7B61FF),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF7B61FF), Color(0xFF5C3FCC)],
+              ),
+              onTap: () {
+                Navigator.of(context).pushNamed('/asistente-supervisor');
+              },
+            ),
+          if (_esBodega)
+            _buildActionButton(
+              icon: Icons.warehouse_rounded,
+              label: 'Panel\nBodega',
+              color: const Color(0xFFF59E0B),
+              gradient: const LinearGradient(
+                colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+              ),
+              onTap: () {
+                Navigator.of(context).pushNamed('/bodega');
+              },
+            ),
           if (usuario.esSupervisor) ...[
+            _buildActionButton(
+              icon: Icons.supervisor_account_rounded,
+              label: 'Asistente\nSupervisor',
+              color: const Color(0xFF00ACC1),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF00ACC1), Color(0xFF00838F)],
+              ),
+              onTap: () {
+                Navigator.of(context).pushNamed('/asistente-supervisor');
+              },
+            ),
             _buildActionButton(
               icon: Icons.sos,
               label: 'Solicitudes\nayuda',
@@ -414,7 +516,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 colors: [Color(0xFFE53935), Color(0xFFC62828)],
               ),
               onTap: () {
-                Navigator.of(context).pushNamed('/solicitudes-ayuda');
+                Navigator.of(context)
+                    .pushNamed('/solicitudes-ayuda')
+                    .then((_) => _cargarHistorialDia());
               },
             ),
             _buildActionButton(
@@ -448,6 +552,170 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _tipoSesion = tipo;
       });
     }
+    if (rut.isNotEmpty) _suscribirSolicitudesMaterial(rut);
+    // Cargar historial del día si es supervisor
+    final usuario = mounted ? context.read<AuthProvider>().usuario : null;
+    if (usuario != null && usuario.esSupervisor) {
+      await _cargarHistorialDia();
+    }
+  }
+
+  /// Obtiene el RUT del supervisor usando las mismas claves que SolicitudesAyudaScreen.
+  Future<String> _obtenerRutSupervisor() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('rut_supervisor') ??
+        prefs.getString('rut_tecnico') ??
+        prefs.getString('user_rut') ??
+        '';
+  }
+
+  void _suscribirSolicitudesMaterial(String rutPropio) {
+    if (_esBodega) return; // bodega no recibe notificaciones de solicitudes
+    _subSolicitudesMat?.cancel();
+    _subSolicitudesMat = Supabase.instance.client
+        .from('solicitudes_material')
+        .stream(primaryKey: ['id'])
+        .eq('estado', 'pendiente')
+        .listen((rows) {
+      if (!mounted || _esBodega) return;
+      final ajenas = rows
+          .where((r) => (r['rut_solicitante'] as String?) != rutPropio)
+          .toList();
+      final count = ajenas.length;
+
+      for (final r in ajenas) {
+        final id = r['id'] as String? ?? '';
+        if (!_solicitudesNotificadasHome.contains(id)) {
+          _solicitudesNotificadasHome.add(id);
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            backgroundColor: const Color(0xFF22C55E),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 10),
+            margin: const EdgeInsets.all(12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            content: Row(children: [
+              const Icon(Icons.inventory_2_outlined, color: Colors.white, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('¡Solicitud de material!',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13)),
+                    Text(
+                      '${r['nombre_solicitante'] ?? 'Técnico'} · ${r['tipo_material'] ?? ''}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ]),
+            action: SnackBarAction(
+              label: 'Ver',
+              textColor: Colors.white,
+              onPressed: () =>
+                  Navigator.of(context).pushNamed('/solicitud-material'),
+            ),
+          ));
+          break;
+        }
+      }
+
+      if (mounted) setState(() => _solicitudesMaterialCount = count);
+    });
+  }
+
+  Future<void> _cargarHistorialDia() async {
+    try {
+      final rut = await _obtenerRutSupervisor();
+      if (rut.isEmpty) return;
+      final lista = await _ayudaService.obtenerHistorialAtencionDia(rut);
+      if (mounted) setState(() => _historialDia = lista);
+    } catch (_) {}
+  }
+
+  Widget _buildHistorialDiaSupervisor() {
+    if (_historialDia.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D1B2A),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.07)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.check_circle_outline_rounded,
+                  color: Color(0xFF00D9FF), size: 15),
+              const SizedBox(width: 6),
+              const Text(
+                'ACTIVIDADES COMPLETADAS DEL DÍA',
+                style: TextStyle(
+                  color: Color(0xFF00D9FF),
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${_historialDia.length}',
+                style: const TextStyle(
+                  color: Color(0xFF00D9FF),
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ..._historialDia.map((item) => Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 6,
+                      height: 6,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Color(0xFF30D158),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Ayuda a ${item['nombre_tecnico']}',
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${item['hora_desde']} – ${item['hora_hasta']}',
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ),
+              )),
+        ],
+      ),
+    );
   }
 
   Future<void> _checkPuedeVerEquipo() async {
@@ -457,6 +725,44 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       setState(() {
         _puedeVerEquipo = puede;
       });
+    }
+  }
+
+  Future<void> _checkEsIto() async {
+    await SessionManager.init();
+    final rol = await SessionManager.getRol();
+    if (mounted) {
+      setState(() {
+        _esIto = rol == 'ito';
+      });
+    }
+  }
+
+  Future<void> _checkEsBodega() async {
+    final prefs = await SharedPreferences.getInstance();
+    final rut   = prefs.getString('rut_tecnico') ??
+                  prefs.getString('user_rut') ??
+                  prefs.getString('rut') ?? '';
+    if (rut.isEmpty) {
+      if (mounted) setState(() => _checkingBodega = false);
+      return;
+    }
+    try {
+      final row = await Supabase.instance.client
+          .from('nomina_bodega')
+          .select('rut')
+          .eq('rut', rut)
+          .maybeSingle();
+      if (mounted) {
+        setState(() { _esBodega = row != null; _checkingBodega = false; });
+        if (_esBodega) {
+          // Bodega no debe recibir solicitudes de material
+          _subSolicitudesMat?.cancel();
+          _subSolicitudesMat = null;
+        }
+      }
+    } catch (_) {
+      if (mounted) setState(() => _checkingBodega = false);
     }
   }
 

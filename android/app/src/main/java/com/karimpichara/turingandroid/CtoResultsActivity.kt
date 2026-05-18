@@ -1,5 +1,6 @@
 package com.karimpichara.turingandroid
 
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
@@ -13,7 +14,6 @@ import android.widget.TableLayout
 import android.widget.TableRow
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.creacionestecnologicas.agente_desconexiones.BuildConfig
 import com.creacionestecnologicas.agente_desconexiones.R
 import okhttp3.Call
 import okhttp3.Credentials
@@ -39,8 +39,13 @@ class CtoResultsActivity : AppCompatActivity() {
     private lateinit var refreshButton: Button
     private lateinit var lastUpdatedText: TextView
     private lateinit var reescanearButton: Button
+    private lateinit var volverInicioButton: Button
 
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     private val executor: ExecutorService = Executors.newFixedThreadPool(2)
     private val activeCalls = mutableListOf<Call>()
 
@@ -62,12 +67,23 @@ class CtoResultsActivity : AppCompatActivity() {
         tableErrorText  = findViewById(R.id.tableErrorText)
         refreshButton   = findViewById(R.id.refreshButton)
         lastUpdatedText = findViewById(R.id.lastUpdatedText)
-        reescanearButton = findViewById(R.id.reescanearButton)
+        reescanearButton    = findViewById(R.id.reescanearButton)
+        volverInicioButton  = findViewById(R.id.volverInicioButton)
 
         boxType = intent.getStringExtra("BOX_TYPE") ?: ""
         rut     = intent.getStringExtra("RUT") ?: ""
 
         reescanearButton.setOnClickListener { finish() }
+
+        volverInicioButton.setOnClickListener {
+            val intent = Intent(
+                this,
+                com.creacionestecnologicas.agente_desconexiones.MainActivity::class.java
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            intent.putExtra("CTO_CANCELLED", true)
+            startActivity(intent)
+        }
 
         refreshButton.setOnClickListener {
             val id = accessId
@@ -176,9 +192,9 @@ class CtoResultsActivity : AppCompatActivity() {
     private fun fetchNyquistPorts(accessId: String) {
         // Si el accessId ya trae el prefijo "02-" (viene de Kepler), no lo duplicamos
         val fullAccessId = if (accessId.startsWith("02-")) accessId else "02-$accessId"
-        // Mismo endpoint que usa Flutter (nyquist.sbip.cl, sin "traza").
-        val url = "https://nyquist.sbip.cl/onfide/estado-vecino?access_id=$fullAccessId"
-        val credential = Credentials.basic(BuildConfig.NYQUIST_USER, BuildConfig.NYQUIST_PASS)
+        // Mismo endpoint y credenciales que usa Flutter (nyquist_service.dart)
+        val url = "https://nyquist.sbip.cl/onfide/estado-vecino/complete?access_id=$fullAccessId"
+        val credential = Credentials.basic("0npVpRUG7MegtpmfdDuJ3A", "Ddw3u241Y0MN_x7ezZixKIJtk1ZRHpG6Zz2tCYrhXVg")
         android.util.Log.d("CtoResults", "Nyquist URL: $url")
         val call = client.newCall(
             Request.Builder()
@@ -192,12 +208,50 @@ class CtoResultsActivity : AppCompatActivity() {
             try {
                 val response = call.execute()
                 val body = response.body?.string()
+                android.util.Log.d("CtoResults", "Nyquist status=${response.code} body=${body?.take(300)}")
                 if (body != null && response.isSuccessful) {
-                    val json = JSONObject(body)
-                    val result = json.optJSONObject("result") ?: json
+                    // La respuesta puede ser JSONObject o JSONArray (Flutter lo maneja igual)
+                    val rootObj: JSONObject? = try { JSONObject(body) } catch (_: Exception) { null }
+                    val rootArr = if (rootObj == null) {
+                        try { org.json.JSONArray(body) } catch (_: Exception) { null }
+                    } else null
+
+                    // Normalizar: si es array tomamos el primer elemento
+                    val json: JSONObject? = rootObj
+                        ?: if (rootArr != null && rootArr.length() > 0) rootArr.optJSONObject(0) else null
+
+                    if (json == null) {
+                        runOnUiThreadSafe {
+                            tableErrorText.text = "Nyquist: respuesta inesperada"
+                            tableErrorText.visibility = View.VISIBLE
+                            refreshButton.isEnabled = true
+                            refreshButton.text = "Refrescar niveles"
+                        }
+                        return@execute
+                    }
+
+                    // Verificar success
+                    if (json.has("success") && json.optBoolean("success") == false) {
+                        val err = json.optString("error", "sin detalle")
+                        runOnUiThreadSafe {
+                            tableErrorText.text = "Nyquist: $err"
+                            tableErrorText.visibility = View.VISIBLE
+                            refreshButton.isEnabled = true
+                            refreshButton.text = "Refrescar niveles"
+                        }
+                        return@execute
+                    }
+
+                    // Parsear array de puertos del formato /complete
+                    val portsArray = json.optJSONArray("ports")
                     val now = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
                     runOnUiThreadSafe {
-                        populatePortTable(result)
+                        if (portsArray != null) {
+                            populatePortTableFromComplete(portsArray)
+                        } else {
+                            // Fallback: formato plano u_cto_portN_rx_before (Kepler)
+                            populatePortTable(json.optJSONObject("result") ?: json)
+                        }
                         lastUpdatedText.text = "Última actualización: $now"
                         lastUpdatedText.visibility = View.VISIBLE
                         tableErrorText.visibility = View.GONE
@@ -212,16 +266,56 @@ class CtoResultsActivity : AppCompatActivity() {
                         refreshButton.text = "Refrescar niveles"
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                android.util.Log.e("CtoResults", "fetchNyquistPorts error", e)
                 runOnUiThreadSafe {
-                    tableErrorText.text = "Error Nyquist"
+                    tableErrorText.text = "Error Nyquist: ${e.message?.take(80)}"
                     tableErrorText.visibility = View.VISIBLE
                     refreshButton.isEnabled = true
+                    refreshButton.text = "Refrescar niveles"
                 }
             } finally {
                 synchronized(activeCalls) { activeCalls.remove(call) }
             }
         }
+    }
+
+    // Parsea la respuesta de /complete: {"success":true,"ports":[{physical_port,rx_actual,rx_before,status},...]}
+    private fun populatePortTableFromComplete(ports: org.json.JSONArray) {
+        // Construir mapa por número de puerto físico
+        data class PortData(val rxBefore: String, val rxActual: String, val status: String)
+        val byPort = mutableMapOf<Int, PortData>()
+        for (i in 0 until ports.length()) {
+            val p = ports.optJSONObject(i) ?: continue
+            val num = p.optInt("physical_port", -1)
+            if (num < 1) continue
+            byPort[num] = PortData(
+                rxBefore = p.optString("rx_before", ""),
+                rxActual = p.optString("rx_actual", ""),
+                status   = p.optString("status", ""),
+            )
+        }
+
+        portTable.removeAllViews()
+        val headerRow = android.widget.TableRow(this).apply {
+            setBackgroundColor(android.graphics.Color.parseColor("#F5F5F5"))
+            setPadding(0, 0, 0, dpToPx(2))
+        }
+        for (col in listOf("Puerto", "rx_before", "rx_actual", "Estado")) {
+            headerRow.addView(makeTextView(col, bold = true, isHeader = true))
+        }
+        portTable.addView(headerRow)
+
+        for (portNum in 1..8) {
+            val d = byPort[portNum] ?: continue
+            val row = android.widget.TableRow(this).apply { setPadding(0, dpToPx(8), 0, dpToPx(8)) }
+            row.addView(makeTextView("$portNum"))
+            row.addView(makeTextView(displayValue(d.rxBefore)))
+            row.addView(makeTextView(displayValue(d.rxActual), bold = true))
+            row.addView(makeStatusBadge(d.status))
+            portTable.addView(row)
+        }
+        portTable.visibility = View.VISIBLE
     }
 
     private fun populatePortTable(result: JSONObject) {

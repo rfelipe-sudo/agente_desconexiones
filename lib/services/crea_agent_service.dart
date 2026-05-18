@@ -37,6 +37,7 @@ class CreaAgentService extends ChangeNotifier {
   String _lastTranscript = '';
   String get lastTranscript => _lastTranscript;
   String _lastTranscriptAdded = ''; // Para evitar duplicados
+  String _lastResponseAdded  = ''; // Para evitar duplicados de respuestas
   
   String _agentResponse = '';
   String get agentResponse => _agentResponse;
@@ -213,10 +214,12 @@ class CreaAgentService extends ChangeNotifier {
     
     // Escuchar respuestas del agente
     _responseSub = _elevenLabs.responseStream.listen((text) {
+      if (text.isEmpty || text == _lastResponseAdded) return;
+      _lastResponseAdded = text;
       _agentResponse = text;
       _responseController.add(text);
       notifyListeners();
-      
+
       // Detectar si el agente menciona CHURN o cambio de compañía
       _detectarChurnEnRespuestaAgente(text);
     });
@@ -478,15 +481,16 @@ class CreaAgentService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Pausa la escucha
+  /// Pausa la escucha: silencia el micrófono sin detener el stream.
+  /// Mantiene la sesión ElevenLabs activa para que procese mensajes de texto.
   Future<void> pausarEscucha() async {
-    await _elevenLabs.stopListening();
+    if (!_elevenLabs.isMuted) _elevenLabs.toggleMute();
     _setState(CreaState.idle);
   }
 
-  /// Reanuda la escucha
+  /// Reanuda la escucha: quita el silencio del micrófono.
   Future<void> reanudarEscucha() async {
-    await _elevenLabs.startListening();
+    if (_elevenLabs.isMuted) _elevenLabs.toggleMute();
     _setState(CreaState.listening);
   }
 

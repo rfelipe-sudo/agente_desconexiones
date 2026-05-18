@@ -9,6 +9,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:agente_desconexiones/constants/app_colors.dart';
+import 'package:agente_desconexiones/constants/map_styles.dart';
 import 'package:agente_desconexiones/models/solicitud_ayuda.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
 import 'package:agente_desconexiones/screens/ayuda_terreno_screen.dart';
@@ -35,9 +36,10 @@ class _AyudaTrackingScreenState extends State<AyudaTrackingScreen> {
   List<Map<String, dynamic>> _supervisoresDisponibles = [];
   String? _supervisorAsignadoId;
   Timer? _pollingSupervisores;
-  Timer? _pollingSupervisorAsignado; // Polling especÃ­fico para supervisor asignado
+  Timer? _pollingSupervisorAsignado;
   double? _distanciaActual;
   int? _etaMinutos;
+  bool _supervisorLlego = false;
   
   // Iconos personalizados para marcadores
   BitmapDescriptor? _iconoTecnico;
@@ -449,7 +451,7 @@ class _AyudaTrackingScreenState extends State<AyudaTrackingScreen> {
       // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
       // OBTENER RUTA REAL USANDO GOOGLE DIRECTIONS API
       // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-      const apiKey = 'AIzaSyCqWYl4MzfnLi6okjCJozltYT6ssnHdXvY';
+      const apiKey = 'AIzaSyBY14w076XgTfwyOPjLnE-ov1I1upnp5Ak';
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/directions/json?'
         'origin=${origen.latitude},${origen.longitude}&'
@@ -507,9 +509,16 @@ class _AyudaTrackingScreenState extends State<AyudaTrackingScreen> {
                   final distanceValue = distance['value'] as int?; // en metros
                   
                   if (durationValue != null && distanceValue != null) {
+                    final kmActual = distanceValue / 1000;
+                    final llegado = kmActual < 0.08; // 80m = llegó
                     setState(() {
-                      _etaMinutos = (durationValue / 60).round();
-                      _distanciaActual = distanceValue / 1000; // convertir a km
+                      _etaMinutos = llegado ? 0 : (durationValue / 60).round();
+                      _distanciaActual = kmActual;
+                      if (llegado && !_supervisorLlego) {
+                        _supervisorLlego = true;
+                        _pollingSupervisorAsignado?.cancel();
+                        _pollingSupervisorAsignado = null;
+                      }
                     });
                   }
                 }
@@ -550,7 +559,15 @@ class _AyudaTrackingScreenState extends State<AyudaTrackingScreen> {
             startCap: Cap.roundCap,
           ),
         );
-        setState(() {});
+        // Calcular distancia y ETA directo desde coordenadas
+        final distFallback = Geolocator.distanceBetween(
+          origen.latitude, origen.longitude,
+          destino.latitude, destino.longitude,
+        ) / 1000; // metros a km
+        setState(() {
+          _distanciaActual = distFallback;
+          _etaMinutos = (distFallback / 40 * 60).ceil();
+        });
       }
     }
     
@@ -975,9 +992,6 @@ class _AyudaTrackingScreenState extends State<AyudaTrackingScreen> {
       ),
       onMapCreated: (controller) {
         _mapController = controller;
-        // Aplicar estilo personalizado al mapa
-        _aplicarEstiloMapa(controller);
-        // PequeÃ±o delay para asegurar que el mapa estÃ© completamente inicializado
         Future.delayed(const Duration(milliseconds: 300), () {
           if (mounted) {
             _actualizarMapa();
@@ -996,146 +1010,196 @@ class _AyudaTrackingScreenState extends State<AyudaTrackingScreen> {
       tiltGesturesEnabled: false, // Sin inclinaciÃ³n (estilo Uber)
       zoomGesturesEnabled: true,
       scrollGesturesEnabled: true,
-      // Estilo personalizado estilo Uber
-      style: _estiloMapaUber,
+      style: MapStyles.estiloMapaUberDark,
     );
   }
 
   Widget _buildSupervisorCard(SolicitudAyuda solicitud) {
-    // Usar distancia y ETA actualizados si estÃ¡n disponibles
     final distancia = _distanciaActual ?? solicitud.distanciaKm;
-    final eta = _etaMinutos ?? solicitud.tiempoExtraMinutos;
-    
+    final eta = _supervisorLlego
+        ? 0
+        : (_etaMinutos ??
+            solicitud.tiempoExtraMinutos ??
+            (distancia != null ? (distancia / 40 * 60).ceil() : null));
+
     return SafeArea(
       top: false,
       child: Container(
-        margin: const EdgeInsets.all(16),
-        padding: const EdgeInsets.all(20),
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
+          color: const Color(0xFF0D1B2A),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: _supervisorLlego
+                ? Colors.green.withOpacity(0.4)
+                : const Color(0xFF00E5FF).withOpacity(0.2),
+            width: 1,
+          ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.15),
-              blurRadius: 20,
-              spreadRadius: 0,
-              offset: const Offset(0, -5),
+              color: Colors.black.withOpacity(0.5),
+              blurRadius: 24,
+              offset: const Offset(0, -6),
             ),
           ],
         ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header con nombre del supervisor
-          Row(
-            children: [
-              Container(
-                width: 50,
-                height: 50,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: 10),
+                width: 36,
+                height: 4,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF4CAF50),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.support_agent,
-                  color: Colors.white,
-                  size: 28,
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Supervisor asignado',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                        fontWeight: FontWeight.w500,
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+              child: Column(
+                children: [
+                  // ── ETA hero row ─────────────────────────────────
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // Pulsing dot
+                      _supervisorLlego
+                          ? const Icon(Icons.check_circle, color: Colors.greenAccent, size: 14)
+                          : Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00E5FF),
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(0xFF00E5FF).withOpacity(0.6),
+                                    blurRadius: 8,
+                                    spreadRadius: 2,
+                                  ),
+                                ],
+                              ),
+                            ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _supervisorLlego ? '¡Tu supervisor llegó!' : 'En camino hacia ti',
+                        style: TextStyle(
+                          color: _supervisorLlego ? Colors.greenAccent : const Color(0xFF00E5FF),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      solicitud.supervisorNombre ?? 'Supervisor',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
+                      const Spacer(),
+                      // ETA badge prominente
+                      if (eta != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: _supervisorLlego
+                                ? Colors.green.withOpacity(0.2)
+                                : const Color(0xFF00E5FF).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: _supervisorLlego
+                                  ? Colors.green.withOpacity(0.5)
+                                  : const Color(0xFF00E5FF).withOpacity(0.4),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.access_time_rounded,
+                                color: _supervisorLlego ? Colors.greenAccent : const Color(0xFF00E5FF),
+                                size: 15,
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                _supervisorLlego ? 'Aquí' : '$eta min',
+                                style: TextStyle(
+                                  color: _supervisorLlego ? Colors.greenAccent : const Color(0xFF00E5FF),
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // ── Supervisor info ───────────────────────────────
+                  Row(
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.green.shade600,
+                              Colors.green.shade400,
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.support_agent, color: Colors.white, size: 26),
                       ),
-                    ),
-                  ],
-                ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              solicitud.supervisorNombre ?? 'Supervisor',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const Text(
+                              'Supervisor ITO',
+                              style: TextStyle(color: Colors.white54, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Distancia
+                      if (distancia != null && !_supervisorLlego)
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              '${distancia.toStringAsFixed(1)} km',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const Text(
+                              'distancia',
+                              style: TextStyle(color: Colors.white38, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ],
               ),
-            ],
-          ),
-          if (distancia != null || eta != null) ...[
-            const SizedBox(height: 20),
-            // InformaciÃ³n de distancia y tiempo estilo Uber
-            Row(
-              children: [
-                if (distancia != null) ...[
-                  Expanded(
-                    child: _buildInfoItem(
-                      icon: Icons.straighten,
-                      value: '${distancia.toStringAsFixed(1)} km',
-                      label: 'Distancia',
-                    ),
-                  ),
-                ],
-                if (eta != null) ...[
-                  if (distancia != null)
-                    Container(
-                      width: 1,
-                      height: 40,
-                      color: Colors.grey[300],
-                    ),
-                  Expanded(
-                    child: _buildInfoItem(
-                      icon: Icons.access_time,
-                      value: '$eta min',
-                      label: 'Tiempo estimado',
-                    ),
-                  ),
-                ],
-              ],
             ),
           ],
-        ],
-      ),
-      ),
-    ).animate().fadeIn().slideY(begin: 0.1);
-  }
-
-  /// Widget para mostrar informaciÃ³n (distancia/tiempo) estilo Uber
-  Widget _buildInfoItem({
-    required IconData icon,
-    required String value,
-    required String label,
-  }) {
-    return Column(
-      children: [
-        Icon(icon, color: Colors.black87, size: 24),
-        const SizedBox(height: 8),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.black,
-          ),
         ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.grey[600],
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ],
-    );
+      ),
+    ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.15);
   }
 
   Future<void> _cancelarSolicitud(BuildContext context) async {
@@ -1187,106 +1251,6 @@ class _AyudaTrackingScreenState extends State<AyudaTrackingScreen> {
     }
   }
 
-  /// Aplicar estilo personalizado al mapa
-  void _aplicarEstiloMapa(GoogleMapController controller) {
-    controller.setMapStyle(_estiloMapaUber);
-  }
-
-  /// Estilo personalizado del mapa estilo Uber (limpio y minimalista)
-  static const String _estiloMapaUber = '''
-  [
-    {
-      "featureType": "all",
-      "elementType": "geometry",
-      "stylers": [
-        {
-          "color": "#f5f5f5"
-        }
-      ]
-    },
-    {
-      "featureType": "water",
-      "elementType": "geometry",
-      "stylers": [
-        {
-          "color": "#e9e9e9"
-        }
-      ]
-    },
-    {
-      "featureType": "road",
-      "elementType": "geometry",
-      "stylers": [
-        {
-          "color": "#ffffff"
-        }
-      ]
-    },
-    {
-      "featureType": "road.highway",
-      "elementType": "geometry",
-      "stylers": [
-        {
-          "color": "#dadada"
-        }
-      ]
-    },
-    {
-      "featureType": "road.arterial",
-      "elementType": "geometry",
-      "stylers": [
-        {
-          "color": "#fafafa"
-        }
-      ]
-    },
-    {
-      "featureType": "road.local",
-      "elementType": "geometry",
-      "stylers": [
-        {
-          "color": "#ffffff"
-        }
-      ]
-    },
-    {
-      "featureType": "landscape",
-      "elementType": "geometry",
-      "stylers": [
-        {
-          "color": "#f5f5f5"
-        }
-      ]
-    },
-    {
-      "featureType": "poi",
-      "elementType": "labels",
-      "stylers": [
-        {
-          "visibility": "off"
-        }
-      ]
-    },
-    {
-      "featureType": "poi",
-      "elementType": "geometry",
-      "stylers": [
-        {
-          "visibility": "off"
-        }
-      ]
-    },
-    {
-      "featureType": "transit",
-      "elementType": "geometry",
-      "stylers": [
-        {
-          "visibility": "off"
-        }
-      ]
-    }
-  ]
-  ''';
 
   @override
   void dispose() {

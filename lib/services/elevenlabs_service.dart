@@ -69,6 +69,7 @@ class ElevenLabsService extends ChangeNotifier {
   String? get lastError => _lastError;
   
   String _lastUserTranscript = ''; // Para evitar duplicados de user_transcript
+  String _lastAgentResponse = '';  // Para evitar duplicados de agent_response
   
   // Streams para eventos
   final StreamController<ConversationEvent> _eventController = 
@@ -84,7 +85,19 @@ class ElevenLabsService extends ChangeNotifier {
   Stream<String> get responseStream => _responseController.stream;
   
   StreamSubscription? _recordingSubscription;
-  
+  // Indica si había grabación activa justo antes de pausar para reproducir.
+  // En modo texto es siempre false → _resumeRecording() no arranca el mic.
+  bool _wasRecordingBeforePause = false;
+
+  // Modo texto: stream de silencio para mantener el VAD activo.
+  Timer? _silentAudioTimer;
+  bool _silentStreamWasActive = false;
+  // Pre-computed: 100 ms de PCM 16-bit/16kHz/mono en base64 (todos ceros).
+  static final String _b64Silence = base64Encode(Uint8List(3200));
+
+  // true → modo chat (texto puro, audio descartado).
+  bool _textModeOnly = false;
+
   // Buffer para audio de respuesta
   final List<Uint8List> _audioBuffer = [];
   bool _isPlayingResponse = false;
@@ -241,12 +254,17 @@ class ElevenLabsService extends ChangeNotifier {
         final response = responseEvent?['agent_response'] as String? ?? data['agent_response'] as String?;
         if (response != null && response.isNotEmpty) {
           print('🤖 Agente: $response');
-          _responseController.add(response);
-          _setState(ElevenLabsState.speaking);
-          _eventController.add(ConversationEvent(
-            type: 'agent_response',
-            text: response,
-          ));
+          if (_lastAgentResponse != response) {
+            _lastAgentResponse = response;
+            _responseController.add(response);
+            _setState(ElevenLabsState.speaking);
+            _eventController.add(ConversationEvent(
+              type: 'agent_response',
+              text: response,
+            ));
+          } else {
+            print('⚠️ Agent response duplicado ignorado: $response');
+          }
         }
         break;
         
@@ -295,6 +313,10 @@ class ElevenLabsService extends ChangeNotifier {
 
   /// Maneja chunks de audio recibidos
   void _handleAudioChunk(Uint8List audioData) {
+    if (_textModeOnly) {
+      print('🔇 Modo chat: audio descartado (${audioData.length} bytes)');
+      return;
+    }
     print('🎵 Agregando audio al buffer: ${audioData.length} bytes (Total: ${_audioBuffer.length + 1} chunks)');
     _audioBuffer.add(audioData);
     
@@ -402,15 +424,30 @@ class ElevenLabsService extends ChangeNotifier {
   /// Pausa la grabación temporalmente
   Future<void> _pauseRecording() async {
     print('⏸️ Pausando grabación...');
+    // Recordar si había grabación activa (false en modo texto).
+    _wasRecordingBeforePause = _recordingSubscription != null;
     await _recordingSubscription?.cancel();
     _recordingSubscription = null;
     if (await _recorder.isRecording()) {
       await _recorder.stop();
     }
+    // Pausar también el flujo de silencio (modo texto).
+    _stopSilenceStream();
   }
   
   /// Reanuda la grabación
   Future<void> _resumeRecording() async {
+    // Modo texto: reanudar flujo de silencio si estaba activo.
+    if (_silentStreamWasActive) {
+      print('🔇 Reanudando flujo de silencio (modo texto)');
+      _startSilenceStream();
+      return;
+    }
+    // En modo texto sin silencio previo → no arrancar el mic.
+    if (!_wasRecordingBeforePause) {
+      print('⏸️ Modo texto: no se reanuda grabación');
+      return;
+    }
     print('▶️ Intentando reanudar grabación...');
     print('▶️ Estado actual: $_state, channel: ${_channel != null}, isPlaying: $_isPlayingResponse');
     
@@ -484,6 +521,48 @@ class ElevenLabsService extends ChangeNotifier {
     } catch (e) {
       print('❌ Error reanudando grabación: $e');
     }
+  }
+
+  /// Marca el modo texto ANTES de conectar para que cualquier audio del
+  /// saludo inicial sea descartado desde el primer chunk recibido.
+  void setTextOnlyMode() {
+    _textModeOnly = true;
+  }
+
+  /// Inicia el flujo de silencio una vez conectado (llamar ~600ms post-connect).
+  void startTextMode() {
+    print('💬 Modo texto: iniciando flujo de silencio (audio desactivado)');
+    _textModeOnly = true;
+    _setState(ElevenLabsState.listening);
+    _startSilenceStream();
+  }
+
+  void _startSilenceStream() {
+    _silentAudioTimer?.cancel();
+    if (_channel == null ||
+        _state == ElevenLabsState.disconnected ||
+        _state == ElevenLabsState.error) return;
+
+    print('🔇 Flujo de silencio iniciado (100 ms/chunk)');
+    _silentAudioTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (_channel == null ||
+          _state == ElevenLabsState.disconnected ||
+          _state == ElevenLabsState.error ||
+          _isPlayingResponse) return;
+      try {
+        _channel!.sink.add(jsonEncode({'user_audio_chunk': _b64Silence}));
+      } catch (e) {
+        print('❌ Error enviando silencio: $e');
+        _stopSilenceStream();
+      }
+    });
+  }
+
+  void _stopSilenceStream() {
+    _silentStreamWasActive = _silentAudioTimer != null;
+    _silentAudioTimer?.cancel();
+    _silentAudioTimer = null;
+    if (_silentStreamWasActive) print('🔇 Flujo de silencio detenido');
   }
 
   /// Inicia la grabación de audio
@@ -609,13 +688,14 @@ class ElevenLabsService extends ChangeNotifier {
   /// Envía un mensaje de texto al agente
   void sendTextMessage(String text) {
     print('📤 Enviando texto: $text');
-    _sendMessage({
-      'type': 'user_message',
-      'user_message': text,
-    });
-    // NO agregar manualmente al transcriptController aquí
-    // El servidor confirmará el mensaje a través del stream 'user_transcript'
-    // y se agregará automáticamente en el handler de eventos
+    // Formato correcto según SDK oficial de ElevenLabs Python:
+    // {"type": "user_message", "text": "..."}
+    _sendMessage({'type': 'user_message', 'text': text});
+    // Mostrar en UI y bloquear el eco del servidor.
+    _lastUserTranscript = text;
+    _transcriptController.add(text);
+    // Limpiar el último response para que no bloquee la próxima respuesta del agente.
+    _lastAgentResponse = '';
   }
 
   /// Envía mensaje al WebSocket
@@ -629,7 +709,8 @@ class ElevenLabsService extends ChangeNotifier {
   /// Desconecta del agente
   Future<void> disconnect() async {
     print('👋 Desconectando de ElevenLabs...');
-    
+
+    _stopSilenceStream();
     await stopListening();
     _stopPlayback();
     
@@ -637,7 +718,9 @@ class ElevenLabsService extends ChangeNotifier {
     _channel = null;
     
     _conversationId = '';
-    _lastUserTranscript = ''; // Limpiar último transcript
+    _lastUserTranscript = '';
+    _lastAgentResponse = '';
+    _textModeOnly = false;
     _setState(ElevenLabsState.disconnected);
   }
 

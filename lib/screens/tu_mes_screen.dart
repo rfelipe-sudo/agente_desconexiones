@@ -30,16 +30,19 @@ class _TuMesScreenState extends State<TuMesScreen> {
   double _promedioRGU = 0.0;
   
   // Calidad - períodos
+  Map<String, dynamic>? _calidadPagado;    // Bono pagado (mes anterior al cerrado)
   Map<String, dynamic>? _calidadCerrado;   // Periodo cerrado (a pago)
   Map<String, dynamic>? _calidadActual;
   Map<String, dynamic>? _calidadAnterior;
+  String _periodoPagado  = '';
   String _periodoCerrado = '';
-  String _periodoActual = '';
+  String _periodoActual  = '';
   String _periodoAnterior = '';
-  
+
   // Producción - períodos
-  Map<String, dynamic>? _produccionCerrado;   // Mes - 1 (cerrado)
-  Map<String, dynamic>? _produccionActual;    // Mes 0 (en curso)
+  Map<String, dynamic>? _produccionPagado;     // Mes - 2 (bono pagado)
+  Map<String, dynamic>? _produccionCerrado;    // Mes - 1 (cerrado)
+  Map<String, dynamic>? _produccionActual;     // Mes 0 (en curso)
   
   // Consumo - períodos
   Map<String, dynamic>? _consumoCerrado;   // Mes anterior cerrado
@@ -102,43 +105,41 @@ class _TuMesScreenState extends State<TuMesScreen> {
       if (rutTecnico != null) {
         final now = DateTime.now();
         
-        // Producción en card: siempre Bono(mes actual del cal.) + Bono(mes siguiente).
-        // Ej. hoy en abril: Bono abril = medición marzo | Bono mayo = medición abril (en curso).
-        final mesPagoCerrado = DateTime(now.year, now.month, 1);
+        // Producción en card: Bono pagado + Bono cerrado + Bono en curso.
+        // Ej. hoy en mayo: Bono abr (med mar) | Bono may (med abr) | Bono jun (med may).
+        final mesMedPagado  = DateTime(now.year, now.month - 2, 1);
         final mesMedCerrado = DateTime(now.year, now.month - 1, 1);
+        final mesMedActual  = DateTime(now.year, now.month,     1);
 
-        final mesPagoActual = DateTime(now.year, now.month + 1, 1);
-        final mesMedActual = DateTime(now.year, now.month, 1);
+        final resultados = await Future.wait([
+          _produccionService.obtenerResumenMesRGU(
+            rutTecnico, mes: mesMedPagado.month,  anno: mesMedPagado.year),
+          _produccionService.obtenerResumenMesRGU(
+            rutTecnico, mes: mesMedCerrado.month, anno: mesMedCerrado.year),
+          _produccionService.obtenerResumenMesRGU(
+            rutTecnico, mes: mesMedActual.month,  anno: mesMedActual.year),
+        ]);
 
-        final resumenCerrado = await _produccionService.obtenerResumenMesRGU(
-          rutTecnico,
-          mes: mesMedCerrado.month,
-          anno: mesMedCerrado.year,
-        );
-
-        final resumenActual = await _produccionService.obtenerResumenMesRGU(
-          rutTecnico,
-          mes: mesMedActual.month,
-          anno: mesMedActual.year,
-        );
-        
         setState(() {
-          _produccionCerrado = resumenCerrado;
-          _produccionActual = resumenActual;
-          _promedioRGU = (resumenActual['promedioRGU'] as num?)?.toDouble() ?? 0.0;
+          _produccionPagado  = resultados[0];
+          _produccionCerrado = resultados[1];
+          _produccionActual  = resultados[2];
+          _promedioRGU = (resultados[2]['promedioRGU'] as num?)?.toDouble() ?? 0.0;
         });
       } else {
         setState(() {
+          _produccionPagado  = null;
           _produccionCerrado = null;
-          _produccionActual = null;
+          _produccionActual  = null;
           _promedioRGU = 0.0;
         });
       }
     } catch (e) {
       print('⚠️ [TuMes] Error cargando promedio RGU: $e');
       setState(() {
+        _produccionPagado  = null;
         _produccionCerrado = null;
-        _produccionActual = null;
+        _produccionActual  = null;
         _promedioRGU = 0.0;
       });
     }
@@ -212,31 +213,37 @@ class _TuMesScreenState extends State<TuMesScreen> {
         final calidadPeriodos = await _produccionService.obtenerCalidadPeriodos(rutTecnico);
         
         setState(() {
-          _calidadCerrado = calidadPeriodos['cerrado'] as Map<String, dynamic>?;
-          _calidadActual = calidadPeriodos['actual'] as Map<String, dynamic>?;
+          _calidadPagado   = calidadPeriodos['pagado']   as Map<String, dynamic>?;
+          _calidadCerrado  = calidadPeriodos['cerrado']  as Map<String, dynamic>?;
+          _calidadActual   = calidadPeriodos['actual']   as Map<String, dynamic>?;
           _calidadAnterior = calidadPeriodos['anterior'] as Map<String, dynamic>?;
-          _periodoCerrado = calidadPeriodos['periodo_cerrado'] as String? ?? '';
-          _periodoActual = calidadPeriodos['periodo_actual'] as String? ?? '';
+          _periodoPagado   = calidadPeriodos['periodo_pagado']   as String? ?? '';
+          _periodoCerrado  = calidadPeriodos['periodo_cerrado']  as String? ?? '';
+          _periodoActual   = calidadPeriodos['periodo_actual']   as String? ?? '';
           _periodoAnterior = calidadPeriodos['periodo_anterior'] as String? ?? '';
         });
       } else {
         setState(() {
-          _calidadCerrado = null;
-          _calidadActual = null;
+          _calidadPagado   = null;
+          _calidadCerrado  = null;
+          _calidadActual   = null;
           _calidadAnterior = null;
-          _periodoCerrado = '';
-          _periodoActual = '';
+          _periodoPagado   = '';
+          _periodoCerrado  = '';
+          _periodoActual   = '';
           _periodoAnterior = '';
         });
       }
     } catch (e) {
       print('⚠️ [TuMes] Error cargando calidad: $e');
       setState(() {
-        _calidadCerrado = null;
-        _calidadActual = null;
+        _calidadPagado   = null;
+        _calidadCerrado  = null;
+        _calidadActual   = null;
         _calidadAnterior = null;
-        _periodoCerrado = '';
-        _periodoActual = '';
+        _periodoPagado   = '';
+        _periodoCerrado  = '';
+        _periodoActual   = '';
         _periodoAnterior = '';
       });
     }
@@ -414,11 +421,11 @@ class _TuMesScreenState extends State<TuMesScreen> {
     );
   }
 
-  /// Widget para mostrar el card de calidad completo con dos períodos
+  /// Widget para mostrar el card de calidad completo con tres períodos
   Widget _buildCardCalidadCompleto() {
     final now = DateTime.now();
-    
-    if (_calidadCerrado == null && _calidadActual == null) {
+
+    if (_calidadPagado == null && _calidadCerrado == null && _calidadActual == null) {
       return Card(
         elevation: 2,
         child: InkWell(
@@ -449,12 +456,19 @@ class _TuMesScreenState extends State<TuMesScreen> {
       );
     }
     
-    // Período cerrado
-    final porcentajeCerrado = (_calidadCerrado?['porcentaje_reiteracion'] as num?)?.toDouble() ?? 0.0;
-    final reiteradosCerrado = (_calidadCerrado?['total_reiterados'] as num?)?.toInt() ?? 0;
+    // ── Bono Pagado (mes -2 medición, mes -1 pago) ──────────────────────────
+    final porcentajePagado  = (_calidadPagado?['porcentaje_reiteracion']  as num?)?.toDouble() ?? 0.0;
+    final reiteradosPagado  = (_calidadPagado?['total_reiterados']  as num?)?.toInt() ?? 0;
+    final completadasPagado = (_calidadPagado?['total_completadas'] as num?)?.toInt() ?? 0;
+    final pPagadoDt = DateTime(now.year, now.month - 1, 1);
+    final nombreMesPagado = _getNombreMes(pPagadoDt.month);
+    final colorPagado = _getColorCalidad(porcentajePagado);
+
+    // ── Bono Cerrado (mes -1 medición, mes actual pago) ──────────────────────
+    final porcentajeCerrado  = (_calidadCerrado?['porcentaje_reiteracion']  as num?)?.toDouble() ?? 0.0;
+    final reiteradosCerrado  = (_calidadCerrado?['total_reiterados']  as num?)?.toInt() ?? 0;
     final completadasCerrado = (_calidadCerrado?['total_completadas'] as num?)?.toInt() ?? 0;
     final periodoCerrado = _calidadCerrado?['periodo']?.toString() ?? '';
-    
     String nombreMesCerrado = '';
     int mesGarantiaCerrado = now.month - 1;
     int annoGarantiaCerrado = now.year;
@@ -467,15 +481,13 @@ class _TuMesScreenState extends State<TuMesScreen> {
         mesGarantiaCerrado = mes;
       }
     }
-    
-    Color colorCerrado = _getColorCalidad(porcentajeCerrado);
-    
-    // Período actual
-    final porcentajeActual = (_calidadActual?['porcentaje_reiteracion'] as num?)?.toDouble() ?? 0.0;
-    final reiteradosActual = (_calidadActual?['total_reiterados'] as num?)?.toInt() ?? 0;
+    final colorCerrado = _getColorCalidad(porcentajeCerrado);
+
+    // ── Bono en Curso (mes actual medición, mes +1 pago) ─────────────────────
+    final porcentajeActual  = (_calidadActual?['porcentaje_reiteracion']  as num?)?.toDouble() ?? 0.0;
+    final reiteradosActual  = (_calidadActual?['total_reiterados']  as num?)?.toInt() ?? 0;
     final completadasActual = (_calidadActual?['total_completadas'] as num?)?.toInt() ?? 0;
     final periodoActual = _calidadActual?['periodo']?.toString() ?? '';
-    
     String nombreMesActual = '';
     int mesGarantiaActual = now.month;
     int annoGarantiaActual = now.year;
@@ -488,23 +500,15 @@ class _TuMesScreenState extends State<TuMesScreen> {
         mesGarantiaActual = mes;
       }
     }
-    
-    Color colorActual = _getColorCalidad(porcentajeActual);
-    
-    // Días hasta el último día del mes de pago del período en curso
-    int mesCierre = now.month;
-    int annoCierre = now.year;
+    final colorActual = _getColorCalidad(porcentajeActual);
+    int mesCierre = now.month; int annoCierre = now.year;
     if (periodoActual.isNotEmpty) {
       final partes = periodoActual.split('-');
-      if (partes.length == 2) {
-        mesCierre = int.parse(partes[1]);
-        annoCierre = int.parse(partes[0]);
-      }
+      if (partes.length == 2) { mesCierre = int.parse(partes[1]); annoCierre = int.parse(partes[0]); }
     }
-    // La garantía vence el último día del mes de pago (ej. BONO ABRIL → 30/abr)
     final fechaCierre = DateTime(annoCierre, mesCierre + 1, 0);
     final diasRestantes = fechaCierre.difference(now).inDays;
-    
+
     return Card(
       elevation: 2,
       child: Padding(
@@ -521,29 +525,76 @@ class _TuMesScreenState extends State<TuMesScreen> {
                   const SizedBox(width: 8),
                   const Text(
                     'Calidad',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 16),
-            
-            // Dos columnas para los períodos
+
+            // Tres columnas
             IntrinsicHeight(
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // IZQUIERDA: Período CERRADO
+                  // ── COL 1: BONO PAGADO ──────────────────────────────────
                   Expanded(
                     child: InkWell(
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const CalidadDetalleScreen()),
-                      ),
+                      onTap: () => _mostrarDetalleCalidad(context, _calidadPagado, _periodoPagado),
+                      borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        padding: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.blueGrey[900],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              const Icon(Icons.check_circle_outline, size: 12, color: Colors.white54),
+                              const SizedBox(width: 3),
+                              Expanded(child: Text(
+                                'BONO ${nombreMesPagado.toUpperCase()}',
+                                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                                overflow: TextOverflow.ellipsis,
+                              )),
+                            ]),
+                            const SizedBox(height: 2),
+                            Text(
+                              _getRangoTrabajoBono(pPagadoDt.month, pPagadoDt.year),
+                              style: const TextStyle(fontSize: 8, color: Colors.white54),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${porcentajePagado.toStringAsFixed(1)}%',
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colorPagado),
+                            ),
+                            Text('$reiteradosPagado / $completadasPagado',
+                                style: const TextStyle(fontSize: 10, color: Colors.white54)),
+                            const SizedBox(height: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.blueGrey[700],
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text('Pagado', style: TextStyle(fontSize: 8, color: Colors.white70)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+
+                  // ── COL 2: BONO CERRADO ─────────────────────────────────
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CalidadDetalleScreen())),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
                           color: Colors.grey[850],
                           borderRadius: BorderRadius.circular(8),
@@ -551,126 +602,82 @@ class _TuMesScreenState extends State<TuMesScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Título
-                            Row(
-                              children: [
-                                const Icon(Icons.lock, size: 14, color: Colors.white),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    'BONO ${nombreMesCerrado.toUpperCase()}',
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
+                            Row(children: [
+                              const Icon(Icons.lock, size: 12, color: Colors.white),
+                              const SizedBox(width: 3),
+                              Expanded(child: Text(
+                                'BONO ${nombreMesCerrado.toUpperCase()}',
+                                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                                overflow: TextOverflow.ellipsis,
+                              )),
+                            ]),
+                            const SizedBox(height: 2),
                             Text(
                               _getRangoTrabajoBono(mesGarantiaCerrado, annoGarantiaCerrado),
-                              style: const TextStyle(fontSize: 9, color: Colors.white70),
+                              style: const TextStyle(fontSize: 8, color: Colors.white70),
                             ),
-                            const SizedBox(height: 8),
-                            // Porcentaje
+                            const SizedBox(height: 6),
                             Text(
                               '${porcentajeCerrado.toStringAsFixed(1)}%',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: colorCerrado,
-                              ),
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colorCerrado),
                             ),
-                            Text(
-                              '$reiteradosCerrado / $completadasCerrado',
-                              style: const TextStyle(fontSize: 11, color: Colors.white70),
-                            ),
-                            const SizedBox(height: 8),
-                            // Estado
+                            Text('$reiteradosCerrado / $completadasCerrado',
+                                style: const TextStyle(fontSize: 10, color: Colors.white70)),
+                            const SizedBox(height: 6),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[700],
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: const Text(
-                                'Periodo cerrado',
-                                style: TextStyle(fontSize: 9, color: Colors.white70),
-                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              decoration: BoxDecoration(color: Colors.grey[700], borderRadius: BorderRadius.circular(4)),
+                              child: const Text('Cerrado', style: TextStyle(fontSize: 8, color: Colors.white70)),
                             ),
                           ],
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  // DERECHA: Período ACTUAL
+                  const SizedBox(width: 6),
+
+                  // ── COL 3: BONO EN CURSO ────────────────────────────────
                   Expanded(
                     child: InkWell(
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const CalidadDetalleScreen()),
-                      ),
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CalidadDetalleScreen())),
+                      borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        padding: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.2),
-                          border: Border.all(color: Colors.green, width: 2),
+                          color: Colors.green.withOpacity(0.15),
+                          border: Border.all(color: Colors.green, width: 1.5),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Título
-                            Row(
-                              children: [
-                                const Icon(Icons.hourglass_empty, size: 14, color: Colors.white),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    'BONO ${nombreMesActual.toUpperCase()}',
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                    ),
-                      ),
-                    ),
-                  ],
-                ),
-                            const SizedBox(height: 4),
+                            Row(children: [
+                              const Icon(Icons.hourglass_empty, size: 12, color: Colors.white),
+                              const SizedBox(width: 3),
+                              Expanded(child: Text(
+                                'BONO ${nombreMesActual.toUpperCase()}',
+                                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                                overflow: TextOverflow.ellipsis,
+                              )),
+                            ]),
+                            const SizedBox(height: 2),
                             Text(
                               _getRangoTrabajoBono(mesGarantiaActual, annoGarantiaActual),
-                              style: const TextStyle(fontSize: 9, color: Colors.white70),
+                              style: const TextStyle(fontSize: 8, color: Colors.white70),
                             ),
-                            const SizedBox(height: 8),
-                            // Porcentaje
+                            const SizedBox(height: 6),
                             Text(
                               '${porcentajeActual.toStringAsFixed(1)}%',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: colorActual,
-                              ),
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colorActual),
                             ),
-                            Text(
-                              '$reiteradosActual / $completadasActual',
-                              style: const TextStyle(fontSize: 11, color: Colors.white70),
-                            ),
-                            const SizedBox(height: 8),
-                            // Estado
+                            Text('$reiteradosActual / $completadasActual',
+                                style: const TextStyle(fontSize: 10, color: Colors.white70)),
+                            const SizedBox(height: 6),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.black45,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                'Cierra en $diasRestantes días',
-                                style: const TextStyle(fontSize: 9, color: Colors.white),
-                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(4)),
+                              child: Text('Cierra en $diasRestantes d',
+                                  style: const TextStyle(fontSize: 8, color: Colors.white)),
                             ),
                           ],
                         ),
@@ -1187,44 +1194,40 @@ class _TuMesScreenState extends State<TuMesScreen> {
   Widget _buildCardProduccionCompleto() {
     final now = DateTime.now();
 
-    // Columna cerrada: Bono = mes calendario actual; datos = mes de medición anterior.
-    // Columna en curso: Bono = mes siguiente; datos = mes calendario actual.
-    final mesPagoCer = DateTime(now.year, now.month, 1);
+    // ── Bono Pagado: medición mes -2, pago mes -1 ──────────────────────────
+    final mesMedPag = DateTime(now.year, now.month - 2, 1);
+    final mesPagPag = DateTime(now.year, now.month - 1, 1);
+    final nombreBonoPagado          = _getNombreMes(mesPagPag.month);
+    final nombreMesMedicionPagado   = _getNombreMes(mesMedPag.month);
+    final diasMesMedicionPagado     = DateTime(mesMedPag.year, mesMedPag.month + 1, 0).day;
+    final promedioRGUPagado         = (_produccionPagado?['promedioRGU'] as num?)?.toDouble() ?? 0.0;
+    final totalRGUPagado            = (_produccionPagado?['totalRGU']    as num?)?.toInt()    ?? 0;
+
+    // ── Bono Cerrado: medición mes -1, pago mes actual ─────────────────────
     final mesMedCer = DateTime(now.year, now.month - 1, 1);
+    final mesPagCer = DateTime(now.year, now.month,     1);
+    final nombreBonoCerrado         = _getNombreMes(mesPagCer.month);
+    final nombreMesMedicionCerrado  = _getNombreMes(mesMedCer.month);
+    final diasMesMedicionCerrado    = DateTime(mesMedCer.year, mesMedCer.month + 1, 0).day;
+    final promedioRGUCerrado        = (_produccionCerrado?['promedioRGU'] as num?)?.toDouble() ?? 0.0;
+    final totalRGUCerrado           = (_produccionCerrado?['totalRGU']    as num?)?.toInt()    ?? 0;
 
-    final mesPagoAct = DateTime(now.year, now.month + 1, 1);
-    final mesMedAct = DateTime(now.year, now.month, 1);
+    // ── Bono en Curso: medición mes actual, pago mes +1 ───────────────────
+    final mesMedAct = DateTime(now.year, now.month,     1);
+    final mesPagAct = DateTime(now.year, now.month + 1, 1);
+    final nombreBonoActual          = _getNombreMes(mesPagAct.month);
+    final nombreMesMedicionActual   = _getNombreMes(mesMedAct.month);
+    final diasMesMedicionActual     = DateTime(mesMedAct.year, mesMedAct.month + 1, 0).day;
+    final diasRestantes             = diasMesMedicionActual - now.day;
+    final promedioRGUActual         = (_produccionActual?['promedioRGU'] as num?)?.toDouble() ?? 0.0;
+    final totalRGUActual            = (_produccionActual?['totalRGU']    as num?)?.toInt()    ?? 0;
 
-    final nombreBonoCerrado = _getNombreMes(mesPagoCer.month);
-    final nombreMesMedicionCerrado = _getNombreMes(mesMedCer.month);
-    final diasMesMedicionCerrado =
-        DateTime(mesMedCer.year, mesMedCer.month + 1, 0).day;
-    
-    final promedioRGUCerrado = (_produccionCerrado?['promedioRGU'] as num?)?.toDouble() ?? 0.0;
-    final totalRGUCerrado = (_produccionCerrado?['totalRGU'] as num?)?.toInt() ?? 0;
-    
-    // Color según RGU cerrado (siempre gris plomo)
-    final colorCerrado = Colors.grey[850]!;
-    
-    final nombreBonoActual = _getNombreMes(mesPagoAct.month);
-    final nombreMesMedicionActual = _getNombreMes(mesMedAct.month);
-    final diasMesMedicionActual =
-        DateTime(mesMedAct.year, mesMedAct.month + 1, 0).day;
-    final diasRestantes = diasMesMedicionActual - now.day;
-    
-    final promedioRGUActual = (_produccionActual?['promedioRGU'] as num?)?.toDouble() ?? 0.0;
-    final totalRGUActual = (_produccionActual?['totalRGU'] as num?)?.toInt() ?? 0;
-    
-    // Color según RGU actual (verde si es bueno)
-    Color colorActual;
-    if (promedioRGUActual < 3) {
-      colorActual = Colors.red[700]!;
-    } else if (promedioRGUActual < 4.5) {
-      colorActual = Colors.orange[700]!;
-    } else {
-      colorActual = Colors.green[700]!;
+    Color _colorRGU(double rgu) {
+      if (rgu < 3) return Colors.red[700]!;
+      if (rgu < 4.5) return Colors.orange[700]!;
+      return Colors.green[700]!;
     }
-    
+
     return Card(
       elevation: 2,
       child: InkWell(
@@ -1237,184 +1240,170 @@ class _TuMesScreenState extends State<TuMesScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header centrado
+              // Header
               Center(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.trending_up, color: Colors.green[700]),
                     const SizedBox(width: 8),
-                    const Text(
-                      'Producción',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                    const Text('Producción', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Tres columnas
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // ── COL 1: BONO PAGADO ────────────────────────────────
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => ProduccionScreen(mesInicial: mesMedPag))),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.blueGrey[900],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(children: [
+                                const Icon(Icons.check_circle_outline, size: 12, color: Colors.white54),
+                                const SizedBox(width: 3),
+                                Expanded(child: Text(
+                                  'BONO ${nombreBonoPagado.toUpperCase()}',
+                                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                                  overflow: TextOverflow.ellipsis,
+                                )),
+                              ]),
+                              const SizedBox(height: 3),
+                              Text('01/$nombreMesMedicionPagado',
+                                  style: const TextStyle(fontSize: 8, color: Colors.white38)),
+                              Text('$diasMesMedicionPagado/$nombreMesMedicionPagado',
+                                  style: const TextStyle(fontSize: 8, color: Colors.white38)),
+                              const SizedBox(height: 6),
+                              Text('RGU Prom: ${promedioRGUPagado.toStringAsFixed(1)}',
+                                  style: const TextStyle(fontSize: 11, color: Colors.white)),
+                              Text('RGU Total: $totalRGUPagado',
+                                  style: TextStyle(fontSize: 10, color: Colors.green[300])),
+                              const SizedBox(height: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                decoration: BoxDecoration(
+                                    color: Colors.blueGrey[700], borderRadius: BorderRadius.circular(4)),
+                                child: const Text('Pagado', style: TextStyle(fontSize: 8, color: Colors.white70)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+
+                    // ── COL 2: BONO CERRADO ───────────────────────────────
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => ProduccionScreen(mesInicial: mesMedCer))),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[850],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(children: [
+                                const Icon(Icons.lock, size: 12, color: Colors.white),
+                                const SizedBox(width: 3),
+                                Expanded(child: Text(
+                                  'BONO ${nombreBonoCerrado.toUpperCase()}',
+                                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                                  overflow: TextOverflow.ellipsis,
+                                )),
+                              ]),
+                              const SizedBox(height: 3),
+                              Text('01/$nombreMesMedicionCerrado',
+                                  style: TextStyle(fontSize: 8, color: Colors.grey[400])),
+                              Text('$diasMesMedicionCerrado/$nombreMesMedicionCerrado',
+                                  style: TextStyle(fontSize: 8, color: Colors.grey[400])),
+                              const SizedBox(height: 6),
+                              Text('RGU Prom: ${promedioRGUCerrado.toStringAsFixed(1)}',
+                                  style: const TextStyle(fontSize: 11, color: Colors.white)),
+                              Text('RGU Total: $totalRGUCerrado',
+                                  style: TextStyle(fontSize: 10, color: Colors.green[300])),
+                              const SizedBox(height: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                decoration: BoxDecoration(
+                                    color: Colors.grey[700], borderRadius: BorderRadius.circular(4)),
+                                child: const Text('Cerrado', style: TextStyle(fontSize: 8, color: Colors.white70)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+
+                    // ── COL 3: BONO EN CURSO ──────────────────────────────
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => ProduccionScreen(mesInicial: mesMedAct))),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: _colorRGU(promedioRGUActual),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(children: [
+                                const Icon(Icons.hourglass_empty, size: 12, color: Colors.white),
+                                const SizedBox(width: 3),
+                                Expanded(child: Text(
+                                  'BONO ${nombreBonoActual.toUpperCase()}',
+                                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                                  overflow: TextOverflow.ellipsis,
+                                )),
+                              ]),
+                              const SizedBox(height: 3),
+                              Text('01/$nombreMesMedicionActual',
+                                  style: const TextStyle(fontSize: 8, color: Colors.white70)),
+                              Text('$diasMesMedicionActual/$nombreMesMedicionActual',
+                                  style: const TextStyle(fontSize: 8, color: Colors.white70)),
+                              const SizedBox(height: 6),
+                              Text('RGU Prom: ${promedioRGUActual.toStringAsFixed(1)}',
+                                  style: const TextStyle(fontSize: 11, color: Colors.white)),
+                              Text('RGU Total: $totalRGUActual',
+                                  style: const TextStyle(fontSize: 10, color: Colors.white)),
+                              const SizedBox(height: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                decoration: BoxDecoration(
+                                    color: Colors.black45, borderRadius: BorderRadius.circular(4)),
+                                child: Text('Cierra en $diasRestantes d',
+                                    style: const TextStyle(fontSize: 8, color: Colors.white)),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-              
-                  // Dos columnas para los períodos
-                  IntrinsicHeight(
-                    child: Row(
-                      children: [
-                        // IZQUIERDA: Período CERRADO
-                        Expanded(
-                          child: InkWell(
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => ProduccionScreen(
-                                  mesInicial: mesMedCer,
-                                ),
-                              ),
-                            ),
-                            child: Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: colorCerrado,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Título con icono de candado BLANCO
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.lock, size: 14, color: Colors.white),
-                                      const SizedBox(width: 4),
-                                      Expanded(
-                                        child: Text(
-                                          'BONO ${nombreBonoCerrado.toUpperCase()}',
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 4),
-                                  // Rango mes de medición (producción que cuenta el bono)
-                                  Text(
-                                    '01/$nombreMesMedicionCerrado',
-                                    style: TextStyle(fontSize: 9, color: Colors.grey[400]),
-                                  ),
-                                  Text(
-                                    '$diasMesMedicionCerrado/$nombreMesMedicionCerrado',
-                                    style: TextStyle(fontSize: 9, color: Colors.grey[400]),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  // RGU Promedio
-                                  Text(
-                                    'RGU Prom: ${promedioRGUCerrado.toStringAsFixed(1)}',
-                                    style: const TextStyle(fontSize: 12, color: Colors.white),
-                                  ),
-                                  // RGU Total
-                                  Text(
-                                    'RGU Total: $totalRGUCerrado',
-                                    style: TextStyle(fontSize: 11, color: Colors.green[300]),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  // Estado
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Colors.grey[700],
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: const Text(
-                                      'Periodo cerrado',
-                                      style: TextStyle(fontSize: 9, color: Colors.white70),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        // DERECHA: Período ACTUAL
-                        Expanded(
-                          child: InkWell(
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => ProduccionScreen(
-                                  mesInicial: mesMedAct,
-                                ),
-                              ),
-                            ),
-                            child: Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: colorActual,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Título con icono de reloj BLANCO
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.hourglass_empty, size: 14, color: Colors.white),
-                                      const SizedBox(width: 4),
-                                      Expanded(
-                                        child: Text(
-                                          'BONO ${nombreBonoActual.toUpperCase()}',
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '01/$nombreMesMedicionActual',
-                                    style: const TextStyle(fontSize: 9, color: Colors.white70),
-                                  ),
-                                  Text(
-                                    '$diasMesMedicionActual/$nombreMesMedicionActual',
-                                    style: const TextStyle(fontSize: 9, color: Colors.white70),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  // RGU Promedio
-                                  Text(
-                                    'RGU Prom: ${promedioRGUActual.toStringAsFixed(1)}',
-                                    style: const TextStyle(fontSize: 12, color: Colors.white),
-                                  ),
-                                  // RGU Total
-                                  Text(
-                                    'RGU Total: $totalRGUActual',
-                                    style: const TextStyle(fontSize: 11, color: Colors.white),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  // Estado
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black45,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      'Cierra en $diasRestantes días',
-                                      style: const TextStyle(fontSize: 9, color: Colors.white),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
             ],
           ),
         ),

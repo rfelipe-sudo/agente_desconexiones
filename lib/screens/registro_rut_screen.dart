@@ -192,7 +192,13 @@ class _RegistroRutScreenState extends State<RegistroRutScreen> {
             data['tipo_personal']?.toString() ??
             '',
       );
-      await prefs.setString('user_rol', 'tecnico');
+      // Usar el rol devuelto por validar_rut_tecnico (supervisor / ito / tecnico).
+      // data viene de la validación inicial que consultó equipos_crea primero.
+      final rolFinal = data['rol']?.toString().toLowerCase().trim();
+      await prefs.setString(
+        'user_rol',
+        (rolFinal != null && rolFinal.isNotEmpty) ? rolFinal : 'tecnico',
+      );
 
       await SessionManager.marcarNombreGuardadoParaRut(rutFinal);
 
