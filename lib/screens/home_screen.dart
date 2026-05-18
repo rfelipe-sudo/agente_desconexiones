@@ -554,6 +554,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
     if (rut.isNotEmpty) {
       _suscribirSolicitudesMaterial(rut);
+      unawaited(FcmService.instance.initSolicitudMonitor());
       unawaited(FcmService.instance.initTraspasoMonitor(rut));
     }
     // Cargar historial del día si es supervisor
