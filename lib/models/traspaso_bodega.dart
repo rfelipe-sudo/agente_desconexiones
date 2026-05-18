@@ -15,6 +15,7 @@ class TraspassoBodega {
   final String? nombreAprobador;
   final DateTime? aprobadoEn;
   final String? folioKepler;
+  final bool pdfKeplerOk;
 
   const TraspassoBodega({
     required this.id,
@@ -33,9 +34,11 @@ class TraspassoBodega {
     this.nombreAprobador,
     this.aprobadoEn,
     this.folioKepler,
+    this.pdfKeplerOk = false,
   });
 
-  bool get pendiente => estado == 'pendiente';
+  bool get pendiente    => estado == 'pendiente';
+  bool get confirmado   => !pendiente && pdfKeplerOk;
 
   TraspassoBodega copyWith({
     String? estado,
@@ -43,6 +46,7 @@ class TraspassoBodega {
     String? aprobadoPor,
     DateTime? aprobadoEn,
     String? folioKepler,
+    bool? pdfKeplerOk,
   }) => TraspassoBodega(
     id:                  id,
     createdAt:           createdAt,
@@ -55,11 +59,12 @@ class TraspassoBodega {
     cantidad:            cantidad,
     series:              series,
     idMaterial:          idMaterial,
-    estado:              estado         ?? this.estado,
-    aprobadoPor:         aprobadoPor    ?? this.aprobadoPor,
+    estado:              estado          ?? this.estado,
+    aprobadoPor:         aprobadoPor     ?? this.aprobadoPor,
     nombreAprobador:     nombreAprobador ?? this.nombreAprobador,
-    aprobadoEn:          aprobadoEn     ?? this.aprobadoEn,
-    folioKepler:         folioKepler    ?? this.folioKepler,
+    aprobadoEn:          aprobadoEn      ?? this.aprobadoEn,
+    folioKepler:         folioKepler     ?? this.folioKepler,
+    pdfKeplerOk:         pdfKeplerOk     ?? this.pdfKeplerOk,
   );
 
   factory TraspassoBodega.fromMap(Map<String, dynamic> m) => TraspassoBodega(
@@ -81,5 +86,6 @@ class TraspassoBodega {
             ? DateTime.parse(m['aprobado_en'] as String)
             : null,
         folioKepler:          m['folio_kepler'] as String?,
+        pdfKeplerOk:          m['pdf_kepler_ok'] as bool? ?? false,
       );
 }

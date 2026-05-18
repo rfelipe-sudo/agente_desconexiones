@@ -178,8 +178,9 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
   }
 
   Widget _buildLista() {
-    final pendientes = _traspasos.where((t) => t.pendiente).toList();
-    final aprobados  = _traspasos.where((t) => !t.pendiente).toList();
+    final pendientes   = _traspasos.where((t) => t.pendiente).toList();
+    final confirmados  = _traspasos.where((t) => t.confirmado).toList();
+    final aprobados    = _traspasos.where((t) => !t.pendiente && !t.confirmado).toList();
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -190,8 +191,13 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
           const SizedBox(height: 8),
         ],
         if (aprobados.isNotEmpty) ...[
-          _seccionHeader('Aprobados', _green),
+          _seccionHeader('Aprobados — PDF pendiente Kepler', _green),
           ...aprobados.map(_buildTraspasoCard),
+          const SizedBox(height: 8),
+        ],
+        if (confirmados.isNotEmpty) ...[
+          _seccionHeader('Confirmados por Kepler', const Color(0xFF00D9FF)),
+          ...confirmados.map(_buildTraspasoCard),
         ],
       ],
     );
@@ -217,6 +223,7 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
         'rut_origen':    tr.rutTecnicoB,
         'rut_destino':   tr.rutTecnicoA,
         'tipo_material': tr.tipoMaterial,
+        'traspaso_id':   tr.id,
       });
     } catch (e) {
       // Best-effort: el traspaso ya está aprobado, el PDF es secundario
@@ -292,8 +299,12 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Icon(
-              tr.pendiente ? Icons.hourglass_top_rounded : Icons.check_circle_outline,
-              color: tr.pendiente ? _orange : _green,
+              tr.pendiente   ? Icons.hourglass_top_rounded
+              : tr.confirmado ? Icons.verified_rounded
+                              : Icons.check_circle_outline,
+              color: tr.pendiente   ? _orange
+                   : tr.confirmado  ? _accent
+                                    : _green,
               size: 18,
             ),
             const SizedBox(width: 6),
