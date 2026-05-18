@@ -86,10 +86,10 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
       builder: (_) => AlertDialog(
         backgroundColor: _surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: const Text('Confirmar aprobación',
+        title: const Text('Aprobar transferencia en KRP',
             style: TextStyle(color: Colors.white, fontSize: 16)),
         content: Text(
-          '¿Aprobar el traspaso de ${tr.tipoMaterial} de ${tr.nombreTecnicoB} a ${tr.nombreTecnicoA}?',
+          '¿Aprobar la transferencia de ${tr.tipoMaterial} de ${tr.nombreTecnicoB} a ${tr.nombreTecnicoA}?',
           style: const TextStyle(color: Colors.white70, fontSize: 14),
         ),
         actions: [
@@ -178,9 +178,9 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
   }
 
   Widget _buildLista() {
-    final pendientes   = _traspasos.where((t) => t.pendiente).toList();
-    final confirmados  = _traspasos.where((t) => t.confirmado).toList();
-    final aprobados    = _traspasos.where((t) => !t.pendiente && !t.confirmado).toList();
+    final pendientes  = _traspasos.where((t) => t.pendiente).toList();
+    final krpOk       = _traspasos.where((t) => t.krpOk && !t.sapOk).toList();
+    final sapOk       = _traspasos.where((t) => t.sapOk).toList();
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -190,17 +190,72 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
           ...pendientes.map(_buildTraspasoCard),
           const SizedBox(height: 8),
         ],
-        if (aprobados.isNotEmpty) ...[
-          _seccionHeader('Aprobados — PDF pendiente Kepler', _green),
-          ...aprobados.map(_buildTraspasoCard),
+        if (krpOk.isNotEmpty) ...[
+          _seccionHeader('KRP realizado — SAP pendiente', _accent),
+          ...krpOk.map(_buildTraspasoCard),
           const SizedBox(height: 8),
         ],
-        if (confirmados.isNotEmpty) ...[
-          _seccionHeader('Confirmados por Kepler', const Color(0xFF00D9FF)),
-          ...confirmados.map(_buildTraspasoCard),
+        if (sapOk.isNotEmpty) ...[
+          _seccionHeader('Transferencia completa', _green),
+          ...sapOk.map(_buildTraspasoCard),
         ],
       ],
     );
+  }
+
+  Future<void> _confirmarSap(TraspassoBodega tr) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: _surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Confirmar transferencia SAP',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text(
+          '¿Confirmar que la transferencia de ${tr.tipoMaterial} fue realizada en SAP?',
+          style: const TextStyle(color: Colors.white70, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: _accent),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Confirmar', style: TextStyle(color: Colors.black)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    try {
+      await _db.functions.invoke('confirmar-sap', body: {
+        'traspaso_id':       tr.id,
+        'confirmado_por':    _rutBodega,
+        'nombre_confirmador': _nombreBodega,
+      });
+      if (mounted) {
+        setState(() {
+          _traspasos = _traspasos.map((t) {
+            if (t.id != tr.id) return t;
+            return t.copyWith(sapOk: true, sapConfirmadoEn: DateTime.now());
+          }).toList();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          backgroundColor: _green,
+          content: Text('Transferencia SAP confirmada ✓'),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red.shade700,
+          content: Text('Error al confirmar SAP: $e'),
+        ));
+      }
+    }
   }
 
   Future<void> _enviarPdfKepler(TraspassoBodega tr, String folio) async {
@@ -299,12 +354,12 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Icon(
-              tr.pendiente   ? Icons.hourglass_top_rounded
-              : tr.confirmado ? Icons.verified_rounded
-                              : Icons.check_circle_outline,
-              color: tr.pendiente   ? _orange
-                   : tr.confirmado  ? _accent
-                                    : _green,
+              tr.sapOk    ? Icons.verified_rounded
+              : tr.krpOk  ? Icons.check_circle_outline
+                          : Icons.hourglass_top_rounded,
+              color: tr.sapOk   ? _green
+                   : tr.krpOk  ? _accent
+                               : _orange,
               size: 18,
             ),
             const SizedBox(width: 6),
@@ -356,9 +411,28 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
                       borderRadius: BorderRadius.circular(8)),
                 ),
                 icon: const Icon(Icons.check_rounded, size: 18),
-                label: const Text('Aprobar traspaso',
+                label: const Text('Aprobar transferencia en KRP',
                     style: TextStyle(fontWeight: FontWeight.bold)),
                 onPressed: () => _aprobar(tr),
+              ),
+            ),
+          ],
+          if (tr.krpOk && !tr.sapOk) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _accent,
+                  foregroundColor: const Color(0xFF0A0F1E),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+                icon: const Icon(Icons.sync_alt_rounded, size: 18),
+                label: const Text('TRANSFERENCIA OK EN SAP',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                onPressed: () => _confirmarSap(tr),
               ),
             ),
           ],

@@ -16,6 +16,8 @@ class TraspassoBodega {
   final DateTime? aprobadoEn;
   final String? folioKepler;
   final bool pdfKeplerOk;
+  final bool sapOk;
+  final DateTime? sapConfirmadoEn;
 
   const TraspassoBodega({
     required this.id,
@@ -35,10 +37,13 @@ class TraspassoBodega {
     this.aprobadoEn,
     this.folioKepler,
     this.pdfKeplerOk = false,
+    this.sapOk = false,
+    this.sapConfirmadoEn,
   });
 
-  bool get pendiente    => estado == 'pendiente';
-  bool get confirmado   => !pendiente && pdfKeplerOk;
+  bool get pendiente  => estado == 'pendiente';
+  bool get krpOk      => !pendiente;
+  bool get confirmado => !pendiente && pdfKeplerOk;
 
   TraspassoBodega copyWith({
     String? estado,
@@ -47,6 +52,8 @@ class TraspassoBodega {
     DateTime? aprobadoEn,
     String? folioKepler,
     bool? pdfKeplerOk,
+    bool? sapOk,
+    DateTime? sapConfirmadoEn,
   }) => TraspassoBodega(
     id:                  id,
     createdAt:           createdAt,
@@ -59,12 +66,14 @@ class TraspassoBodega {
     cantidad:            cantidad,
     series:              series,
     idMaterial:          idMaterial,
-    estado:              estado          ?? this.estado,
-    aprobadoPor:         aprobadoPor     ?? this.aprobadoPor,
-    nombreAprobador:     nombreAprobador ?? this.nombreAprobador,
-    aprobadoEn:          aprobadoEn      ?? this.aprobadoEn,
-    folioKepler:         folioKepler     ?? this.folioKepler,
-    pdfKeplerOk:         pdfKeplerOk     ?? this.pdfKeplerOk,
+    estado:              estado           ?? this.estado,
+    aprobadoPor:         aprobadoPor      ?? this.aprobadoPor,
+    nombreAprobador:     nombreAprobador  ?? this.nombreAprobador,
+    aprobadoEn:          aprobadoEn       ?? this.aprobadoEn,
+    folioKepler:         folioKepler      ?? this.folioKepler,
+    pdfKeplerOk:         pdfKeplerOk      ?? this.pdfKeplerOk,
+    sapOk:               sapOk            ?? this.sapOk,
+    sapConfirmadoEn:     sapConfirmadoEn  ?? this.sapConfirmadoEn,
   );
 
   factory TraspassoBodega.fromMap(Map<String, dynamic> m) => TraspassoBodega(
@@ -86,6 +95,10 @@ class TraspassoBodega {
             ? DateTime.parse(m['aprobado_en'] as String)
             : null,
         folioKepler:          m['folio_kepler'] as String?,
-        pdfKeplerOk:          m['pdf_kepler_ok'] as bool? ?? false,
+        pdfKeplerOk:          m['pdf_kepler_ok']      as bool? ?? false,
+        sapOk:                m['sap_ok']             as bool? ?? false,
+        sapConfirmadoEn:      m['sap_confirmado_en'] != null
+            ? DateTime.parse(m['sap_confirmado_en'] as String)
+            : null,
       );
 }
