@@ -345,6 +345,12 @@ class FcmService {
     if (m.data['accion'] == 'traspaso_aprobado') {
       _mostrarSnackTraspasoAprobado(m.data['descripcion']?.toString() ?? 'Traspaso aprobado por bodega');
     }
+    if (m.data['accion'] == 'krp_aprobado') {
+      _mostrarSnackTraspasoAprobado(m.data['descripcion']?.toString() ?? 'TRANSFERENCIA EN KRP LISTA, TRANSFERENCIA EN TOA EN PROCESO');
+    }
+    if (m.data['accion'] == 'sap_confirmado') {
+      _mostrarSnackTraspasoAprobado(m.data['descripcion']?.toString() ?? 'TRANSFERENCIA EN TOA REALIZADA ✓');
+    }
     await _mostrarNotificacionLocal(m.data);
   }
 

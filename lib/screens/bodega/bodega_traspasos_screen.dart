@@ -140,6 +140,8 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
         if (folio != null && tr.solicitudMaterialId != null) {
           _enviarPdfKepler(tr, folio);
         }
+        // Forzar recarga desde DB para asegurar estado correcto
+        _recargar();
       }
     } catch (e) {
       if (mounted) {
@@ -247,6 +249,8 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
           backgroundColor: _green,
           content: Text('Transferencia SAP confirmada ✓'),
         ));
+        // Forzar recarga desde DB para mover la card a la sección correcta
+        _recargar();
       }
     } catch (e) {
       if (mounted) {
@@ -256,6 +260,21 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
         ));
       }
     }
+  }
+
+  Future<void> _recargar() async {
+    try {
+      final rows = await _db
+          .from('traspasos_bodega')
+          .select()
+          .order('created_at', ascending: false);
+      if (!mounted) return;
+      setState(() {
+        _traspasos = (rows as List)
+            .map((r) => TraspassoBodega.fromMap(r as Map<String, dynamic>))
+            .toList();
+      });
+    } catch (_) {}
   }
 
   Future<void> _enviarPdfKepler(TraspassoBodega tr, String folio) async {
