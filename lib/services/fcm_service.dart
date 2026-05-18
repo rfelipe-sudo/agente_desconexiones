@@ -368,6 +368,15 @@ class FcmService {
     );
   }
 
+  /// Toca el sonido de alerta de material. Llamable desde cualquier parte de la app.
+  static Future<void> playAlerta() async {
+    try {
+      await _soundChannel.invokeMethod<void>('playAlerta');
+    } catch (e) {
+      debugPrint('[FCM] playAlerta: $e');
+    }
+  }
+
   void _mostrarSnackTraspasoAprobado(String mensaje) {
     final ctx = creaboxNavigatorKey.currentContext;
     if (ctx == null) return;

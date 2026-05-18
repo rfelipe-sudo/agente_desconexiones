@@ -594,6 +594,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         final id = r['id'] as String? ?? '';
         if (!_solicitudesNotificadasHome.contains(id)) {
           _solicitudesNotificadasHome.add(id);
+          unawaited(FcmService.playAlerta());
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             backgroundColor: const Color(0xFF22C55E),
             behavior: SnackBarBehavior.floating,
