@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:agente_desconexiones/models/traspaso_bodega.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_guia_screen.dart';
+import 'package:agente_desconexiones/services/guia_pdf_service.dart';
 
 class BodegaTraspassosScreen extends StatefulWidget {
   const BodegaTraspassosScreen({super.key});
@@ -133,6 +135,11 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
               ? 'Aprobado ✓  Folio Kepler: $folio'
               : 'Aprobado ✓  Registrado en Kepler'),
         ));
+
+        // Enviar PDF a Kepler de forma asíncrona (best-effort)
+        if (folio != null && tr.solicitudMaterialId != null) {
+          _enviarPdfKepler(tr, folio);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -188,6 +195,33 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen> {
         ],
       ],
     );
+  }
+
+  Future<void> _enviarPdfKepler(TraspassoBodega tr, String folio) async {
+    try {
+      final rows = await _db
+          .from('solicitudes_bodega')
+          .select()
+          .eq('solicitud_id', tr.solicitudMaterialId!)
+          .order('created_at', ascending: false)
+          .limit(1);
+      final list = rows as List;
+      if (list.isEmpty) return;
+      final guia = list.first as Map<String, dynamic>;
+
+      final pdfBytes = await GuiaPdfService.generar(guia: guia, folio: folio);
+
+      await _db.functions.invoke('enviar-pdf-kepler', body: {
+        'pdf_base64':    base64Encode(pdfBytes),
+        'folio':         folio,
+        'rut_origen':    tr.rutTecnicoB,
+        'rut_destino':   tr.rutTecnicoA,
+        'tipo_material': tr.tipoMaterial,
+      });
+    } catch (e) {
+      // Best-effort: el traspaso ya está aprobado, el PDF es secundario
+      debugPrint('PDF Kepler error (no crítico): $e');
+    }
   }
 
   Future<void> _verGuia(TraspassoBodega tr) async {
