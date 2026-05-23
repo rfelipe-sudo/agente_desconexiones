@@ -23,7 +23,10 @@ import 'package:agente_desconexiones/services/fcm_service.dart'; // TEMP: debug 
 import 'package:agente_desconexiones/screens/tu_mes_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_equipo_screen.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
+import 'package:agente_desconexiones/models/solicitud_ayuda.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_screen.dart';
+import 'package:agente_desconexiones/screens/flota_admin_screen.dart';
+import 'package:agente_desconexiones/screens/jefe_ops_home_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -39,6 +42,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   bool _esIto = false;
   bool _esBodega = false;
   bool _checkingBodega = true;
+  // '' | 'jefe_operaciones' | 'flota'
+  String _rolFlota = '';
   String _rutSesion = '';
   String _tipoSesion = '';
   List<Map<String, dynamic>> _historialDia = [];
@@ -48,6 +53,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   StreamSubscription<List<Map<String, dynamic>>>? _subSolicitudesMat;
   int _solicitudesMaterialCount = 0;
   final Set<String> _solicitudesNotificadasHome = {};
+
+  // ── Ayuda en terreno (badge de pendientes para supervisor) ──
+  int _ayudaPendienteCount = 0;
 
   @override
   void initState() {
@@ -64,6 +72,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _checkPuedeVerEquipo();
     _checkEsIto();
     _checkEsBodega();
+    _checkRolFlota();
     _refrescarEtiquetasSesion();
     
     // Inicializar alertas (sin syncUsuarioDesdePrefs aquí: ya aplicó initialize/splash;
@@ -78,6 +87,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         // Monitor global: suena cuando llega solicitud de material aunque
         // el usuario no tenga SolicitudMaterialScreen abierta.
         unawaited(FcmService.instance.initSolicitudMonitor());
+        // Badge de ayuda pendiente para supervisor: carga inicial + listener en tiempo real
+        if (!auth.usuario!.esTecnico) {
+          unawaited(_cargarAyudaPendiente());
+          _ayudaService.addListener(_onAyudaServiceChanged);
+        }
 
         if (AppConstants.monitoreoFraudeYAlertasCtoActivo) {
           final alertasCTOService = AlertasCTOService();
@@ -113,6 +127,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
         await _refrescarEtiquetasSesion();
+        await _cargarAyudaPendiente();
       });
     }
   }
@@ -141,6 +156,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     WakelockPlus.disable();
     _tabController.dispose();
     _subSolicitudesMat?.cancel();
+    _ayudaService.removeListener(_onAyudaServiceChanged);
     super.dispose();
   }
 
@@ -162,6 +178,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
 
     if (_esBodega) return const BodegaScreen();
+    if (_rolFlota == 'flota') return const FlotaAdminScreen();
+    if (_rolFlota == 'jefe_operaciones') return const JefeOpsHomeScreen();
 
     final auth = context.watch<AuthProvider>();
     final usuario = auth.usuario;
@@ -434,8 +452,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 gradient: const LinearGradient(
                   colors: [Color(0xFF10B981), Color(0xFF059669)],
                 ),
-                onTap: () {
-                  Navigator.of(context).pushNamed('/solicitud-material');
+                onTap: () async {
+                  // Marcar todas las solicitudes actuales como vistas → badge a 0
+                  final db = Supabase.instance.client;
+                  try {
+                    final rows = await db
+                        .from('solicitudes_material')
+                        .select('id')
+                        .eq('estado', 'pendiente');
+                    for (final r in (rows as List)) {
+                      final id = r['id'] as String? ?? '';
+                      if (id.isNotEmpty) _solicitudesNotificadasHome.add(id);
+                    }
+                  } catch (_) {}
+                  if (mounted) setState(() => _solicitudesMaterialCount = 0);
+                  if (mounted) Navigator.of(context).pushNamed('/solicitud-material');
                 },
               ),
               if (_solicitudesMaterialCount > 0)
@@ -508,18 +539,44 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 Navigator.of(context).pushNamed('/asistente-supervisor');
               },
             ),
-            _buildActionButton(
-              icon: Icons.sos,
-              label: 'Solicitudes\nayuda',
-              color: const Color(0xFFE53935),
-              gradient: const LinearGradient(
-                colors: [Color(0xFFE53935), Color(0xFFC62828)],
-              ),
-              onTap: () {
-                Navigator.of(context)
-                    .pushNamed('/solicitudes-ayuda')
-                    .then((_) => _cargarHistorialDia());
-              },
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                _buildActionButton(
+                  icon: Icons.sos,
+                  label: 'Solicitudes\nayuda',
+                  color: const Color(0xFFE53935),
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFE53935), Color(0xFFC62828)],
+                  ),
+                  onTap: () {
+                    setState(() => _ayudaPendienteCount = 0);
+                    Navigator.of(context)
+                        .pushNamed('/solicitudes-ayuda')
+                        .then((_) => _cargarAyudaPendiente());
+                  },
+                ),
+                if (_ayudaPendienteCount > 0)
+                  Positioned(
+                    top: 4, right: 4,
+                    child: Container(
+                      padding: const EdgeInsets.all(5),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '$_ayudaPendienteCount',
+                        style: const TextStyle(
+                          color: Color(0xFFE53935),
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          height: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             _buildActionButton(
               icon: Icons.directions_run,
@@ -578,6 +635,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   void _suscribirSolicitudesMaterial(String rutPropio) {
     if (_esBodega) return; // bodega no recibe notificaciones de solicitudes
+    // Supervisores e ITOs tampoco reciben — solo técnicos
+    final usuario = context.read<AuthProvider>().usuario;
+    if (usuario != null && usuario.esSupervisor) return;
     _subSolicitudesMat?.cancel();
     _subSolicitudesMat = Supabase.instance.client
         .from('solicitudes_material')
@@ -634,7 +694,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         }
       }
 
-      if (mounted) setState(() => _solicitudesMaterialCount = count);
+      // Badge = solicitudes que el usuario aún no ha visto (no en el set de notificadas)
+      final nuevas = ajenas.where((r) {
+        final id = r['id'] as String? ?? '';
+        return id.isNotEmpty && !_solicitudesNotificadasHome.contains(id);
+      }).length;
+      if (mounted) setState(() => _solicitudesMaterialCount = nuevas);
     });
   }
 
@@ -746,6 +811,42 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
+  void _onAyudaServiceChanged() {
+    if (!mounted) return;
+    final count = _ayudaService.solicitudesSupervisor
+        .where((s) => s.estado == EstadoSolicitud.pendiente)
+        .length;
+    if (count != _ayudaPendienteCount) {
+      setState(() => _ayudaPendienteCount = count);
+    }
+  }
+
+  Future<void> _cargarAyudaPendiente() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rut = prefs.getString('rut_supervisor') ??
+                  prefs.getString('rut_tecnico') ??
+                  prefs.getString('user_rut') ?? '';
+      if (rut.isEmpty) return;
+
+      final hoy = DateTime.now().subtract(const Duration(hours: 24));
+      final rows = await Supabase.instance.client
+          .from('ayuda_terreno_crea')
+          .select('ticket_id, estado')
+          .eq('rut_supervisor', rut)
+          .neq('tipo', 'movimiento_material')
+          .eq('estado', 'pendiente')
+          .gte('created_at', hoy.toIso8601String());
+
+      if (mounted) {
+        setState(() => _ayudaPendienteCount = (rows as List).length);
+      }
+    } catch (_) {}
+  }
+
+  // Resuelve bodega Y roles_flota antes de liberar el render.
+  // Cada consulta tiene su propio try/catch para que un fallo individual
+  // no deje a _rolFlota en '' por error.
   Future<void> _checkEsBodega() async {
     final prefs = await SharedPreferences.getInstance();
     final rut   = prefs.getString('rut_tecnico') ??
@@ -755,24 +856,44 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       if (mounted) setState(() => _checkingBodega = false);
       return;
     }
+
+    bool   esBodega = false;
+    String rolFlota = '';
+
     try {
       final row = await Supabase.instance.client
           .from('nomina_bodega')
           .select('rut')
           .eq('rut', rut)
           .maybeSingle();
-      if (mounted) {
-        setState(() { _esBodega = row != null; _checkingBodega = false; });
-        if (_esBodega) {
-          // Bodega no debe recibir solicitudes de material
-          _subSolicitudesMat?.cancel();
-          _subSolicitudesMat = null;
-        }
+      esBodega = row != null;
+    } catch (_) {}
+
+    try {
+      final row = await Supabase.instance.client
+          .from('roles_flota')
+          .select('rol')
+          .eq('rut', rut)
+          .eq('activo', true)
+          .maybeSingle();
+      rolFlota = row?['rol'] as String? ?? '';
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() {
+        _esBodega       = esBodega;
+        _rolFlota       = rolFlota;
+        _checkingBodega = false;
+      });
+      if (_esBodega) {
+        _subSolicitudesMat?.cancel();
+        _subSolicitudesMat = null;
       }
-    } catch (_) {
-      if (mounted) setState(() => _checkingBodega = false);
     }
   }
+
+  // Mantenido vacío: la lógica se resuelve en _checkEsBodega.
+  Future<void> _checkRolFlota() async {}
 
   Widget _buildProximamenteActionButton({
     required IconData icon,

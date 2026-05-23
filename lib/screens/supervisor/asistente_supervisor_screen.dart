@@ -14,6 +14,7 @@ import 'package:agente_desconexiones/models/solicitud_material.dart';
 import 'auditoria_prl_screen.dart';
 import 'mi_equipo_screen.dart';
 import 'solicitudes_ayuda_screen.dart';
+import 'solicitudes_comb_supervisor_screen.dart';
 import 'solicitudes_material_supervisor_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +109,10 @@ class _AsistenteSupervisorScreenState
   StreamSubscription<List<Map<String, dynamic>>>? _subMaterial;
   Timer? _clockMaterial;
 
+  // ── Combustible: badge de solicitudes adicionales pendientes ───────────────
+  int _combPendientes = 0;
+  StreamSubscription<List<Map<String, dynamic>>>? _subComb;
+
   // ── CTO ────────────────────────────────────────────────────────────────────
   final _otController = TextEditingController();
   bool       _ctoLoading  = false;
@@ -141,6 +146,7 @@ class _AsistenteSupervisorScreenState
     _ayudaService.addListener(_onAyudaChanged);
     _iniciarMonitoreoAyuda();
     _iniciarMonitoreoMaterial();
+    _iniciarMonitoreoComb();
   }
 
   @override
@@ -149,6 +155,7 @@ class _AsistenteSupervisorScreenState
     _otController.dispose();
     _subMaterial?.cancel();
     _clockMaterial?.cancel();
+    _subComb?.cancel();
     super.dispose();
   }
 
@@ -174,6 +181,17 @@ class _AsistenteSupervisorScreenState
     // aunque no llegue un nuevo evento de Supabase)
     _clockMaterial = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
+    });
+  }
+
+  void _iniciarMonitoreoComb() {
+    _subComb = Supabase.instance.client
+        .from('sol_comb_adicional')
+        .stream(primaryKey: ['id'])
+        .eq('estado', 'pendiente_supervisor')
+        .listen((rows) {
+      if (!mounted) return;
+      setState(() => _combPendientes = rows.length);
     });
   }
 
@@ -485,6 +503,19 @@ class _AsistenteSupervisorScreenState
               MaterialPageRoute(
                 builder: (_) =>
                     const SolicitudesMaterialSupervisorScreen(),
+              ),
+            ),
+          ),
+          _buildCard(
+            icono: Icons.local_gas_station_rounded,
+            titulo: 'Solicitudes\nCombustible',
+            colores: [const Color(0xFFF59E0B), const Color(0xFFD97706)],
+            badge: _combPendientes,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    const SolicitudesCombSupervisorScreen(),
               ),
             ),
           ),

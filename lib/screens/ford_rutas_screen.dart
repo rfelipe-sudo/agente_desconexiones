@@ -118,24 +118,6 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
 
   // ── Selection handlers ────────────────────────────────────────
 
-  void _onTapTodo() {
-    setState(() {
-      _semanaSeleccionada = null;
-      _diaSeleccionado = null;
-      _trasladoSeleccionado = null;
-    });
-    _rebuildMap();
-  }
-
-  void _onTapSemana(DateTime ws) {
-    setState(() {
-      _semanaSeleccionada = (_semanaSeleccionada == ws) ? null : ws;
-      _diaSeleccionado = null;
-      _trasladoSeleccionado = null;
-    });
-    _rebuildMap();
-  }
-
   void _onTapDia(FordDiaRuta dia) {
     final isSame = _diaSeleccionado == dia && _trasladoSeleccionado == null;
     setState(() {
@@ -421,8 +403,6 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
     return buf.toString().split('').reversed.join();
   }
 
-  double get _totalKm => _rutas.fold(0.0, (s, r) => s + r.kmTotal);
-
   String get _mapContextLabel {
     if (_trasladoSeleccionado != null) {
       return '${_trasladoSeleccionado!.desde.label} → ${_trasladoSeleccionado!.hasta.label}';
@@ -466,7 +446,6 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
               : _rutas.isEmpty
                   ? _buildSinDatos()
                   : Column(children: [
-                      _buildSelectorSemanas(),
                       _buildMapa(),
                       const Divider(color: _border, height: 1),
                       Expanded(child: _buildListaDias()),
@@ -503,71 +482,6 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
       );
 
   // ── Semana chips (oldest → newest left to right) ──────────────
-
-  Widget _buildSelectorSemanas() {
-    // ascending: oldest on the left
-    final semanas = _semanas.keys.toList()..sort();
-    if (semanas.isEmpty) return const SizedBox.shrink();
-
-    return Container(
-      color: _surface,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(children: [
-          _chipSemana(
-            label: 'Todo',
-            sub: '${_totalKm.toStringAsFixed(0)} km · ${_rutas.length} días',
-            seleccionado: _semanaSeleccionada == null,
-            onTap: _onTapTodo,
-          ),
-          ...semanas.map((ws) {
-            final dias = _semanas[ws]!;
-            final km = dias.fold(0.0, (s, d) => s + d.kmTotal);
-            return Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: _chipSemana(
-                label: _labelSemana(ws),
-                sub: '${km.toStringAsFixed(0)} km · ${dias.length} días',
-                seleccionado: _semanaSeleccionada == ws,
-                onTap: () => _onTapSemana(ws),
-              ),
-            );
-          }),
-        ]),
-      ),
-    );
-  }
-
-  Widget _chipSemana({
-    required String label,
-    required String sub,
-    required bool seleccionado,
-    required VoidCallback onTap,
-  }) =>
-      GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: seleccionado ? _accent.withValues(alpha: 0.15) : _surface,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-                color: seleccionado ? _accent : _border,
-                width: seleccionado ? 1.5 : 1),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label,
-                style: TextStyle(
-                    color: seleccionado ? _accent : Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12)),
-            const SizedBox(height: 2),
-            Text(sub, style: const TextStyle(color: _textDim, fontSize: 10)),
-          ]),
-        ),
-      );
 
   // ── Map with context label ────────────────────────────────────
 
@@ -610,7 +524,7 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
         ]),
       ),
       SizedBox(
-        height: 195,
+        height: 280,
         child: _markers.isNotEmpty
             ? GoogleMap(
                 mapType: MapType.normal,
