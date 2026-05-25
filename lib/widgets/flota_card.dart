@@ -5,8 +5,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:agente_desconexiones/constants/app_colors.dart';
+import 'package:agente_desconexiones/models/ford_ruta.dart';
 import 'package:agente_desconexiones/screens/estanque_screen.dart';
+import 'package:agente_desconexiones/services/ford_api_service.dart';
 import 'package:agente_desconexiones/widgets/combustible_format.dart';
+
+// Mismo punto de corte que EstanqueScreen — nada anterior a esta fecha.
+const _kInicioFlota = '2026-05-18';
 
 class FlotaCard extends StatefulWidget {
   const FlotaCard({super.key});
@@ -81,16 +86,45 @@ class _FlotaCardState extends State<FlotaCard> {
 
   Future<void> _cargarMonedero(String rut) async {
     try {
+      // Patente desde monedero_combustible
       final row = await Supabase.instance.client
           .from('monedero_combustible')
-          .select('saldo_pesos, saldo_litros, patente')
+          .select('patente')
           .eq('rut_tecnico', rut)
           .maybeSingle();
-      if (row != null) {
-        _saldoPesos  = CombustibleFormat.toDouble(row['saldo_pesos']);
-        _saldoLitros = CombustibleFormat.toDouble(row['saldo_litros']);
-        _patente     = row['patente']?.toString();
+      if (row != null) _patente = row['patente']?.toString();
+
+      // Saldo virtual = Σ cargas - consumo estimado (km/rendimiento) desde _kInicioFlota
+      // Mismo cálculo que EstanqueScreen: consumo desde km de la API Ford.
+      final inicio = DateTime.parse(_kInicioFlota);
+      final results = await Future.wait<dynamic>([
+        Supabase.instance.client
+            .from('cargas_combustible')
+            .select('litros, monto')
+            .eq('rut_conductor', rut)
+            .gte('fecha', _kInicioFlota),
+        FordApiService().getRutasDelTecnico(rut),
+      ]);
+
+      final cargaRows = results[0] as List;
+      final fordRutas = results[1] as List<FordDiaRuta>;
+
+      double cargLit = 0, cargPesos = 0;
+      for (final r in cargaRows) {
+        cargLit   += CombustibleFormat.toDouble(r['litros']);
+        cargPesos += CombustibleFormat.toDouble(r['monto']);
       }
+
+      double conLit = 0;
+      for (final dia in fordRutas) {
+        final f = dia.fecha;
+        if (f == null || f.isBefore(inicio)) continue;
+        conLit += dia.kmTotal / _rendimientoKmL;
+      }
+      final conPesos = conLit * _precioLitroRef;
+
+      _saldoLitros = (cargLit  - conLit).clamp(0.0, double.infinity);
+      _saldoPesos  = (cargPesos - conPesos).clamp(0.0, double.infinity);
     } catch (_) {}
   }
 
@@ -102,12 +136,8 @@ class _FlotaCardState extends State<FlotaCard> {
         .eq('rut_tecnico', rut)
         .listen((data) {
       if (data.isEmpty || !mounted) return;
-      final row = data.first;
-      setState(() {
-        _saldoPesos  = CombustibleFormat.toDouble(row['saldo_pesos']);
-        _saldoLitros = CombustibleFormat.toDouble(row['saldo_litros']);
-        _patente     = row['patente']?.toString();
-      });
+      // Solo actualiza patente; el saldo se recalcula desde _kInicioFlota
+      setState(() => _patente = data.first['patente']?.toString());
     });
   }
 

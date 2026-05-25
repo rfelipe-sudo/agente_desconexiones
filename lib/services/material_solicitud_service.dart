@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:agente_desconexiones/services/logistica_service.dart';
@@ -37,18 +38,26 @@ class MaterialSolicitudService {
     final esExtensor = tipoMaterial.contains('Extensor');
     final umbral     = esExtensor ? 3.0 : 5.0;
 
-    // Excluir usuarios de bodega — no deben aparecer como técnicos con material
-    final bodegaRows = await _db.from('nomina_bodega').select('rut');
-    final bodegaRuts = (bodegaRows as List)
+    // Excluir bodega, supervisores e ITOs
+    final excluirResults = await Future.wait<dynamic>([
+      _db.from('nomina_bodega').select('rut'),
+      _db.from('supervisores_crea').select('rut'),
+      _db.from('equipos_crea').select('rut').eq('rol', 'ito'),
+    ]);
+    Set<String> toRutSet(dynamic rows) => (rows as List)
         .map((r) => r['rut'] as String? ?? '')
         .where((r) => r.isNotEmpty)
         .toSet();
+    final bodegaRuts     = toRutSet(excluirResults[0]);
+    final supervisorRuts = toRutSet(excluirResults[1]);
+    final itoRuts        = toRutSet(excluirResults[2]);
+    final excluirRuts    = {...bodegaRuts, ...supervisorRuts, ...itoRuts};
 
     final List<Map<String, dynamic>> destinatarios = [];
 
     for (final tecnico in stock) {
       if (tecnico.rut == rutSolicitante) continue;
-      if (bodegaRuts.contains(tecnico.rut)) continue;
+      if (excluirRuts.contains(tecnico.rut)) continue;
 
       final cantidad = tecnico.stock[tipoMaterial] ?? 0;
       if (cantidad <= umbral) continue;
@@ -70,30 +79,34 @@ class MaterialSolicitudService {
       });
     }
 
-    if (destinatarios.isEmpty) return;
+    if (destinatarios.isNotEmpty) {
+      await _db.from('solicitudes_material_destinatarios').insert(destinatarios);
+    }
 
-    await _db.from('solicitudes_material_destinatarios').insert(destinatarios);
-
-    // FCM push best-effort — busca token y llama Edge Function por técnico
-    for (final d in destinatarios) {
-      try {
-        final tokenRow = await _db
-            .from('nomina_tecnicos')
-            .select('fcm_token')
-            .eq('rut', d['rut_tecnico'] as String)
-            .maybeSingle();
-        final fcmToken = tokenRow?['fcm_token'] as String?;
-        if (fcmToken != null && fcmToken.isNotEmpty) {
+    // FCM a TODOS los técnicos, igual que el stream in-app.
+    // No solo a destinatarios calificados: cualquiera podría tener stock
+    // fuera del radio o sin ubicación registrada, y aun así debe escuchar la alerta.
+    try {
+      final tokenRows = await _db
+          .from('nomina_tecnicos')
+          .select('rut, fcm_token')
+          .neq('rut', rutSolicitante);
+      for (final row in (tokenRows as List)) {
+        final rut      = row['rut']       as String? ?? '';
+        final fcmToken = row['fcm_token'] as String?;
+        if (rut.isEmpty || fcmToken == null || fcmToken.isEmpty) continue;
+        if (excluirRuts.contains(rut)) continue;
+        try {
           await _db.functions.invoke('fcm-send', body: {
             'token':       fcmToken,
             'accion':      'solicitud_material',
             'tipo':        'Solicitud de material',
             'descripcion': 'Se necesita: $tipoMaterial',
-            'rut':         d['rut_tecnico'],
+            'rut':         rut,
           });
-        }
-      } catch (_) {}
-    }
+        } catch (_) {}
+      }
+    } catch (_) {}
   }
 
   /// El primer técnico que acepta: cancela los otros destinatarios y actualiza la solicitud.
@@ -199,6 +212,52 @@ class MaterialSolicitudService {
         .eq('solicitud_id', solicitudId)
         .eq('estado', 'pendiente');
     return (rows as List).cast<Map<String, dynamic>>();
+  }
+
+  /// Umbrales de alerta para el bodeguero.
+  static const _umbralOnt       = 3;
+  static const _umbralDeco      = 5;
+  static const _umbralExtensor  = 2;
+
+  /// Consulta el stock del solicitante en Kepler. Si supera algún umbral
+  /// (ONT>3, Decodificador>5, Extensor>2) inserta en alertas_auditoria_material.
+  /// Se llama en background — nunca lanza hacia el caller.
+  Future<void> verificarAlertaStock({
+    required String solicitudId,
+    required String rutSolicitante,
+    required String nombreSolicitante,
+    required String tipoMaterial,
+  }) async {
+    try {
+      final allStock = await LogisticaService().fetchStock();
+      final tecnico  = allStock.where((t) => t.rut == rutSolicitante).firstOrNull;
+      if (tecnico == null) return;
+
+      final stockOnt  = (tecnico.stock['ONT ZTE']    ?? 0) +
+                        (tecnico.stock['ONT Huawei']  ?? 0);
+      final stockDeco = tecnico.stock['Decodificador'] ?? 0;
+      final stockExt  = tecnico.stock['Extensor']      ?? 0;
+
+      if (stockOnt <= _umbralOnt &&
+          stockDeco <= _umbralDeco &&
+          stockExt  <= _umbralExtensor) return;
+
+      await _db.from('alertas_auditoria_material').insert({
+        'solicitud_id':       solicitudId,
+        'rut_tecnico':        rutSolicitante,
+        'nombre_tecnico':     nombreSolicitante,
+        'tipo_material':      tipoMaterial,
+        'stock_ont':          stockOnt,
+        'stock_decodificador': stockDeco,
+        'stock_extensor':     stockExt,
+        'estado':             'pendiente',
+      });
+
+      debugPrint('🟠 [AlertaStock] alerta generada: $rutSolicitante '
+          'ONT=$stockOnt Deco=$stockDeco Ext=$stockExt');
+    } catch (e) {
+      debugPrint('⚠️ [AlertaStock] error: $e');
+    }
   }
 
   double _distanciaKm(double lat1, double lon1, double lat2, double lon2) {

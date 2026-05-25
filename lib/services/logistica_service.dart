@@ -189,7 +189,7 @@ class LogisticaService {
         final cat = categorizar(nombre);
         if (cat == null) continue;
 
-        final serie = porSerie ? item['serie']?.toString() : null;
+        final serie = porSerie ? item['serie']?.toString().trim() : null;
 
         acum.putIfAbsent(rut, () => {});
         acum[rut]![cat] = (acum[rut]![cat] ?? 0) + cantidad;
@@ -228,5 +228,114 @@ class LogisticaService {
         a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase()));
 
     return resultado;
+  }
+
+  // ── Fetch con índice completo de series ─────────────────────────────────
+  // Igual que fetchStock() pero también devuelve un mapa SERIE→nombre que
+  // incluye TODOS los técnicos de Kepler (no solo los filtrados por supervisor).
+  // Usado en auditoría de bodega para identificar dueños de series ajenas.
+
+  Future<({List<TecnicoStock> tecnicos, Map<String, String> serieDueno})>
+      fetchStockConIndice() async {
+    final db = Supabase.instance.client;
+
+    // RUTs registrados (filtro de la lista de técnicos)
+    final stcRows = await db
+        .from('supervisor_tecnicos_crea')
+        .select('rut_tecnico');
+    final rutosRegistrados = (stcRows as List)
+        .map((r) => r['rut_tecnico'] as String? ?? '')
+        .where((r) => r.isNotEmpty)
+        .toSet();
+
+    // Nombres de TODOS los técnicos en nómina (sin filtro de supervisor)
+    final nominaRows = await db
+        .from('nomina_tecnicos')
+        .select('rut, nombres, paterno, materno');
+    final Map<String, String> nombreTodos = {};
+    for (final r in nominaRows as List) {
+      final rut = r['rut'] as String? ?? '';
+      final nombre =
+          '${r['nombres'] ?? ''} ${r['paterno'] ?? ''} ${r['materno'] ?? ''}'
+              .trim()
+              .replaceAll(RegExp(r'\s+'), ' ');
+      if (rut.isNotEmpty && nombre.isNotEmpty) nombreTodos[rut] = nombre;
+    }
+
+    // Llamada única a Kepler
+    final response = await http
+        .get(Uri.parse(_url))
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      throw Exception('Error logística HTTP ${response.statusCode}');
+    }
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final data = body['data'] as Map<String, dynamic>;
+
+    final Map<String, Map<String, double>> acum     = {};
+    final Map<String, List<ItemStock>>     rawItems = {};
+    final Map<String, String>              serieDueno = {}; // SERIE_UPPER → nombre
+
+    void procesarCompleto(List<dynamic> apiItems, {bool porSerie = false}) {
+      for (final item in apiItems) {
+        final rut    = item['trabajador_rut'] as String? ?? '';
+        final nombre = item['nombre']         as String? ?? '';
+        final idMat  = item['id_material'];
+        if (rut.isEmpty || idMat == null) continue;
+
+        final idMaterial = idMat is int ? idMat : int.tryParse(idMat.toString());
+        if (idMaterial == null) continue;
+
+        final cantidad = porSerie
+            ? 1.0
+            : (double.tryParse(item['cantidad']?.toString() ?? '0') ?? 0);
+        if (cantidad <= 0) continue;
+
+        final cat = categorizar(nombre);
+        if (cat == null) continue;
+
+        final serieRaw = porSerie ? item['serie']?.toString().trim() : null;
+
+        // Índice global de series (todos los técnicos de Kepler)
+        if (porSerie && serieRaw != null && serieRaw.isNotEmpty) {
+          serieDueno[serieRaw.toUpperCase()] = nombreTodos[rut] ?? rut;
+        }
+
+        // Acumulado solo para técnicos registrados
+        if (!rutosRegistrados.contains(rut)) continue;
+
+        acum.putIfAbsent(rut, () => {});
+        acum[rut]![cat] = (acum[rut]![cat] ?? 0) + cantidad;
+
+        rawItems.putIfAbsent(rut, () => []);
+        rawItems[rut]!.add(ItemStock(
+          idMaterial: idMaterial,
+          nombre:     nombre,
+          categoria:  cat,
+          cantidad:   cantidad,
+          serie:      serieRaw,
+        ));
+      }
+    }
+
+    procesarCompleto(data['no_seriados'] as List<dynamic>? ?? []);
+    procesarCompleto(data['seriados']    as List<dynamic>? ?? [], porSerie: true);
+
+    final List<TecnicoStock> resultado = [];
+    for (final entry in acum.entries) {
+      final rut    = entry.key;
+      final nombre = nombreTodos[rut];
+      if (nombre == null || !rutosRegistrados.contains(rut)) continue;
+      resultado.add(TecnicoStock(
+        rut:    rut,
+        nombre: nombre,
+        stock:  entry.value,
+        items:  rawItems[rut] ?? [],
+      ));
+    }
+    resultado.sort((a, b) =>
+        a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase()));
+
+    return (tecnicos: resultado, serieDueno: serieDueno);
   }
 }

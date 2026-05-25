@@ -385,25 +385,20 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
     });
 
     try {
-      // 1. Busca el access_id real de la CTO en tabla_access_id cruzando
-      //    por orden_trabajo. Eso nos da el identificador correcto para Nyquist
-      //    (produccion_creaciones.access_id guarda el nº de orden, no la CTO).
-      String accessIdNyquist;
-      if (orden.ordenTrabajo.isNotEmpty) {
-        final real = await _nyquist
-            .buscarAccessIdEnTablaAccesId(orden.ordenTrabajo);
-        if (real != null) {
-          accessIdNyquist = '02-$real'; // ej. "02-1-3CIZ1NIJ"
-          debugPrint('🔍 [CTO] OT=${orden.ordenTrabajo} → CTO access_id=$accessIdNyquist');
-        } else {
-          // Fallback: usa el access_id que vino del historial (puede ser el nº OT)
-          accessIdNyquist = orden.accessIdPrefijado;
-          debugPrint('⚠️ [CTO] Sin match en tabla_access_id, usando ${orden.accessIdPrefijado}');
-        }
-      } else {
-        accessIdNyquist = orden.accessIdPrefijado;
+      // El access_id ya viene resuelto desde tabla_access_id en el batch de carga.
+      // Si por algún motivo quedó vacío, mostrar error claro en lugar de consultar con OT.
+      final accessIdNyquist = orden.accessIdPrefijado;
+      if (accessIdNyquist.isEmpty) {
+        debugPrint('⚠️ [CTO] OT=${orden.ordenTrabajo} sin access_id en tabla_access_id');
+        setState(() {
+          _nyquistError = 'No se encontró el access_id de la CTO para esta orden.\n'
+              'Es posible que aún no esté registrada en tabla_access_id.';
+          _cargando = false;
+        });
+        return;
       }
 
+      debugPrint('🔍 [CTO] Consultando Nyquist → $accessIdNyquist');
       setState(() => _accessIdNyquist = accessIdNyquist);
 
       final r = await _nyquist.consultarEstado(accessIdNyquist);
@@ -1687,7 +1682,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
         return;
       }
 
-      // 1. Buscar órdenes de hoy y ayer en produccion_creaciones.
+      // 1. Buscar órdenes de hoy y ayer en produccion_creaciones (estado, tipo, hora).
       final hoy = DateTime.now();
       final ayer = hoy.subtract(const Duration(days: 1));
       final manana = hoy.add(const Duration(days: 1));
@@ -1697,7 +1692,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
 
       final rawRows = await Supabase.instance.client
           .from('produccion_creaciones')
-          .select('orden_trabajo, estado, tipo_orden, hora_inicio, access_id, fecha_proceso')
+          .select('orden_trabajo, estado, tipo_orden, hora_inicio, fecha_proceso')
           .eq('rut_tecnico', rut)
           .gte('fecha_proceso', ayerStr)
           .lt('fecha_proceso', mananaStr)
@@ -1705,9 +1700,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
 
       if (!mounted) return;
 
-      // 2. Por cada orden_trabajo conservar solo la fila con el estado más reciente.
-      //    El orden DESC por fecha_proceso garantiza que la primera aparición de
-      //    cada OT es la más reciente.
+      // 2. Conservar solo la fila con el estado más reciente por OT.
       final vistas = <String>{};
       final ultimoEstadoRows = <dynamic>[];
       for (final r in (rawRows as List)) {
@@ -1717,7 +1710,35 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
         ultimoEstadoRows.add(r);
       }
 
-      // 3. Clasificar por último estado (Cancelado excluido).
+      // 3. Batch-lookup en tabla_access_id para obtener el access_id real de la CTO.
+      //    produccion_creaciones.access_id == orden_trabajo (no sirve para Nyquist).
+      final todasOTs = ultimoEstadoRows
+          .map((r) => r['orden_trabajo']?.toString() ?? '')
+          .where((ot) => ot.isNotEmpty)
+          .toList();
+
+      final Map<String, String> accessPorOT = {};
+      if (todasOTs.isNotEmpty) {
+        try {
+          final accRows = await Supabase.instance.client
+              .from('tabla_access_id')
+              .select('orden_trabajo, access_id')
+              .inFilter('orden_trabajo', todasOTs)
+              .not('access_id', 'is', null)
+              .neq('access_id', '')
+              .neq('access_id', 'Sin Datos');
+          for (final a in (accRows as List)) {
+            final ot  = a['orden_trabajo']?.toString() ?? '';
+            final aid = a['access_id']?.toString().trim() ?? '';
+            if (ot.isNotEmpty && aid.isNotEmpty) accessPorOT[ot] = aid;
+          }
+          debugPrint('🔍 [CTO] tabla_access_id: ${accessPorOT.length}/${todasOTs.length} OTs con access_id real');
+        } catch (e) {
+          debugPrint('⚠️ [CTO] Error batch tabla_access_id: $e');
+        }
+      }
+
+      // 4. Clasificar por último estado (Cancelado excluido).
       bool _esCompletada(dynamic r) =>
           (r['estado']?.toString() ?? '').toLowerCase() == 'completado';
       bool _esIniciada(dynamic r) =>
@@ -1731,11 +1752,11 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       final iniciadasRows   = ultimoEstadoRows.where(_esIniciada).toList();
       final pendientesRows  = ultimoEstadoRows.where(_esPendiente).toList();
 
-      // 4. Construir listas OrdenHistorial (access_id viene directo de produccion_creaciones).
+      // 5. Construir OrdenHistorial con el access_id real de tabla_access_id.
       OrdenHistorial _toOrden(dynamic r) {
         final ot        = r['orden_trabajo']?.toString() ?? '';
-        final accessRaw = r['access_id']?.toString().trim() ?? '';
-        final accessFull = accessRaw.isEmpty ? '' : '$vno-$accessRaw';
+        final accessRaw = accessPorOT[ot] ?? '';
+        final accessFull = accessRaw.isNotEmpty ? '$vno-$accessRaw' : '';
         return OrdenHistorial(
           ordenTrabajo:      ot,
           accessIdPrefijado: accessFull,
@@ -2319,13 +2340,14 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
                     ],
                     if (!canTap)
                       const Padding(
-                        padding: EdgeInsets.only(top: 4),
+                        padding: EdgeInsets.only(top: 6),
                         child: Text(
-                          'Sin access_id — no disponible en Nyquist',
+                          'SIN POSIBILIDAD DE CONSULTA ORDEN FTTH',
                           style: TextStyle(
-                            color: Colors.white38,
-                            fontSize: 11,
-                            fontStyle: FontStyle.italic,
+                            color: Color(0xFFF59E0B),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
                           ),
                         ),
                       ),

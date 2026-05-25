@@ -41,23 +41,6 @@ Future<void> _mostrarNotificacionLocal(Map<String, dynamic> data) async {
     android: AndroidInitializationSettings('@mipmap/ic_launcher'),
   ));
 
-  // Garantizar que el canal existe con el sonido correcto.
-  // deleteNotificationChannel + create es la única forma de forzar la
-  // actualización si el canal fue creado previamente sin sonido.
-  final androidPlugin = flnp.resolvePlatformSpecificImplementation<
-      AndroidFlutterLocalNotificationsPlugin>();
-  await androidPlugin?.deleteNotificationChannel('mat_alertas_3');
-  await androidPlugin?.createNotificationChannel(AndroidNotificationChannel(
-    'mat_alertas_3',
-    'Alertas de material',
-    description: 'Alertas de solicitudes de material entre técnicos',
-    importance: Importance.high,
-    sound: const RawResourceAndroidNotificationSound('alerta_urgente'),
-    playSound: true,
-    enableVibration: true,
-    vibrationPattern: Int64List.fromList([0, 300, 200, 300]),
-  ));
-
   final title = esMaterial
       ? (data['title']?.toString() ?? '¡Solicitud de material!')
       : 'Solicitud cancelada';
@@ -380,16 +363,56 @@ class FcmService {
   void _mostrarSnackTraspasoAprobado(String mensaje) {
     final ctx = creaboxNavigatorKey.currentContext;
     if (ctx == null) return;
-    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-      backgroundColor: const Color(0xFF22C55E),
-      duration: const Duration(seconds: 5),
-      content: Row(children: [
-        const Icon(Icons.check_circle_outline, color: Colors.white),
-        const SizedBox(width: 8),
-        Expanded(child: Text(mensaje,
-            style: const TextStyle(color: Colors.white, fontSize: 13))),
-      ]),
-    ));
+    showDialog<void>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dialogContext) => Dialog(
+        backgroundColor: const Color(0xFF0D1B2A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF22C55E).withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.check_circle_rounded,
+                  color: Color(0xFF22C55E), size: 48),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              mensaje,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF22C55E),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () => Navigator.of(dialogContext, rootNavigator: true).pop(),
+                child: const Text('OK',
+                    style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   /// Detiene el monitor de PIN (cuando ya no hay solicitud activa).
@@ -404,6 +427,26 @@ class FcmService {
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
+
+    // Canal para alertas de material — crearlo al arrancar garantiza que existe
+    // antes de que llegue cualquier FCM en background o closed.
+    final flnp = FlutterLocalNotificationsPlugin();
+    await flnp.initialize(const InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+    ));
+    await flnp
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(AndroidNotificationChannel(
+          'mat_alertas_3',
+          'Alertas de material',
+          description: 'Alertas de solicitudes de material entre técnicos',
+          importance: Importance.high,
+          sound: const RawResourceAndroidNotificationSound('alerta_urgente'),
+          playSound: true,
+          enableVibration: true,
+          vibrationPattern: Int64List.fromList([0, 300, 200, 300]),
+        ));
 
     // Permisos (Android 13+).
     await FirebaseMessaging.instance.requestPermission(

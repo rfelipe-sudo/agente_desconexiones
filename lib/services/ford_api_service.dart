@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import '../models/ford_ruta.dart';
 
 class FordApiService {
-  static const _baseUrl = 'https://ford.sbip.cl/api/analisis-ruta-cache';
+  static const _baseUrl = 'https://ford.sbip.cl/api/analisis-ruta-cache?limit=50000';
   static const _user = 'ford_api';
   static const _pass = 'Sbip2024!';
   static const _cacheTtl = Duration(minutes: 10);

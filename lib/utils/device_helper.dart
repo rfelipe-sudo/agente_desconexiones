@@ -268,8 +268,32 @@ Future<Map<String, dynamic>?> _validarRutFallbackTablas(
         };
       }
     }
+
+    // Fallback plantel_tecnicos (bodegueros, supervisores, etc.)
+    final plantel = await client
+        .from('plantel_tecnicos')
+        .select('rut, nombre_completo, cargo, estado, es_plantel_vigente')
+        .inFilter('rut', lista)
+        .limit(1)
+        .maybeSingle();
+
+    if (plantel != null && plantel['nombre_completo'] != null) {
+      final nombre = plantel['nombre_completo'].toString().trim();
+      if (nombre.isNotEmpty) {
+        final vigente = plantel['es_plantel_vigente'] == true ||
+            plantel['estado']?.toString().toLowerCase() == 'activo';
+        print('[RUT] Fallback plantel_tecnicos OK: $nombre (${plantel['cargo']})');
+        return {
+          'existe': true,
+          'nombre': nombre,
+          'tipo_personal': plantel['cargo']?.toString() ?? '',
+          'es_vigente': vigente,
+          'rol': 'tecnico',
+        };
+      }
+    }
   } catch (e) {
-    print('[RUT] Error fallback nomina/produccion: $e');
+    print('[RUT] Error fallback nomina/produccion/plantel: $e');
   }
   return null;
 }

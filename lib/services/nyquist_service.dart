@@ -86,7 +86,7 @@ class PuertoCTO {
   }
 }
 
-/// Una fila de la tabla `produccion_crea` representando una OT del técnico.
+/// Una fila de la tabla `produccion_creaciones` representando una OT del técnico.
 /// Usada por el historial de "Revisar Estado CTO".
 class OrdenHistorial {
   const OrdenHistorial({
@@ -202,7 +202,7 @@ class EstadoCTO {
 /// Servicio para consultar la API Nyquist (estado CTO / vecino).
 ///
 /// Credenciales hardcodeadas, idéntico al módulo `turing-android` original.
-/// **No** se leen desde Supabase — el lookup de `produccion_crea` por RUT/OT
+/// **No** se leen desde Supabase — el lookup de `produccion_creaciones` por RUT/OT
 /// sí usa Supabase porque es data del propio CREABOX, no del proveedor.
 class NyquistService {
   static final NyquistService _instance = NyquistService._internal();
@@ -303,7 +303,7 @@ class NyquistService {
       print('🔍 [Nyquist-Sup] Buscando por OT: $ot');
 
       final response = await _supabase
-          .from('produccion_crea')
+          .from('produccion_creaciones')
           .select('access_id, tipo_orden, orden_trabajo, estado')
           .eq('orden_trabajo', ot)
           .order('hora_inicio', ascending: false)
@@ -343,7 +343,7 @@ class NyquistService {
   Future<String?> obtenerTipoRedTecnico(String rut) async {
     try {
       final response = await _supabase
-          .from('produccion_crea')
+          .from('produccion_creaciones')
           .select('tipo_orden')
           .eq('rut_tecnico', rut)
           .order('hora_inicio', ascending: false)

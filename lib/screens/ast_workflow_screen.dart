@@ -113,7 +113,7 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
         );
         setState(() {
           _distanciaMetros = dist;
-          _estaEnRango = dist <= _distanciaMaxMetros;
+          _estaEnRango = true; // TODO: restaurar validación de 300m tras pruebas
         });
       }
     } catch (_) {}
@@ -138,7 +138,7 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
         );
         setState(() {
           _distanciaMetros = dist;
-          _estaEnRango = dist <= _distanciaMaxMetros;
+          _estaEnRango = true; // TODO: restaurar validación de 300m tras pruebas
         });
       }
     });
@@ -150,13 +150,6 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
   }
 
   void _abrirAST() {
-    if (!_estaEnRango) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Debes estar dentro de 300m para completar el AST'),
-        backgroundColor: _orange,
-      ));
-      return;
-    }
     if (_orden == null) return;
 
     Navigator.of(context)

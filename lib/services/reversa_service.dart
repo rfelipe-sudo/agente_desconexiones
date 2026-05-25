@@ -1,7 +1,81 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+enum KrpResultado { entregado, rechazado, error }
+
+class KrpResult {
+  final KrpResultado resultado;
+  final int statusCode;
+  final String mensaje;
+  const KrpResult(this.resultado, this.statusCode, this.mensaje);
+}
 
 class ReversaService {
   final SupabaseClient _supabase = Supabase.instance.client;
+
+  static const _krpUrl   = 'https://logistica.sbip.cl/inventario/api/reversa';
+  static const _krpToken = '5de53e7b5f89b6b547c5c93d635f162ae2594756';
+
+  // ── KRP ────────────────────────────────────────────────────────
+
+  Future<KrpResult> entregarEnKrp({
+    required String serie,
+    required String rut,
+  }) async {
+    try {
+      final resp = await http
+          .post(
+            Uri.parse(_krpUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'api-token':    _krpToken,
+            },
+            body: jsonEncode({'serie': serie, 'rut': rut}),
+          )
+          .timeout(const Duration(seconds: 20));
+
+      if (resp.statusCode == 201) {
+        return const KrpResult(KrpResultado.entregado, 201, 'OK');
+      }
+      if (resp.statusCode == 404) {
+        String msg = 'Serie no encontrada en inventario KRP';
+        try {
+          final body = jsonDecode(resp.body) as Map;
+          msg = body['error']?.toString() ?? msg;
+        } catch (_) {}
+        return KrpResult(KrpResultado.rechazado, 404, msg);
+      }
+      // Cualquier otro código
+      String msg = 'Error desconocido';
+      try {
+        final body = jsonDecode(resp.body) as Map;
+        msg = body['error']?.toString() ?? resp.body;
+      } catch (_) {
+        msg = resp.body;
+      }
+      return KrpResult(KrpResultado.error, resp.statusCode, msg);
+    } catch (e) {
+      return KrpResult(KrpResultado.error, 0, e.toString());
+    }
+  }
+
+  // ── Supabase estado ────────────────────────────────────────────
+
+  Future<void> marcarEntregado(String serial) async {
+    await _supabase.from('equipos_reversa').update({
+      'estado':        'entregado',
+      'fecha_entrega': DateTime.now().toIso8601String(),
+    }).eq('serial', serial);
+  }
+
+  Future<void> marcarRechazado(String serial, String motivo) async {
+    await _supabase.from('equipos_reversa').update({
+      'estado':          'rechazado',
+      'motivo_rechazo':  motivo,
+      'fecha_entrega':   DateTime.now().toIso8601String(),
+    }).eq('serial', serial);
+  }
 
   /// Obtener equipos de reversa del técnico filtrados por mes
   Future<List<Map<String, dynamic>>> obtenerEquiposReversa(

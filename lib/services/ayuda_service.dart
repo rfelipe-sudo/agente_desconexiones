@@ -445,50 +445,19 @@ class AyudaService extends ChangeNotifier {
 
   Future<void> cargarSolicitudesSupervisor(String rutSupervisor) async {
     try {
-      // 1. Obtener RUTs del equipo
-      final rutsEquipo = await obtenerRutsEquipo(rutSupervisor);
-
-      List<dynamic> resp;
-
-      if (rutsEquipo.isEmpty) {
-        // Sin equipo asignado: mostrar solicitudes donde rut_supervisor coincide
-        debugPrint(
-            '⚠️ [AyudaService] Sin equipo en supervisor_tecnicos_crea, usando fallback');
-        final hoy = DateTime.now().subtract(const Duration(hours: 24));
-        resp = await _supabase
-            .from('ayuda_terreno_crea')
-            .select()
-            .eq('rut_supervisor', rutSupervisor)
-            .neq('tipo', 'movimiento_material')
-            .gte('created_at', hoy.toIso8601String())
-            .order('created_at', ascending: false);
-      } else {
-        // 2. Buscar solicitudes del equipo + traspasadas directamente a este supervisor
-        final hoy = DateTime.now().subtract(const Duration(hours: 24));
-        final resp1 = await _supabase
-            .from('ayuda_terreno_crea')
-            .select()
-            .inFilter('rut_tecnico', rutsEquipo)
-            .neq('tipo', 'movimiento_material')
-            .gte('created_at', hoy.toIso8601String())
-            .order('created_at', ascending: false);
-        final resp2 = await _supabase
-            .from('ayuda_terreno_crea')
-            .select()
-            .eq('rut_supervisor', rutSupervisor)
-            .neq('tipo', 'movimiento_material')
-            .gte('created_at', hoy.toIso8601String())
-            .order('created_at', ascending: false);
-        final byId = <String, dynamic>{};
-        for (final r in [...resp1 as List, ...resp2 as List]) {
-          final row = r as Map<String, dynamic>;
-          byId[row['ticket_id'] as String] = row;
-        }
-        resp = byId.values.toList();
-      }
+      // Consultar por rut_supervisor: cubre tickets originales del equipo
+      // Y tickets traspasados a este supervisor, excluyendo los traspasados a otro.
+      final hoy = DateTime.now().subtract(const Duration(hours: 24));
+      final resp = await _supabase
+          .from('ayuda_terreno_crea')
+          .select()
+          .eq('rut_supervisor', rutSupervisor)
+          .neq('tipo', 'movimiento_material')
+          .gte('created_at', hoy.toIso8601String())
+          .order('created_at', ascending: false);
 
       _solicitudesSupervisor =
-          (resp).map((e) => SolicitudAyuda.fromJson(e as Map<String, dynamic>)).toList();
+          (resp as List).map((e) => SolicitudAyuda.fromJson(e as Map<String, dynamic>)).toList();
       debugPrint(
           '📋 [AyudaService] Solicitudes cargadas: ${_solicitudesSupervisor.length}');
       notifyListeners();
@@ -543,7 +512,6 @@ class AyudaService extends ChangeNotifier {
           },
         )
         // UPDATE sin filtro: recibe todos los updates y filtra manualmente
-        // (los filtros de columna en UPDATE son poco confiables incluso con REPLICA IDENTITY FULL)
         .onPostgresChanges(
           event: PostgresChangeEvent.update,
           schema: 'public',
@@ -557,13 +525,18 @@ class AyudaService extends ChangeNotifier {
                 .indexWhere((s) => s.ticketId == solicitud.ticketId);
 
             if (idx == -1 && solicitud.rutSupervisor == rutSupervisor) {
-              // Traspaso: la solicitud es nueva para este supervisor
-              debugPrint('📡 [AyudaService] Traspaso detectado — ticket ${solicitud.ticketId}');
+              // Traspaso entrante: nueva para este supervisor
+              debugPrint('📡 [AyudaService] Traspaso recibido — ticket ${solicitud.ticketId}');
               _solicitudesSupervisor = [solicitud, ..._solicitudesSupervisor];
               notifyListeners();
               onNuevaSolicitud();
+            } else if (idx != -1 && solicitud.rutSupervisor != rutSupervisor) {
+              // Traspaso saliente: ya no es de este supervisor → remover
+              debugPrint('📡 [AyudaService] Traspaso saliente — ticket ${solicitud.ticketId}');
+              _solicitudesSupervisor = List.from(_solicitudesSupervisor)..removeAt(idx);
+              notifyListeners();
             } else if (idx != -1) {
-              // Actualización de estado en solicitud ya conocida
+              // Actualización de estado normal
               _solicitudesSupervisor = List.from(_solicitudesSupervisor)
                 ..[idx] = solicitud;
               notifyListeners();
@@ -665,7 +638,7 @@ class AyudaService extends ChangeNotifier {
                 .indexWhere((s) => s.ticketId == solicitud.ticketId);
 
             if (idx == -1 && solicitud.rutSupervisor == rutSupervisor) {
-              // Traspaso: la solicitud es nueva para este supervisor
+              // Traspaso entrante: nueva para este supervisor
               debugPrint('🔔 [AyudaService][GLOBAL] Traspaso recibido — ticket ${solicitud.ticketId}');
               _solicitudesSupervisor = [solicitud, ..._solicitudesSupervisor];
               notifyListeners();
@@ -676,8 +649,13 @@ class AyudaService extends ChangeNotifier {
                 tipoAyuda: solicitud.tipo.displayName,
               );
               await _reproducirSonido();
+            } else if (idx != -1 && solicitud.rutSupervisor != rutSupervisor) {
+              // Traspaso saliente: remover de la lista
+              debugPrint('🔔 [AyudaService][GLOBAL] Traspaso saliente — ticket ${solicitud.ticketId}');
+              _solicitudesSupervisor = List.from(_solicitudesSupervisor)..removeAt(idx);
+              notifyListeners();
             } else if (idx != -1) {
-              // Actualización de estado: refrescar en lista
+              // Actualización de estado normal
               _solicitudesSupervisor = List.from(_solicitudesSupervisor)
                 ..[idx] = solicitud;
               notifyListeners();

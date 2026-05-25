@@ -153,45 +153,7 @@ class _ReversaScreenState extends State<ReversaScreen> {
     );
 
     if (confirmado != true) return;
-
-    try {
-      final serial = equipo['serial'];
-      if (serial == null) {
-        throw Exception('Serial de equipo no encontrado');
-      }
-
-      print('🔍 [Reversa] Reintentando entrega - Serial: $serial');
-
-      // Actualizar usando el serial del equipo
-      // Cambiar a 'en_revision' para que caiga al portal de bodega
-      await supabase
-          .from('equipos_reversa')
-          .update({
-            'estado': 'en_revision',
-            'fecha_entrega': DateTime.now().toIso8601String(),
-            'motivo_rechazo': null,
-          })
-          .eq('serial', serial);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Equipo enviado nuevamente a bodega'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        _cargarDatos();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Error: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+    await _enviarAKrp(equipo);
   }
 
   Future<void> _entregarEquipo(Map<String, dynamic> equipo) async {
@@ -219,48 +181,97 @@ class _ReversaScreenState extends State<ReversaScreen> {
     );
 
     if (confirmado != true) return;
+    await _enviarAKrp(equipo);
+  }
 
-    try {
-      final serial = equipo['serial'];
-      if (serial == null) {
-        throw Exception('Serial de equipo no encontrado');
-      }
-
-      print('🔍 [Reversa] Serial: $serial');
-      print('🔍 [Reversa] Estado actual: ${equipo['estado']}');
-      print('🔍 [Reversa] equipo completo: $equipo');
-      print('📤 [Reversa] Actualizando a estado "en_revision"...');
-
-      // Actualizar usando el serial del equipo
-      // Cambiar a 'en_revision' para que caiga al portal de bodega
-      final response = await supabase
-          .from('equipos_reversa')
-          .update({
-            'estado': 'en_revision',
-            'fecha_entrega': DateTime.now().toIso8601String(),
-          })
-          .eq('serial', serial)
-          .select();
-      
-      print('✅ [Reversa] Actualización exitosa: $response');
-
+  Future<void> _enviarAKrp(Map<String, dynamic> equipo) async {
+    final serial = equipo['serial']?.toString();
+    if (serial == null || serial.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ Equipo enviado a revisión de bodega'),
-            backgroundColor: Colors.green,
-          ),
+              content: Text('Error: serial no encontrado'),
+              backgroundColor: Colors.red),
         );
-        // Refrescar lista
-        _cargarDatos();
+      }
+      return;
+    }
+
+    final rut = _rutTecnico ?? '';
+
+    try {
+      final krpResult =
+          await _reversaService.entregarEnKrp(serie: serial, rut: rut);
+
+      switch (krpResult.resultado) {
+        case KrpResultado.entregado:
+          await _reversaService.marcarEntregado(serial);
+          setState(() {
+            final idx =
+                _desinstalaciones.indexWhere((e) => e['serial'] == serial);
+            if (idx != -1) {
+              _desinstalaciones[idx] = {
+                ..._desinstalaciones[idx],
+                'estado': 'entregado',
+                'fecha_entrega': DateTime.now().toIso8601String(),
+                'motivo_rechazo': null,
+              };
+            }
+            _pendientes = (_pendientes - 1).clamp(0, _totalEquipos);
+            _rechazados = (_rechazados - 1).clamp(0, _totalEquipos);
+            _entregados++;
+          });
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('✅ Equipo entregado correctamente'),
+                  backgroundColor: Colors.green),
+            );
+          }
+
+        case KrpResultado.rechazado:
+          await _reversaService.marcarRechazado(serial, krpResult.mensaje);
+          setState(() {
+            final idx =
+                _desinstalaciones.indexWhere((e) => e['serial'] == serial);
+            if (idx != -1) {
+              _desinstalaciones[idx] = {
+                ..._desinstalaciones[idx],
+                'estado': 'rechazado',
+                'motivo_rechazo': krpResult.mensaje,
+                'fecha_entrega': DateTime.now().toIso8601String(),
+              };
+            }
+            _pendientes = (_pendientes - 1).clamp(0, _totalEquipos);
+            _rechazados++;
+          });
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Serie rechazada por KRP: ${krpResult.mensaje}'),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 5),
+              ),
+            );
+          }
+
+        case KrpResultado.error:
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                    'Error ${krpResult.statusCode} en KRP, favor contacta al administrador'),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 6),
+              ),
+            );
+          }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ Error al entregar: $e'),
-            backgroundColor: Colors.red,
-          ),
+              content: Text('❌ Error: $e'), backgroundColor: Colors.red),
         );
       }
     }

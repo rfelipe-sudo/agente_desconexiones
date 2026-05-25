@@ -861,13 +861,14 @@ class ProduccionService {
         asistenciaData = null;
       }
 
-      // Igual que el dashboard: fecha_trabajo like.*/mes/año (filtro server-side)
-      // Evita traer toda la historia del técnico y respeta los límites de paginación
+      // produccion_creaciones usa DD/MM/YY (año 2 dígitos, mes con cero)
+      final mesPadded  = mesConsulta.toString().padLeft(2, '0');
+      final annoCorto  = (annoConsulta % 100).toString().padLeft(2, '0');
       final response = await _supabase
-          .from('produccion_crea')
+          .from('produccion_creaciones')
           .select()
           .eq('rut_tecnico', rutTecnico)
-          .ilike('fecha_trabajo', '*/$mesConsulta/$annoConsulta');
+          .ilike('fecha_trabajo', '*/$mesPadded/$annoCorto');
 
       final ordenesMes = response as List;
 
@@ -933,14 +934,17 @@ class ProduccionService {
         }
 
         if (completadasDia > 0) {
-          // Día con producción
           diasConProduccion.add(fecha);
         } else {
-          // Día PX-0: tiene asignaciones pero ninguna completada
-          diasPX0List.add({
-            'fecha': fecha,
-            'ordenes': ordenesDelDia.length,
-          });
+          // Día PX-0: usa es_px0 si está disponible, sino lo infiere
+          final esPx0 = ordenesDelDia.any((o) => o['es_px0'] == true)
+              || ordenesDelDia.every((o) => o['estado']?.toString() != 'Completado');
+          if (esPx0) {
+            diasPX0List.add({
+              'fecha': fecha,
+              'ordenes': ordenesDelDia.length,
+            });
+          }
         }
       }
 
@@ -963,11 +967,11 @@ class ProduccionService {
         vacacionesFinales = (asistenciaData['vacaciones'] as num?)?.toInt() ?? 0;
         print('✅ [Produccion] Usando v_asistencia_tecnicos: dias_con_produccion=$diasTrabajados, ausencias=$diasAusentesFinales, vacaciones=$vacacionesFinales');
       } else {
-        // Fallback: calcular desde produccion_crea
+        // Fallback: calcular desde produccion_creaciones
         diasTrabajados = diasConProduccion.length + diasPX0;
         vacacionesFinales = 0;
         diasAusentesFinales = (diasHabiles - diasTrabajados - feriadosFinales - vacacionesFinales).clamp(0, diasHabiles);
-        print('⚠️ [Produccion] Sin asistencia en Supabase — calculando desde produccion_crea ($diasTrabajados días)');
+        print('⚠️ [Produccion] Sin asistencia en Supabase — calculando desde produccion_creaciones ($diasTrabajados días)');
       }
 
       // Divisor para promedio = días trabajados (ya incluye PX-0)
@@ -1043,30 +1047,17 @@ class ProduccionService {
     final annoConsulta = anno ?? now.year;
 
     try {
+      // produccion_creaciones usa DD/MM/YY (año 2 dígitos, mes con cero)
+      final mesPadded = mesConsulta.toString().padLeft(2, '0');
+      final annoCorto = (annoConsulta % 100).toString().padLeft(2, '0');
       final response = await _supabase
-          .from('produccion_crea')
+          .from('produccion_creaciones')
           .select()
           .eq('rut_tecnico', rutTecnico)
-          .eq('estado', 'Completado'); // Solo órdenes completadas
+          .eq('estado', 'Completado')
+          .ilike('fecha_trabajo', '*/$mesPadded/$annoCorto');
 
-      final todasOrdenes = response as List;
-
-      // Filtrar por mes y año
-      final ordenesMes = todasOrdenes.where((orden) {
-        final fechaStr = orden['fecha_trabajo']?.toString() ?? '';
-        final partes = fechaStr.split('/');
-        if (partes.length != 3) return false;
-
-        final mesOrden = int.tryParse(partes[1]) ?? 0;
-        final annoOrden = int.tryParse(partes[2]) ?? 0;
-
-        return mesOrden == mesConsulta && annoOrden == annoConsulta;
-      }).toList();
-
-      // Filtro adicional en Dart para asegurar solo completadas
-      final ordenesCompletadas = ordenesMes.where((orden) {
-        return orden['estado']?.toString() == 'Completado';
-      }).toList();
+      final ordenesCompletadas = response as List;
 
       // Agrupar por día (usar solo órdenes completadas)
       Map<String, Map<String, dynamic>> porDia = {};
@@ -1106,21 +1097,19 @@ class ProduccionService {
       // Convertir a lista y ordenar por fecha (más reciente primero)
       final lista = porDia.values.toList();
       lista.sort((a, b) {
-        // Parsear fechas D/MM/YYYY
-        final partesA = (a['fecha'] as String).split('/');
-        final partesB = (b['fecha'] as String).split('/');
-
-        if (partesA.length == 3 && partesB.length == 3) {
-          final fechaA = DateTime(
-            int.parse(partesA[2]),
-            int.parse(partesA[1]),
-            int.parse(partesA[0]),
-          );
-          final fechaB = DateTime(
-            int.parse(partesB[2]),
-            int.parse(partesB[1]),
-            int.parse(partesB[0]),
-          );
+        // Parsear fechas DD/MM/YY o D/M/YYYY
+        DateTime? _parseFecha(String s) {
+          final p = s.split('/');
+          if (p.length != 3) return null;
+          final d = int.tryParse(p[0]) ?? 0;
+          final m = int.tryParse(p[1]) ?? 0;
+          var y  = int.tryParse(p[2]) ?? 0;
+          if (y < 100) y += 2000;
+          return DateTime(y, m, d);
+        }
+        final fechaA = _parseFecha(a['fecha'] as String);
+        final fechaB = _parseFecha(b['fecha'] as String);
+        if (fechaA != null && fechaB != null) {
           return fechaB.compareTo(fechaA); // Más reciente primero
         }
         return 0;

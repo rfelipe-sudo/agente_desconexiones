@@ -101,15 +101,16 @@ class SolicitudMaterial {
       );
 
   SolicitudMaterial copyWith({
-    String? estado,
-    String? rutEntregador,
-    String? nombreEntregador,
-    double? latEntregador,
-    double? lngEntregador,
-    String? guiaId,
-    String? modalidad,
-    int?    idMaterial,
-    String? folioKepler,
+    String?       estado,
+    String?       rutEntregador,
+    String?       nombreEntregador,
+    double?       latEntregador,
+    double?       lngEntregador,
+    String?       guiaId,
+    String?       modalidad,
+    int?          idMaterial,
+    String?       folioKepler,
+    List<String>? series,
   }) =>
       SolicitudMaterial(
         id: id,
@@ -121,7 +122,7 @@ class SolicitudMaterial {
         tipoMaterial: tipoMaterial,
         esSeriado: esSeriado,
         cantidad: cantidad,
-        series: series,
+        series: series ?? this.series,
         estado: estado ?? this.estado,
         rutEntregador: rutEntregador ?? this.rutEntregador,
         nombreEntregador: nombreEntregador ?? this.nombreEntregador,

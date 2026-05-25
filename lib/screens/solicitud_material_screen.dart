@@ -653,6 +653,16 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         rutSolicitante: _rut!,
       );
 
+      // Alerta de stock al bodeguero si material seriado y supera umbrales
+      if (sol.esSeriado) {
+        unawaited(_service.verificarAlertaStock(
+          solicitudId:       sol.id,
+          rutSolicitante:    _rut!,
+          nombreSolicitante: _nombre ?? '',
+          tipoMaterial:      sol.tipoMaterial,
+        ));
+      }
+
       // Alerta de 10 minutos si nadie responde
       _timer10min?.cancel();
       _timer10min = Timer(const Duration(minutes: 10), () {
@@ -760,7 +770,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
       _posicion = await _obtenerPosicion() ?? _posicion;
 
       // Resolver id_material desde el stock logístico del entregador (B).
-      // Solo aplica a no seriados; seriados requieren escaneo (pendiente).
+      // Solo aplica a no seriados; seriados resuelven la serie en la guía de entrega.
       int? idMaterial;
       if (!sol.esSeriado) {
         idMaterial = await _service.resolverIdMaterial(
@@ -2138,20 +2148,28 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
 
   Widget _buildFormulario() {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // Material selector
+      // Material selector — altura máxima 45 % de pantalla con scroll interno
       Container(
         decoration: BoxDecoration(
             color: _surface,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: _border)),
-        child: Column(
-          children: [
-            _grupoMaterial('No seriados',
-                kMateriales.where((m) => !m.esSeriado).toList()),
-            const Divider(height: 1, color: Color(0xFF1E3A5F)),
-            _grupoMaterial('Seriados',
-                kMateriales.where((m) => m.esSeriado).toList()),
-          ],
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.45,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(9),
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                _grupoMaterial('No seriados',
+                    kMateriales.where((m) => !m.esSeriado).toList()),
+                const Divider(height: 1, color: Color(0xFF1E3A5F)),
+                _grupoMaterial('Seriados',
+                    kMateriales.where((m) => m.esSeriado).toList()),
+              ],
+            ),
+          ),
         ),
       ),
 

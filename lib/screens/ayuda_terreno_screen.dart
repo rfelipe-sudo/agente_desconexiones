@@ -532,6 +532,13 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
     return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
   }
 
+  String _formatMinutos(int minutos) {
+    if (minutos < 60) return '${minutos} min';
+    final h = minutos ~/ 60;
+    final m = minutos % 60;
+    return m == 0 ? '${h}h' : '${h}h ${m}min';
+  }
+
   String _tiempoEsperaTexto() {
     if (_segundosEspera < 60) return '${_segundosEspera}s';
     final minutos = _segundosEspera ~/ 60;
@@ -573,7 +580,7 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
           Icons.schedule,
           'Aceptada con demora',
           s.tiempoExtraMinutos != null
-              ? '${s.supervisorNombre ?? "El supervisor"} llegará en ~${s.tiempoExtraMinutos} min adicionales.'
+              ? '${s.supervisorNombre ?? "El supervisor"} llegará en ~${_formatMinutos(s.tiempoExtraMinutos!)} adicionales.'
               : '${s.supervisorNombre ?? "El supervisor"} aceptó con demora.',
         ),
       _ => (
@@ -1434,7 +1441,7 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
                             Icon(Icons.schedule,
                                 size: 13, color: Colors.orange.shade600),
                             const SizedBox(width: 4),
-                            Text('Llegará en ~${s.tiempoExtraMinutos} min extra',
+                            Text('Llegará en ~${_formatMinutos(s.tiempoExtraMinutos!)} extra',
                                 style: TextStyle(
                                     color: Colors.orange.shade700,
                                     fontSize: 12)),

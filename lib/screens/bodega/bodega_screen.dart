@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:agente_desconexiones/models/traspaso_bodega.dart';
+import 'package:agente_desconexiones/screens/bodega/bodega_auditorias_screen.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_stock_screen.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_traspasos_screen.dart';
 
@@ -18,7 +18,6 @@ class BodegaScreen extends StatefulWidget {
 class _BodegaScreenState extends State<BodegaScreen> {
   static const _bg      = Color(0xFF0A0F1E);
   static const _surface = Color(0xFF0D1B2A);
-  static const _border  = Color(0xFF1E3A5F);
   static const _accent  = Color(0xFF00D9FF);
   static const _orange  = Color(0xFFF59E0B);
   static const _textDim = Color(0xFF8FA8C8);
@@ -28,19 +27,23 @@ class _BodegaScreenState extends State<BodegaScreen> {
   String _nombre = '';
   String _rut    = '';
 
-  int _pendientesCount = 0;
+  int _pendientesCount  = 0;
+  int _alertasStockCount = 0;
   StreamSubscription<List<Map<String, dynamic>>>? _subTraspasos;
+  StreamSubscription<List<Map<String, dynamic>>>? _subAlertasStock;
 
   @override
   void initState() {
     super.initState();
     _cargarDatos();
     _suscribirPendientes();
+    _suscribirAlertasStock();
   }
 
   @override
   void dispose() {
     _subTraspasos?.cancel();
+    _subAlertasStock?.cancel();
     super.dispose();
   }
 
@@ -72,6 +75,17 @@ class _BodegaScreenState extends State<BodegaScreen> {
           .where((r) => (r['estado'] as String?) == 'pendiente')
           .length;
       setState(() => _pendientesCount = pendientes);
+    });
+  }
+
+  void _suscribirAlertasStock() {
+    _subAlertasStock = _db
+        .from('alertas_auditoria_material')
+        .stream(primaryKey: ['id'])
+        .eq('estado', 'pendiente')
+        .listen((rows) {
+      if (!mounted) return;
+      setState(() => _alertasStockCount = rows.length);
     });
   }
 
@@ -107,8 +121,7 @@ class _BodegaScreenState extends State<BodegaScreen> {
                         fontWeight: FontWeight.w600),
                     overflow: TextOverflow.ellipsis),
                 Text('Panel de Bodega · $_rut',
-                    style: const TextStyle(
-                        color: _textDim, fontSize: 12),
+                    style: const TextStyle(color: _textDim, fontSize: 12),
                     overflow: TextOverflow.ellipsis),
               ],
             ),
@@ -151,6 +164,25 @@ class _BodegaScreenState extends State<BodegaScreen> {
               badge: _pendientesCount,
               onTap: () => Navigator.push(context,
                   MaterialPageRoute(builder: (_) => const BodegaTraspassosScreen())),
+            ),
+            const SizedBox(height: 20),
+            // ── Card Alertas de Stock ───────────────────────────
+            _BodegaCard(
+              icon: Icons.warning_amber_rounded,
+              titulo: 'Alertas de Stock',
+              descripcion: _alertasStockCount > 0
+                  ? '$_alertasStockCount alerta${_alertasStockCount == 1 ? '' : 's'} pendiente${_alertasStockCount == 1 ? '' : 's'} de revisión'
+                  : 'Sin alertas de solicitud con stock',
+              gradiente: const LinearGradient(
+                colors: [Color(0xFF92400E), Color(0xFFF59E0B)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              sombra: const Color(0xFFF59E0B),
+              badge: _alertasStockCount,
+              onTap: () => Navigator.push(context,
+                  MaterialPageRoute(
+                      builder: (_) => const BodegaAlertasStockScreen())),
             ),
           ],
         ),

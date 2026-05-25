@@ -98,6 +98,21 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
   Future<void> _llamarKepler() async {
     final sol = widget.solicitud;
     try {
+      // Si las series no llegaron propagadas, leerlas directamente de
+      // solicitudes_material (guía las guarda al firmar el entregador).
+      List<String> series = sol.series;
+      if (series.isEmpty && sol.esSeriado) {
+        final row = await _db
+            .from('solicitudes_material')
+            .select('series')
+            .eq('id', sol.id)
+            .single();
+        series = ((row as Map)['series'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            [];
+      }
+
       // Crear registro de trazabilidad en bodega
       await _db.from('traspasos_bodega').insert({
         'solicitud_material_id': sol.id,
@@ -107,7 +122,7 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
         'nombre_tecnico_a':      sol.nombreSolicitante,
         'tipo_material':         sol.tipoMaterial,
         'cantidad':              sol.cantidad,
-        'series':                sol.series,
+        'series':                series,
         'id_material':           sol.idMaterial,
         'estado':                'pendiente',
       });

@@ -16,6 +16,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:agente_desconexiones/config/constants.dart';
 import 'package:agente_desconexiones/models/solicitud_material.dart';
 import 'package:agente_desconexiones/screens/pin_entry_screen.dart';
+import 'package:agente_desconexiones/services/logistica_service.dart';
 
 /// Pantalla de guía de entrega — se abre SOLO en el dispositivo del entregador
 /// (receptor). Ambas firmas se capturan en el mismo dispositivo.
@@ -62,6 +63,14 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
   final List<String>      _series   = [];
   final TextEditingController _serieCtrl = TextEditingController();
 
+  // id_material resuelto al escanear la primera serie válida (seriados)
+  int? _idMaterialResuelto;
+
+  // Validación de series contra el stock del técnico
+  TecnicoStock? _stockCache;
+  bool   _validandoSerie = false;
+  String? _errorSerie;
+
   final _db = Supabase.instance.client;
 
   @override
@@ -87,26 +96,88 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
 
   // ── Series ───────────────────────────────────────────────────
 
-  void _agregarSerie(String serie) {
+  Future<TecnicoStock?> _cargarStockTecnico() async {
+    if (_stockCache != null) return _stockCache;
+    final stock = await LogisticaService().fetchStock();
+    _stockCache = stock
+        .where((t) => t.rut == widget.rutPropio)
+        .firstOrNull;
+    return _stockCache;
+  }
+
+  Future<void> _agregarSerie(String serie) async {
     final s = serie.trim();
     if (s.isEmpty || _series.contains(s)) return;
-    setState(() {
-      _series.add(s);
-      _serieCtrl.clear();
-    });
+
+    final sol = widget.solicitud;
+    if (!sol.esSeriado) {
+      // Material no seriado — agregar directo sin validar
+      setState(() { _series.add(s); _serieCtrl.clear(); _errorSerie = null; });
+      return;
+    }
+
+    setState(() { _validandoSerie = true; _errorSerie = null; });
+
+    try {
+      final tecnico = await _cargarStockTecnico();
+
+      // Check 1: ¿existe algún ítem con esta serie en el stock del técnico?
+      final itemPorSerie = tecnico?.items
+          .where((i) => i.serie?.toUpperCase() == s.toUpperCase())
+          .firstOrNull;
+
+      if (itemPorSerie == null) {
+        setState(() {
+          _validandoSerie = false;
+          _errorSerie = 'ESTA SERIE NO ESTÁ EN TU SALDO,\nFAVOR PRUEBA CON OTRO EQUIPO';
+        });
+        return;
+      }
+
+      // Check 2: ¿el ítem corresponde al tipo de material solicitado?
+      if (itemPorSerie.categoria != sol.tipoMaterial) {
+        setState(() {
+          _validandoSerie = false;
+          _errorSerie =
+              'ESTA SERIE NO ESTÁ EN TU SALDO,\nFAVOR PRUEBA CON OTRO EQUIPO';
+        });
+        return;
+      }
+
+      // Ambos checks OK — capturar id_material para enviarlo a KRP
+      _idMaterialResuelto ??= itemPorSerie.idMaterial;
+      setState(() {
+        _series.add(s);
+        _serieCtrl.clear();
+        _validandoSerie = false;
+        _errorSerie = null;
+      });
+    } catch (_) {
+      // Si falla la carga del stock, dejamos pasar (best-effort)
+      setState(() {
+        _series.add(s);
+        _serieCtrl.clear();
+        _validandoSerie = false;
+        _errorSerie = null;
+      });
+    }
   }
 
   void _eliminarSerie(String serie) =>
       setState(() => _series.remove(serie));
 
   Future<void> _escanearCodigo() async {
+    final sol = widget.solicitud;
     final result = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       backgroundColor: _bg,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (_) => const _BarcodeScannerSheet(),
+      builder: (_) => _BarcodeScannerSheet(
+        tipoMaterial: sol.tipoMaterial,
+        rutTecnico:   widget.rutPropio,
+      ),
     );
     if (result != null && result.isNotEmpty) _agregarSerie(result);
   }
@@ -156,6 +227,7 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
         'estado':   'en_guia',
         'guia_id':  guiaId,
         'series':   _series,
+        if (_idMaterialResuelto != null) 'id_material': _idMaterialResuelto,
       }).eq('id', sol.id);
 
       _firmaCtrl.clear();
@@ -215,9 +287,14 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
 
       if (!mounted) return;
       // Navegar a pantalla de ingreso de PIN (B ingresa el PIN que A recibió).
+      // Para seriados: propagar id_material y series capturadas en la guía.
+      final solicitudConId = widget.solicitud.copyWith(
+        idMaterial: _idMaterialResuelto,
+        series: _series.isNotEmpty ? List<String>.from(_series) : null,
+      );
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
-          builder: (_) => PinEntryScreen(solicitud: widget.solicitud),
+          builder: (_) => PinEntryScreen(solicitud: solicitudConId),
         ),
       );
     } catch (e) {
@@ -831,12 +908,12 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
               inputFormatters: [
                 FilteringTextInputFormatter.deny(RegExp(r'\s')),
               ],
-              onSubmitted: _agregarSerie,
+              onSubmitted: (s) { _agregarSerie(s); },
             ),
           ),
           const SizedBox(width: 8),
           InkWell(
-            onTap: () => _agregarSerie(_serieCtrl.text),
+            onTap: _validandoSerie ? null : () { _agregarSerie(_serieCtrl.text); },
             borderRadius: BorderRadius.circular(8),
             child: Container(
               width: 38,
@@ -846,12 +923,17 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
                       color: _accent.withValues(alpha: 0.4))),
-              child: const Icon(Icons.add, color: _accent, size: 20),
+              child: _validandoSerie
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(
+                          color: _accent, strokeWidth: 2))
+                  : const Icon(Icons.add, color: _accent, size: 20),
             ),
           ),
           const SizedBox(width: 6),
           InkWell(
-            onTap: _escanearCodigo,
+            onTap: _validandoSerie ? null : _escanearCodigo,
             borderRadius: BorderRadius.circular(8),
             child: Container(
               width: 38,
@@ -866,6 +948,35 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
             ),
           ),
         ]),
+
+        // Error de validación de serie
+        if (_errorSerie != null) ...[
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: _red.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _red.withValues(alpha: 0.5)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.warning_amber_rounded,
+                  color: _red, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _errorSerie!,
+                  style: const TextStyle(
+                      color: _red,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      height: 1.4),
+                ),
+              ),
+            ]),
+          ),
+        ],
 
         if (_series.isNotEmpty) ...[
           const SizedBox(height: 10),
@@ -934,67 +1045,358 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
 // ── Modal escáner de códigos de barra ────────────────────────
 
 class _BarcodeScannerSheet extends StatefulWidget {
-  const _BarcodeScannerSheet();
+  final String tipoMaterial;
+  final String rutTecnico;
+
+  const _BarcodeScannerSheet({
+    required this.tipoMaterial,
+    required this.rutTecnico,
+  });
 
   @override
   State<_BarcodeScannerSheet> createState() => _BarcodeScannerSheetState();
 }
 
-class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet> {
+class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet>
+    with SingleTickerProviderStateMixin {
+  static const _surface = Color(0xFF0D1B2A);
+  static const _border  = Color(0xFF1E3A5F);
+  static const _accent  = Color(0xFF00D9FF);
+  static const _textDim = Color(0xFF8FA8C8);
+
   final MobileScannerController _ctrl = MobileScannerController();
-  bool _scanned = false;
+  bool _scanned        = false;
+  bool _mostrandoLista = false;
+  bool _cargando       = false;
+  List<ItemStock> _seriesDisponibles = [];
+
+  late final AnimationController _lineCtrl;
+  late final Animation<double>    _lineAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _lineCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+    _lineAnim = CurvedAnimation(parent: _lineCtrl, curve: Curves.easeInOut);
+  }
 
   @override
   void dispose() {
     _ctrl.dispose();
+    _lineCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _cargarSeries() async {
+    setState(() => _cargando = true);
+    try {
+      final stock = await LogisticaService().fetchStock();
+      final tecnico = stock.where((t) => t.rut == widget.rutTecnico).firstOrNull;
+      final items = tecnico?.seriadosPorCategoria(widget.tipoMaterial) ?? [];
+      setState(() {
+        _seriesDisponibles = items;
+        _mostrandoLista    = true;
+        _cargando          = false;
+      });
+    } catch (_) {
+      setState(() {
+        _seriesDisponibles = [];
+        _mostrandoLista    = true;
+        _cargando          = false;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: MediaQuery.of(context).size.height * 0.55,
+      height: MediaQuery.of(context).size.height * 0.75,
       child: Column(children: [
         const SizedBox(height: 12),
         Container(
-          width: 40,
-          height: 4,
+          width: 40, height: 4,
           decoration: BoxDecoration(
-              color: Colors.white24,
-              borderRadius: BorderRadius.circular(2)),
+              color: Colors.white24, borderRadius: BorderRadius.circular(2)),
         ),
         const SizedBox(height: 12),
-        const Text('Escanear código de barra',
-            style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 14)),
-        const SizedBox(height: 12),
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: MobileScanner(
-              controller: _ctrl,
-              onDetect: (capture) {
-                if (_scanned) return;
-                final barcode = capture.barcodes.firstOrNull;
-                final raw     = barcode?.rawValue;
-                if (raw != null && raw.isNotEmpty) {
-                  _scanned = true;
-                  Navigator.pop(context, raw);
-                }
-              },
+
+        // ── Encabezado con toggle ─────────────────────────────
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(children: [
+            Expanded(
+              child: Text(
+                _mostrandoLista
+                    ? 'Series disponibles · ${widget.tipoMaterial}'
+                    : 'Escanear código de barra',
+                style: const TextStyle(color: Colors.white,
+                    fontWeight: FontWeight.bold, fontSize: 14),
+              ),
             ),
-          ),
+            TextButton.icon(
+              onPressed: _cargando
+                  ? null
+                  : () {
+                      if (_mostrandoLista) {
+                        setState(() => _mostrandoLista = false);
+                      } else {
+                        _cargarSeries();
+                      }
+                    },
+              icon: Icon(
+                _mostrandoLista
+                    ? Icons.qr_code_scanner
+                    : Icons.list_alt_outlined,
+                size: 16,
+                color: _accent,
+              ),
+              label: Text(
+                _mostrandoLista ? 'Cámara' : 'Ver mis series',
+                style: const TextStyle(color: _accent, fontSize: 12),
+              ),
+              style: TextButton.styleFrom(padding: EdgeInsets.zero),
+            ),
+          ]),
         ),
-        const SizedBox(height: 12),
+
+        const SizedBox(height: 8),
+
+        // ── Cuerpo: cámara o lista ────────────────────────────
+        Expanded(
+          child: _cargando
+              ? const Center(
+                  child: CircularProgressIndicator(color: _accent))
+              : _mostrandoLista
+                  ? _buildLista()
+                  : _buildCamara(),
+        ),
+
+        // ── Botón cancelar ────────────────────────────────────
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancelar',
-              style: TextStyle(color: Colors.white54)),
+              style: TextStyle(color: _textDim)),
         ),
         const SizedBox(height: 8),
       ]),
     );
   }
+
+  Widget _buildCamara() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final w = constraints.maxWidth;
+            final h = constraints.maxHeight;
+            const stripH  = 64.0;
+            final stripTop = (h - stripH) / 2;
+            final scanWindow = Rect.fromLTWH(0, stripTop, w, stripH);
+
+            return Stack(
+              children: [
+                // ── Cámara con zona de detección restringida ─────
+                MobileScanner(
+                  controller: _ctrl,
+                  scanWindow: scanWindow,
+                  onDetect: (capture) {
+                    if (_scanned) return;
+                    final raw = capture.barcodes.firstOrNull?.rawValue;
+                    if (raw != null && raw.isNotEmpty) {
+                      _scanned = true;
+                      Navigator.pop(context, raw);
+                    }
+                  },
+                ),
+
+                // ── Overlay oscuro fuera de la franja ────────────
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: _ScanOverlayPainter(scanWindow: scanWindow),
+                  ),
+                ),
+
+                // ── Línea roja animada (efecto láser) ────────────
+                AnimatedBuilder(
+                  animation: _lineAnim,
+                  builder: (_, __) {
+                    final lineY = stripTop + _lineAnim.value * stripH;
+                    return Positioned(
+                      top: lineY - 1.5,
+                      left: 0, right: 0,
+                      child: Container(
+                        height: 3,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(colors: [
+                            Colors.transparent,
+                            Colors.red.withValues(alpha: 0.85),
+                            Colors.red,
+                            Colors.red.withValues(alpha: 0.85),
+                            Colors.transparent,
+                          ]),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.red.withValues(alpha: 0.55),
+                              blurRadius: 10,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+
+                // ── Instrucción bajo la franja ───────────────────
+                Positioned(
+                  top: stripTop + stripH + 14,
+                  left: 0, right: 0,
+                  child: Text(
+                    'Alinea el código con la línea roja',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.92),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      shadows: const [
+                        Shadow(color: Colors.black, blurRadius: 8),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLista() {
+
+    if (_seriesDisponibles.isEmpty) {
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.inventory_2_outlined, color: _textDim, size: 40),
+          const SizedBox(height: 12),
+          const Text('Sin series registradas para este material',
+              style: TextStyle(color: _textDim, fontSize: 13),
+              textAlign: TextAlign.center),
+          const SizedBox(height: 4),
+          Text(widget.tipoMaterial,
+              style: const TextStyle(color: _accent, fontSize: 12)),
+        ]),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      itemCount: _seriesDisponibles.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 6),
+      itemBuilder: (_, i) {
+        final item = _seriesDisponibles[i];
+        return InkWell(
+          onTap: () => Navigator.pop(context, item.serie),
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _border),
+            ),
+            child: Row(children: [
+              const Icon(Icons.memory_outlined, color: _accent, size: 18),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(item.serie ?? '',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13)),
+                    Text(item.nombre,
+                        style: const TextStyle(
+                            color: _textDim, fontSize: 11),
+                        overflow: TextOverflow.ellipsis),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: _textDim, size: 18),
+            ]),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Overlay para el scanner de códigos ───────────────────────
+// Oscurece la zona fuera de [scanWindow] y dibuja esquinas rojas.
+
+class _ScanOverlayPainter extends CustomPainter {
+  final Rect scanWindow;
+
+  const _ScanOverlayPainter({required this.scanWindow});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final shadow = Paint()..color = const Color(0xBB000000);
+
+    // Zona superior
+    canvas.drawRect(
+      Rect.fromLTRB(0, 0, size.width, scanWindow.top),
+      shadow,
+    );
+    // Zona inferior
+    canvas.drawRect(
+      Rect.fromLTRB(0, scanWindow.bottom, size.width, size.height),
+      shadow,
+    );
+
+    // Borde fino de la franja activa
+    canvas.drawRect(
+      scanWindow,
+      Paint()
+        ..color = Colors.red.withValues(alpha: 0.35)
+        ..strokeWidth = 1.0
+        ..style = PaintingStyle.stroke,
+    );
+
+    // Esquinas rojas (corner brackets)
+    final corner = Paint()
+      ..color = Colors.red
+      ..strokeWidth = 3.0
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    const cl = 20.0; // longitud de cada trazo de esquina
+
+    final l = scanWindow.left;
+    final r = scanWindow.right;
+    final t = scanWindow.top;
+    final b = scanWindow.bottom;
+
+    // Superior-izquierda
+    canvas.drawLine(Offset(l, t + cl), Offset(l, t), corner);
+    canvas.drawLine(Offset(l, t), Offset(l + cl, t), corner);
+    // Superior-derecha
+    canvas.drawLine(Offset(r - cl, t), Offset(r, t), corner);
+    canvas.drawLine(Offset(r, t), Offset(r, t + cl), corner);
+    // Inferior-izquierda
+    canvas.drawLine(Offset(l, b - cl), Offset(l, b), corner);
+    canvas.drawLine(Offset(l, b), Offset(l + cl, b), corner);
+    // Inferior-derecha
+    canvas.drawLine(Offset(r - cl, b), Offset(r, b), corner);
+    canvas.drawLine(Offset(r, b), Offset(r, b - cl), corner);
+  }
+
+  @override
+  bool shouldRepaint(_ScanOverlayPainter old) =>
+      old.scanWindow != scanWindow;
 }

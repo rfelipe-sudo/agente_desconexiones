@@ -112,6 +112,7 @@ dependencies:
   # PDF para guías de entrega
   pdf: ^3.10.8
   printing: ^5.13.1
+  crypto: ^3.0.3
   
   # Splash Screen animado
   flutter_spinkit: ^5.2.1
