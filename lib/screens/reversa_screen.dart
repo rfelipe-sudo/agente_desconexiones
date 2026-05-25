@@ -153,7 +153,7 @@ class _ReversaScreenState extends State<ReversaScreen> {
     );
 
     if (confirmado != true) return;
-    await _enviarAKrp(equipo);
+    await _enviarASupervisor(equipo);
   }
 
   Future<void> _entregarEquipo(Map<String, dynamic> equipo) async {
@@ -161,8 +161,8 @@ class _ReversaScreenState extends State<ReversaScreen> {
     final confirmado = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Confirmar Entrega'),
-        content: Text('¿Confirmas entrega del equipo $serie?'),
+        title: const Text('Solicitar Entrega'),
+        content: Text('¿Envías el equipo $serie para revisión del supervisor?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -181,10 +181,10 @@ class _ReversaScreenState extends State<ReversaScreen> {
     );
 
     if (confirmado != true) return;
-    await _enviarAKrp(equipo);
+    await _enviarASupervisor(equipo);
   }
 
-  Future<void> _enviarAKrp(Map<String, dynamic> equipo) async {
+  Future<void> _enviarASupervisor(Map<String, dynamic> equipo) async {
     final serial = equipo['serial']?.toString();
     if (serial == null || serial.isEmpty) {
       if (mounted) {
@@ -197,81 +197,29 @@ class _ReversaScreenState extends State<ReversaScreen> {
       return;
     }
 
-    final rut = _rutTecnico ?? '';
-
     try {
-      final krpResult =
-          await _reversaService.entregarEnKrp(serie: serial, rut: rut);
-
-      switch (krpResult.resultado) {
-        case KrpResultado.entregado:
-          await _reversaService.marcarEntregado(serial);
-          setState(() {
-            final idx =
-                _desinstalaciones.indexWhere((e) => e['serial'] == serial);
-            if (idx != -1) {
-              _desinstalaciones[idx] = {
-                ..._desinstalaciones[idx],
-                'estado': 'entregado',
-                'fecha_entrega': DateTime.now().toIso8601String(),
-                'motivo_rechazo': null,
-              };
-            }
-            _pendientes = (_pendientes - 1).clamp(0, _totalEquipos);
-            _rechazados = (_rechazados - 1).clamp(0, _totalEquipos);
-            _entregados++;
-          });
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('✅ Equipo entregado correctamente'),
-                  backgroundColor: Colors.green),
-            );
-          }
-
-        case KrpResultado.rechazado:
-          await _reversaService.marcarRechazado(serial, krpResult.mensaje);
-          setState(() {
-            final idx =
-                _desinstalaciones.indexWhere((e) => e['serial'] == serial);
-            if (idx != -1) {
-              _desinstalaciones[idx] = {
-                ..._desinstalaciones[idx],
-                'estado': 'rechazado',
-                'motivo_rechazo': krpResult.mensaje,
-                'fecha_entrega': DateTime.now().toIso8601String(),
-              };
-            }
-            _pendientes = (_pendientes - 1).clamp(0, _totalEquipos);
-            _rechazados++;
-          });
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Serie rechazada por KRP: ${krpResult.mensaje}'),
-                backgroundColor: Colors.orange,
-                duration: const Duration(seconds: 5),
-              ),
-            );
-          }
-
-        case KrpResultado.error:
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                    'Error ${krpResult.statusCode} en KRP, favor contacta al administrador'),
-                backgroundColor: Colors.red,
-                duration: const Duration(seconds: 6),
-              ),
-            );
-          }
+      await _reversaService.marcarPendienteSupervision(serial);
+      setState(() {
+        final idx = _desinstalaciones.indexWhere((e) => e['serial'] == serial);
+        if (idx != -1) {
+          _desinstalaciones[idx] = {
+            ..._desinstalaciones[idx],
+            'estado': 'pendiente_supervision',
+          };
+        }
+        _pendientes = (_pendientes - 1).clamp(0, _totalEquipos);
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('✅ Solicitud enviada al supervisor'),
+              backgroundColor: Colors.blue),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('❌ Error: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('❌ Error: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -309,10 +257,12 @@ class _ReversaScreenState extends State<ReversaScreen> {
   Color _getColorEstado(String? estado) {
     switch (estado) {
       case 'pendiente_entrega':
-      case 'pendiente': // Compatibilidad con modelo EquipoReversa
+      case 'pendiente':
         return Colors.orange;
-      case 'entregado':
+      case 'pendiente_supervision':
         return Colors.blue;
+      case 'entregado':
+        return Colors.teal;
       case 'recepcionado_ok':
         return Colors.green;
       case 'rechazado':
@@ -327,8 +277,10 @@ class _ReversaScreenState extends State<ReversaScreen> {
   String _getLabelEstado(String? estado) {
     switch (estado) {
       case 'pendiente_entrega':
-      case 'pendiente': // Compatibilidad con modelo EquipoReversa
+      case 'pendiente':
         return 'Pendiente';
+      case 'pendiente_supervision':
+        return 'En supervisión';
       case 'entregado':
         return 'Entregado';
       case 'recepcionado_ok':

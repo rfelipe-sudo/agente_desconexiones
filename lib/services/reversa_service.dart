@@ -62,6 +62,12 @@ class ReversaService {
 
   // ── Supabase estado ────────────────────────────────────────────
 
+  Future<void> marcarPendienteSupervision(String serial) async {
+    await _supabase.from('equipos_reversa').update({
+      'estado': 'pendiente_supervision',
+    }).eq('serial', serial);
+  }
+
   Future<void> marcarEntregado(String serial) async {
     await _supabase.from('equipos_reversa').update({
       'estado':        'entregado',

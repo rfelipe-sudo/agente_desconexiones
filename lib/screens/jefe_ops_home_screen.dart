@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:agente_desconexiones/screens/jefe_ops_solicitudes_screen.dart';
+import 'package:agente_desconexiones/screens/supervisor/supervisor_reversa_screen.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/services/sol_combustible_service.dart';
 
@@ -24,8 +25,10 @@ class _JefeOpsHomeScreenState extends State<JefeOpsHomeScreen> {
 
   String _nombre = '';
   int    _pendientes = 0;
+  int    _reversaPendientes = 0;
 
   StreamSubscription<List<Map<String, dynamic>>>? _sub;
+  StreamSubscription<List<Map<String, dynamic>>>? _subReversa;
 
   @override
   void initState() {
@@ -36,6 +39,7 @@ class _JefeOpsHomeScreenState extends State<JefeOpsHomeScreen> {
   @override
   void dispose() {
     _sub?.cancel();
+    _subReversa?.cancel();
     super.dispose();
   }
 
@@ -64,6 +68,16 @@ class _JefeOpsHomeScreenState extends State<JefeOpsHomeScreen> {
         .listen((rows) {
       if (!mounted) return;
       setState(() => _pendientes = rows.length);
+    });
+
+    _subReversa = Supabase.instance.client
+        .from('equipos_reversa')
+        .stream(primaryKey: ['id'])
+        .eq('estado', 'pendiente_supervision')
+        .listen((rows) {
+      if (!mounted) return;
+      setState(() => _reversaPendientes =
+          rows.where((r) => r['estado'] == 'pendiente_supervision').length);
     });
   }
 
@@ -113,6 +127,21 @@ class _JefeOpsHomeScreenState extends State<JefeOpsHomeScreen> {
                 context,
                 MaterialPageRoute(
                     builder: (_) => const JefeOpsSolicitudesScreen()),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _buildCard(
+              icono: Icons.swap_horiz_rounded,
+              titulo: 'Reversa de Equipos',
+              subtitulo: _reversaPendientes > 0
+                  ? '$_reversaPendientes equipo${_reversaPendientes > 1 ? 's' : ''} pendiente${_reversaPendientes > 1 ? 's' : ''} de revisión'
+                  : 'Sin entregas pendientes',
+              badge: _reversaPendientes,
+              colores: const [Color(0xFFFF6B35), Color(0xFFE55A2B)],
+              onTap: () => Navigator.push<void>(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const SupervisorReversaScreen()),
               ),
             ),
           ],
