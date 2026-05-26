@@ -23,6 +23,7 @@ import 'package:agente_desconexiones/models/solicitud_material.dart';
 import 'package:agente_desconexiones/screens/entrega_en_camino_screen.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/services/material_solicitud_service.dart';
+import 'package:agente_desconexiones/screens/tecnicos_cercanos_mapa_screen.dart';
 
 class SolicitudMaterialScreen extends StatefulWidget {
   const SolicitudMaterialScreen({super.key});
@@ -2218,7 +2219,41 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
           ),
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
+
+        // Botón ver técnicos en mapa
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _materialSeleccionado == null
+                ? null
+                : () async {
+                    final pos = _posicion ?? await _obtenerPosicion();
+                    if (pos == null || !mounted) return;
+                    await Navigator.push<String>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => TecnicosCercanosMapaScreen(
+                          tipoMaterial:       _materialSeleccionado!.nombre,
+                          posicionSolicitante: pos,
+                          rutSolicitante:     _rut ?? '',
+                        ),
+                      ),
+                    );
+                  },
+            icon: const Icon(Icons.map_outlined, size: 18),
+            label: const Text('Ver técnicos cercanos en mapa'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _accent,
+              side: const BorderSide(color: _accent),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 10),
 
         // Botón enviar
         SizedBox(
