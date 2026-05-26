@@ -392,9 +392,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFFFF6B35), Color(0xFFE65100)],
             ),
-            onTap: () {
-              Navigator.of(context).pushNamed('/wifi-mapas');
-            },
+            onTap: () {},
+            proximamente: true,
           ),
           _buildActionButton(
             icon: Icons.support_agent,
@@ -407,8 +406,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               Navigator.of(context).pushNamed('/ayuda-terreno');
             },
           ),
-          // Medición de velocidad: activa siempre (el flag de
-          // "próximamente" se ignora para esta tarjeta).
           _buildActionButton(
             icon: Icons.speed,
             label: 'Medición\nde Velocidad',
@@ -416,9 +413,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFF00D4AA), Color(0xFF0A84FF)],
             ),
-            onTap: () {
-              Navigator.of(context).pushNamed('/speed-meter');
-            },
+            onTap: () {},
+            proximamente: true,
           ),
           _buildActionButton(
             icon: Icons.assignment_outlined,
@@ -427,9 +423,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFF0A84FF), Color(0xFF00D4AA)],
             ),
-            onTap: () {
-              Navigator.of(context).pushNamed('/mis-actividades');
-            },
+            onTap: () {},
+            proximamente: true,
           ),
           _buildActionButton(
             icon: Icons.health_and_safety_outlined,
@@ -963,11 +958,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     required Color color,
     required Gradient gradient,
     required VoidCallback onTap,
+    bool proximamente = false,
   }) {
-    return Material(
+    final btn = Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: proximamente ? null : onTap,
         borderRadius: BorderRadius.circular(16),
         child: Container(
           decoration: BoxDecoration(
@@ -984,11 +980,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 32,
-                color: Colors.white,
-              ),
+              Icon(icon, size: 32, color: Colors.white),
               const SizedBox(height: 8),
               Text(
                 label,
@@ -1004,6 +996,43 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ),
       ),
     ).animate().scale(begin: const Offset(0.95, 0.95));
+
+    if (!proximamente) return btn;
+
+    return Stack(
+      children: [
+        Opacity(opacity: 0.45, child: btn),
+        Positioned.fill(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Container(color: Colors.black38),
+          ),
+        ),
+        Positioned(
+          bottom: 8,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text(
+                'PRÓXIMAMENTE',
+                style: TextStyle(
+                  color: Colors.black87,
+                  fontSize: 8,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildTabBar() {
