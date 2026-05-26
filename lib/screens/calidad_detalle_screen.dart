@@ -479,13 +479,13 @@ class _CalidadDetalleScreenState extends State<CalidadDetalleScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Orden ORIGINAL (verde) ───────────────────────────────────
+          // ── Orden BASE / instalación original (verde) ────────────────
           Row(
             children: [
               const Icon(Icons.check_circle_outline, size: 14, color: Colors.green),
               const SizedBox(width: 4),
               Text(
-                'Original',
+                'Instalación base',
                 style: TextStyle(fontSize: 10, color: Colors.grey[500]),
               ),
             ],
@@ -500,7 +500,7 @@ class _CalidadDetalleScreenState extends State<CalidadDetalleScreen> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  ordenOriginal.isNotEmpty ? ordenOriginal : '—',
+                  ordenReiterada.isNotEmpty ? ordenReiterada : '—',
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -510,7 +510,7 @@ class _CalidadDetalleScreenState extends State<CalidadDetalleScreen> {
               ),
               const SizedBox(width: 8),
               Text(
-                _formatearFecha(fechaOriginal),
+                _formatearFecha(fechaReiterada),
                 style: TextStyle(fontSize: 12, color: Colors.grey[400]),
               ),
             ],
@@ -539,7 +539,7 @@ class _CalidadDetalleScreenState extends State<CalidadDetalleScreen> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  ordenReiterada,
+                  ordenOriginal.isNotEmpty ? ordenOriginal : '—',
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -549,7 +549,7 @@ class _CalidadDetalleScreenState extends State<CalidadDetalleScreen> {
               ),
               const SizedBox(width: 8),
               Text(
-                _formatearFecha(fechaReiterada),
+                _formatearFecha(fechaOriginal),
                 style: TextStyle(fontSize: 12, color: Colors.grey[400]),
               ),
               const Spacer(),
