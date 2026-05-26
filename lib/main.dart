@@ -51,12 +51,14 @@ import 'package:agente_desconexiones/services/notification_service.dart';
 import 'package:agente_desconexiones/screens/bodeguero_menu_screen.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_screen.dart';
 import 'package:agente_desconexiones/services/deteccion_caminata_service.dart';
+import 'package:agente_desconexiones/services/ubicacion_service.dart';
 import 'package:agente_desconexiones/services/kepler_polling_service.dart';
 import 'package:agente_desconexiones/services/alertas_cto_service.dart';
 import 'package:agente_desconexiones/services/notificacion_service.dart';
 import 'package:agente_desconexiones/services/alarm_audio_service.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Helper para acceder a Supabase desde cualquier lugar
 final supabaseService = SupabaseService();
@@ -126,6 +128,15 @@ void main() async {
     print('⚠️ [Main] Error creando canal de notificación: $e');
   }
   
+  // Iniciar monitoreo de estado GPS en foreground (complementa el background service)
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final rut = prefs.getString('rut_tecnico') ?? prefs.getString('user_rut') ?? '';
+    if (rut.isNotEmpty) {
+      UbicacionService.instance.iniciarMonitoreoEstadoGps(rut);
+    }
+  } catch (_) {}
+
   if (AppConstants.monitoreoFraudeYAlertasCtoActivo) {
     try {
       final deteccionService = DeteccionCaminataService();

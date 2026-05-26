@@ -8,8 +8,10 @@ import 'package:flutter_activity_recognition/flutter_activity_recognition.dart' 
 import 'package:pedometer_2/pedometer_2.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:agente_desconexiones/models/trabajo_activo.dart';
 import 'alertas_cto_service.dart';
+import 'ubicacion_service.dart';
 
 /// Servicio de detección de caminata en segundo plano
 @pragma('vm:entry-point')
@@ -44,16 +46,16 @@ class DeteccionCaminataService {
     await _service.configure(
       androidConfiguration: AndroidConfiguration(
         onStart: _onStart,
-        autoStart: false, // No iniciar automáticamente - se iniciará cuando se detecte una orden
-        autoStartOnBoot: false, // No iniciar al arrancar
+        autoStart: true,
+        autoStartOnBoot: true,
         isForegroundMode: true,
         notificationChannelId: 'deteccion_caminata',
-        initialNotificationTitle: 'CREA Monitoreo',
-        initialNotificationContent: 'Sin trabajo activo',
+        initialNotificationTitle: 'CREA Activo',
+        initialNotificationContent: 'Seguimiento de ubicación activo',
         foregroundServiceNotificationId: 888,
       ),
       iosConfiguration: IosConfiguration(
-        autoStart: false, // No iniciar automáticamente
+        autoStart: false,
         onForeground: _onStart,
         onBackground: _onIosBackground,
       ),
@@ -81,6 +83,53 @@ class DeteccionCaminataService {
     DartPluginRegistrant.ensureInitialized();
 
     final prefs = await SharedPreferences.getInstance();
+
+    // ── Inicializar Supabase en el isolate de segundo plano ───────────────
+    try {
+      await Supabase.initialize(
+        url:       'https://efvicvqffvxocnrqjxrs.supabase.co',
+        anonKey:   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmdmljdnFmZnZ4b2NucnFqeHJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0Mzc4MjMsImV4cCI6MjA4MTAxMzgyM30._RIVNg4_FoMKDJWbdi8QuS6LSsjjaAapwkTa_9Gb0Cc',
+      );
+    } catch (_) {} // ya inicializado en el mismo isolate
+
+    // ── Timer de ubicación cada 5 minutos ─────────────────────────────────
+    Timer? ubicacionTimer;
+
+    Future<void> _publicarUbicacion() async {
+      final rut = prefs.getString('rut_tecnico') ?? prefs.getString('user_rut') ?? '';
+      if (rut.isEmpty) return;
+      try {
+        final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        if (!serviceEnabled) {
+          await UbicacionService.marcarGpsApagado(rut);
+          return;
+        }
+        final permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied ||
+            permission == LocationPermission.deniedForever) return;
+
+        final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 10),
+          ),
+        );
+        await UbicacionService.publicarUbicacion(
+          rutTecnico: rut,
+          lat:        pos.latitude,
+          lng:        pos.longitude,
+          gpsActivo:  true,
+        );
+      } catch (_) {}
+    }
+
+    // Primera publicación inmediata
+    await _publicarUbicacion();
+
+    // Publicar cada 5 minutos
+    ubicacionTimer = Timer.periodic(const Duration(minutes: 5), (_) async {
+      await _publicarUbicacion();
+    });
 
     // Streams de sensores
     StreamSubscription? pedometerSubscription;
@@ -451,6 +500,7 @@ class DeteccionCaminataService {
       pedometerSubscription?.cancel();
       gpsTimer?.cancel();
       timerValidacion?.cancel();
+      ubicacionTimer?.cancel();
       service.stopSelf();
     });
   }
