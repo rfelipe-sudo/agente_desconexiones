@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/services.dart'; // TEMP: debug FCM — quitar junto con _mostrarTokenFcm
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -19,7 +18,7 @@ import 'package:agente_desconexiones/widgets/alerta_card.dart';
 import 'package:agente_desconexiones/services/alarm_audio_service.dart';
 import 'package:agente_desconexiones/services/alertas_cto_service.dart';
 import 'package:agente_desconexiones/services/auth_service.dart';
-import 'package:agente_desconexiones/services/fcm_service.dart'; // TEMP: debug FCM
+import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/screens/tu_mes_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_equipo_screen.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
@@ -268,13 +267,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ],
       ),
       actions: [
-        // TEMP: debug FCM — quitar este IconButton, _mostrarTokenFcm y los
-        // imports marcados `TEMP:` cuando ya no haga falta capturar el token.
-        IconButton(
-          icon: const Icon(Icons.bug_report, color: Color(0xFF00D9FF)),
-          tooltip: 'Mostrar FCM token',
-          onPressed: _mostrarTokenFcm,
-        ),
         // Botón Tu Mes
         IconButton(
           icon: const Icon(Icons.calendar_month),
@@ -304,54 +296,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  // TEMP: debug FCM — borrar este método junto con el IconButton del AppBar.
-  Future<void> _mostrarTokenFcm() async {
-    final token = await FcmService.instance.getToken();
-    if (!mounted) return;
-    final t = token ?? '';
-    if (t.isNotEmpty) {
-      await Clipboard.setData(ClipboardData(text: t));
-    }
-    if (!mounted) return;
-    showDialog<void>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF0D1B2A),
-        title: const Text('FCM Token', style: TextStyle(color: Colors.white)),
-        content: SingleChildScrollView(
-          child: SelectableText(
-            t.isEmpty ? '(token vacío — Firebase aún no entregó token)' : t,
-            style: const TextStyle(
-              color: Colors.white,
-              fontFamily: 'monospace',
-              fontSize: 12,
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              if (t.isNotEmpty) {
-                await Clipboard.setData(ClipboardData(text: t));
-              }
-              if (mounted) Navigator.pop(context);
-            },
-            child: const Text('Copiar', style: TextStyle(color: Color(0xFF00D9FF))),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar', style: TextStyle(color: Color(0xFF8FA8C8))),
-          ),
-        ],
-      ),
-    );
-    if (mounted && t.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('FCM token copiado al portapapeles')),
-      );
-    }
-  }
-
   Widget _buildActionButtons(Usuario usuario) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -363,6 +307,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         mainAxisSpacing: 12,
         childAspectRatio: 1.5,
         children: [
+          // ── Fila 1 ──────────────────────────────────────────────
           _buildActionButton(
             icon: Icons.router,
             label: 'Asistente\nde CTO',
@@ -370,9 +315,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFF00D9FF), Color(0xFF0099CC)],
             ),
-            onTap: () {
-              Navigator.of(context).pushNamed('/asistente-cto');
-            },
+            onTap: () => Navigator.of(context).pushNamed('/asistente-cto'),
           ),
           _buildActionButton(
             icon: Icons.mic,
@@ -381,20 +324,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFFAB47BC), Color(0xFF7B1FA2)],
             ),
-            onTap: () {
-              Navigator.of(context).pushNamed('/asistente-crea-terreno');
-            },
+            onTap: () =>
+                Navigator.of(context).pushNamed('/asistente-crea-terreno'),
           ),
-          _buildActionButton(
-            icon: Icons.wifi_find,
-            label: 'WiFi &\nMapas',
-            color: const Color(0xFFFF6B35),
-            gradient: const LinearGradient(
-              colors: [Color(0xFFFF6B35), Color(0xFFE65100)],
-            ),
-            onTap: () {},
-            proximamente: true,
-          ),
+          // ── Fila 2 ──────────────────────────────────────────────
           _buildActionButton(
             icon: Icons.support_agent,
             label: 'Ayuda en\nTerreno',
@@ -402,29 +335,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFF4CAF50), Color(0xFF2E7D32)],
             ),
-            onTap: () {
-              Navigator.of(context).pushNamed('/ayuda-terreno');
-            },
-          ),
-          _buildActionButton(
-            icon: Icons.speed,
-            label: 'Medición\nde Velocidad',
-            color: const Color(0xFF00D4AA),
-            gradient: const LinearGradient(
-              colors: [Color(0xFF00D4AA), Color(0xFF0A84FF)],
-            ),
-            onTap: () {},
-            proximamente: true,
-          ),
-          _buildActionButton(
-            icon: Icons.assignment_outlined,
-            label: 'Mis\nActividades',
-            color: const Color(0xFF0A84FF),
-            gradient: const LinearGradient(
-              colors: [Color(0xFF0A84FF), Color(0xFF00D4AA)],
-            ),
-            onTap: () {},
-            proximamente: true,
+            onTap: () => Navigator.of(context).pushNamed('/ayuda-terreno'),
           ),
           _buildActionButton(
             icon: Icons.health_and_safety_outlined,
@@ -433,36 +344,37 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFF7C3AED), Color(0xFF4F46E5)],
             ),
-            onTap: () {
-              Navigator.of(context).pushNamed('/ast');
-            },
+            onTap: () => Navigator.of(context).pushNamed('/ast'),
           ),
+          // ── Fila 3 ──────────────────────────────────────────────
           Stack(
             clipBehavior: Clip.none,
             children: [
-              _buildActionButton(
-                icon: Icons.inventory_2_outlined,
-                label: 'Solicitud\nde Material',
-                color: const Color(0xFF10B981),
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF10B981), Color(0xFF059669)],
+              Positioned.fill(
+                child: _buildActionButton(
+                  icon: Icons.inventory_2_outlined,
+                  label: 'Solicitud\nde Material',
+                  color: const Color(0xFF10B981),
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF10B981), Color(0xFF059669)],
+                  ),
+                  onTap: () async {
+                    final db = Supabase.instance.client;
+                    try {
+                      final rows = await db
+                          .from('solicitudes_material')
+                          .select('id')
+                          .eq('estado', 'pendiente');
+                      for (final r in (rows as List)) {
+                        final id = r['id'] as String? ?? '';
+                        if (id.isNotEmpty) _solicitudesNotificadasHome.add(id);
+                      }
+                    } catch (_) {}
+                    if (mounted) setState(() => _solicitudesMaterialCount = 0);
+                    if (mounted)
+                      Navigator.of(context).pushNamed('/solicitud-material');
+                  },
                 ),
-                onTap: () async {
-                  // Marcar todas las solicitudes actuales como vistas → badge a 0
-                  final db = Supabase.instance.client;
-                  try {
-                    final rows = await db
-                        .from('solicitudes_material')
-                        .select('id')
-                        .eq('estado', 'pendiente');
-                    for (final r in (rows as List)) {
-                      final id = r['id'] as String? ?? '';
-                      if (id.isNotEmpty) _solicitudesNotificadasHome.add(id);
-                    }
-                  } catch (_) {}
-                  if (mounted) setState(() => _solicitudesMaterialCount = 0);
-                  if (mounted) Navigator.of(context).pushNamed('/solicitud-material');
-                },
               ),
               if (_solicitudesMaterialCount > 0)
                 Positioned(
@@ -485,7 +397,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ),
             ],
           ),
-          // Botón Mi Equipo solo para supervisores/ITOs
+          _buildProximamenteActionButton(
+            icon: Icons.wifi_find,
+            label: 'WiFi &\nMapas',
+          ),
+          // ── Fila 4 ──────────────────────────────────────────────
+          _buildProximamenteActionButton(
+            icon: Icons.speed,
+            label: 'Medición\nde Velocidad',
+          ),
+          _buildProximamenteActionButton(
+            icon: Icons.assignment_outlined,
+            label: 'Mis\nActividades',
+          ),
+          // ── Condicionales ────────────────────────────────────────
           if (_puedeVerEquipo)
             _buildActionButton(
               icon: Icons.groups,
@@ -494,9 +419,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFFFFA500), Color(0xFFFF8C00)],
               ),
-              onTap: () {
-                Navigator.of(context).pushNamed('/supervisor-equipo');
-              },
+              onTap: () =>
+                  Navigator.of(context).pushNamed('/supervisor-equipo'),
             ),
           if (_esIto)
             _buildActionButton(
@@ -506,9 +430,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFF7B61FF), Color(0xFF5C3FCC)],
               ),
-              onTap: () {
-                Navigator.of(context).pushNamed('/asistente-supervisor');
-              },
+              onTap: () =>
+                  Navigator.of(context).pushNamed('/asistente-supervisor'),
             ),
           if (_esBodega)
             _buildActionButton(
@@ -518,9 +441,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
               ),
-              onTap: () {
-                Navigator.of(context).pushNamed('/bodega');
-              },
+              onTap: () => Navigator.of(context).pushNamed('/bodega'),
             ),
           if (usuario.esSupervisor) ...[
             _buildActionButton(
@@ -530,30 +451,32 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFF00ACC1), Color(0xFF00838F)],
               ),
-              onTap: () {
-                Navigator.of(context).pushNamed('/asistente-supervisor');
-              },
+              onTap: () =>
+                  Navigator.of(context).pushNamed('/asistente-supervisor'),
             ),
             Stack(
               clipBehavior: Clip.none,
               children: [
-                _buildActionButton(
-                  icon: Icons.sos,
-                  label: 'Solicitudes\nayuda',
-                  color: const Color(0xFFE53935),
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFE53935), Color(0xFFC62828)],
+                Positioned.fill(
+                  child: _buildActionButton(
+                    icon: Icons.sos,
+                    label: 'Solicitudes\nayuda',
+                    color: const Color(0xFFE53935),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFE53935), Color(0xFFC62828)],
+                    ),
+                    onTap: () {
+                      setState(() => _ayudaPendienteCount = 0);
+                      Navigator.of(context)
+                          .pushNamed('/solicitudes-ayuda')
+                          .then((_) => _cargarAyudaPendiente());
+                    },
                   ),
-                  onTap: () {
-                    setState(() => _ayudaPendienteCount = 0);
-                    Navigator.of(context)
-                        .pushNamed('/solicitudes-ayuda')
-                        .then((_) => _cargarAyudaPendiente());
-                  },
                 ),
                 if (_ayudaPendienteCount > 0)
                   Positioned(
-                    top: 4, right: 4,
+                    top: 4,
+                    right: 4,
                     child: Container(
                       padding: const EdgeInsets.all(5),
                       decoration: const BoxDecoration(
@@ -580,9 +503,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFF5C6BC0), Color(0xFF3949AB)],
               ),
-              onTap: () {
-                Navigator.of(context).pushNamed('/mi-actividad');
-              },
+              onTap: () => Navigator.of(context).pushNamed('/mi-actividad'),
             ),
           ],
         ],
@@ -899,24 +820,30 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       child: InkWell(
         onTap: () {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Próximamente'),
-              duration: Duration(seconds: 2),
-              backgroundColor: Color(0xFF1E3A5F),
+            SnackBar(
+              content: const Row(children: [
+                Icon(Icons.rocket_launch_rounded, color: Colors.white, size: 16),
+                SizedBox(width: 8),
+                Text('Próximamente',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ]),
+              duration: const Duration(seconds: 2),
+              backgroundColor: const Color(0xFF1E3A5F),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
             ),
           );
         },
         borderRadius: BorderRadius.circular(16),
         child: Container(
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Colors.grey[800]!, Colors.grey[900]!],
-            ),
+            color: const Color(0xFF080E1A),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFF3D4F5F)),
+            border: Border.all(color: const Color(0xFF1A2A3F)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2),
+                color: Colors.black.withOpacity(0.35),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
@@ -925,24 +852,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: Colors.white38, size: 28),
-              const SizedBox(height: 6),
+              Icon(icon, color: Colors.white24, size: 32),
+              const SizedBox(height: 8),
               Text(
                 label,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'Próximamente',
-                style: TextStyle(
-                  color: Color(0xFF8FA8C8),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w500,
+                  color: Colors.white30,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],
@@ -958,12 +876,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     required Color color,
     required Gradient gradient,
     required VoidCallback onTap,
-    bool proximamente = false,
   }) {
-    final btn = Material(
+    return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: proximamente ? null : onTap,
+        onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Container(
           decoration: BoxDecoration(
@@ -996,43 +913,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ),
       ),
     ).animate().scale(begin: const Offset(0.95, 0.95));
-
-    if (!proximamente) return btn;
-
-    return Stack(
-      children: [
-        Opacity(opacity: 0.45, child: btn),
-        Positioned.fill(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: Container(color: Colors.black38),
-          ),
-        ),
-        Positioned(
-          bottom: 8,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Text(
-                'PRÓXIMAMENTE',
-                style: TextStyle(
-                  color: Colors.black87,
-                  fontSize: 8,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.5,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
   }
 
   Widget _buildTabBar() {

@@ -12,6 +12,7 @@ import 'package:intl/intl.dart';
 import 'package:agente_desconexiones/models/solicitud_ayuda.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
 import 'package:agente_desconexiones/services/estado_supervisor_service.dart';
+import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/screens/supervisor/supervisor_tracking_screen.dart';
 
 class SolicitudesAyudaScreen extends StatefulWidget {
@@ -114,6 +115,7 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
           onNuevaSolicitud: () {
             if (mounted) {
               HapticFeedback.heavyImpact();
+              unawaited(FcmService.playAyuda());
               setState(() {
                 _nuevaAlerta = true;
                 _solicitudes = _ayudaService.solicitudesSupervisor;

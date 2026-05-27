@@ -137,14 +137,17 @@ void main() async {
     }
   } catch (_) {}
 
-  if (AppConstants.monitoreoFraudeYAlertasCtoActivo) {
-    try {
-      final deteccionService = DeteccionCaminataService();
-      await deteccionService.inicializar();
-    } catch (e) {
-      print('⚠️ [Main] Error inicializando DeteccionCaminataService: $e');
-    }
+  // Servicio de background siempre activo (GPS + ubicación), independiente del monitoreo de fraude
+  try {
+    final deteccionService = DeteccionCaminataService();
+    await deteccionService.inicializar();
+    await deteccionService.iniciarServicio();
+    print('✅ [Main] DeteccionCaminataService arrancado');
+  } catch (e) {
+    print('⚠️ [Main] Error inicializando DeteccionCaminataService: $e');
+  }
 
+  if (AppConstants.monitoreoFraudeYAlertasCtoActivo) {
     try {
       _configurarListenerAlertasAutomaticas();
     } catch (e) {

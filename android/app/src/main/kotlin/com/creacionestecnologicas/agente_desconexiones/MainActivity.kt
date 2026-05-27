@@ -23,6 +23,8 @@ class MainActivity : FlutterActivity() {
 
     // MediaPlayer activo para poder pararlo desde Flutter
     private var alertaPlayer: MediaPlayer? = null
+    private var ayudaPlayer: MediaPlayer? = null
+    private var llegadaPlayer: MediaPlayer? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -115,6 +117,34 @@ class MainActivity : FlutterActivity() {
                             alertaPlayer?.stop()
                             alertaPlayer?.release()
                             alertaPlayer = null
+                        } catch (_: Exception) {}
+                        result.success(null)
+                    }
+                    "playAyuda" -> {
+                        try {
+                            ayudaPlayer?.stop()
+                            ayudaPlayer?.release()
+                            val mp = MediaPlayer.create(this, R.raw.ayuda_supervisor)
+                            ayudaPlayer = mp
+                            mp?.setOnCompletionListener {
+                                it.release()
+                                if (ayudaPlayer === it) ayudaPlayer = null
+                            }
+                            mp?.start()
+                        } catch (_: Exception) {}
+                        result.success(null)
+                    }
+                    "playMaterialLlegada" -> {
+                        try {
+                            llegadaPlayer?.stop()
+                            llegadaPlayer?.release()
+                            val mp = MediaPlayer.create(this, R.raw.material_llegada)
+                            llegadaPlayer = mp
+                            mp?.setOnCompletionListener {
+                                it.release()
+                                if (llegadaPlayer === it) llegadaPlayer = null
+                            }
+                            mp?.start()
                         } catch (_: Exception) {}
                         result.success(null)
                     }

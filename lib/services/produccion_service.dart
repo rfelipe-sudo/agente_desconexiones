@@ -43,8 +43,7 @@ class ProduccionService {
     final e = (o['estado']?.toString() ?? '').trim().toUpperCase();
     final a = (o['area_derivacion']?.toString() ?? '').trim().toUpperCase();
     return e == 'COMPLETADO' ||
-        (esEstadoNoRealizada(o) &&
-            (a == 'GSA' || areaDerivacionEsRedes(o['area_derivacion'])));
+        (esEstadoNoRealizada(o) && a == 'GSA');
   }
 
   static bool esDerivacionRedes(dynamic orden) {
@@ -920,16 +919,16 @@ class ProduccionService {
         for (var orden in ordenesDelDia) {
           final estado = orden['estado']?.toString() ?? '';
 
-        if (estado == 'Completado') {
-          completadas++;
+          if (cuentaComoProduccion(orden)) {
+            completadas++;
             completadasDia++;
             final rgu = (orden['rgu_total'] as num?)?.toDouble() ?? 0;
             totalRGU += rgu;
             rguDia += rgu;
-        } else if (estado == 'Cancelado') {
-          canceladas++;
-        } else if (estado == 'No Realizada') {
-          noRealizadas++;
+          } else if (estado == 'Cancelado') {
+            canceladas++;
+          } else if (esEstadoNoRealizada(orden)) {
+            noRealizadas++;
           }
         }
 
@@ -2153,15 +2152,20 @@ class ProduccionService {
           .toList();
 
       // 2. Denominador: completadas del mes de MEDICIÓN (mesAnt / yearAnt)
-      //    Dashboard: produccion_crea estado=Completado & fecha_trabajo like.*/mesAnt/yearAnt
+      //    Usa produccion_creaciones (igual que pantalla Producción): mes con cero, año 2 dígitos.
+      //    Se traen todas las órdenes del mes y se filtra con cuentaComoProduccion para incluir
+      //    también las "No Realizada" derivadas a GSA.
+      final mesMedPadded = mesAnt.toString().padLeft(2, '0');
+      final annoMedCorto = (yearAnt % 100).toString().padLeft(2, '0');
       final produccionResp = await _supabase
-          .from('produccion_crea')
-          .select('rut_tecnico, fecha_trabajo')
+          .from('produccion_creaciones')
+          .select('rut_tecnico, fecha_trabajo, estado, area_derivacion')
           .eq('rut_tecnico', rutTecnico)
-          .eq('estado', 'Completado')
-          .ilike('fecha_trabajo', '*/$mesAnt/$yearAnt');
+          .ilike('fecha_trabajo', '*/$mesMedPadded/$annoMedCorto');
 
-      final totalCompletadas = (produccionResp as List).length;
+      final totalCompletadas = (produccionResp as List)
+          .where((o) => cuentaComoProduccion(o))
+          .length;
 
       // 3. Porcentaje (redondeado a 2 dec, igual que el dashboard)
       final porcentaje = totalCompletadas > 0

@@ -953,6 +953,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   void _mostrarLlegadaEntregador(SolicitudMaterial sol) {
     if (!mounted) return;
     HapticFeedback.heavyImpact();
+    unawaited(FcmService.playMaterialLlegada());
     showDialog<void>(
       context: context,
       barrierDismissible: false,

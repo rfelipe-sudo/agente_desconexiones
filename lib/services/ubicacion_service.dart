@@ -20,6 +20,7 @@ class UbicacionService {
   }) async {
     try {
       final supabase = Supabase.instance.client;
+      print('📡 [UbicSvc] Upsert → rut=$rutTecnico lat=$lat lng=$lng');
       await supabase.from('ubicaciones_activas').upsert({
         'rut_tecnico': rutTecnico,
         'lat':         lat,
@@ -27,7 +28,10 @@ class UbicacionService {
         'gps_activo':  gpsActivo,
         'updated_at':  DateTime.now().toUtc().toIso8601String(),
       }, onConflict: 'rut_tecnico');
-    } catch (_) {}
+      print('✅ [UbicSvc] Upsert exitoso');
+    } catch (e) {
+      print('❌ [UbicSvc] Error en upsert: $e');
+    }
   }
 
   // ── Marcar GPS apagado ────────────────────────────────────────────────────
@@ -74,6 +78,20 @@ class UbicacionService {
         await marcarGpsApagado(rutTecnico);
       } else if (activo && !_gpsActivo) {
         _gpsActivo = true;
+        // GPS volvió a encenderse: publicar posición actual de inmediato
+        try {
+          final pos = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+          );
+          await publicarUbicacion(
+            rutTecnico: rutTecnico,
+            lat: pos.latitude,
+            lng: pos.longitude,
+            gpsActivo: true,
+          );
+        } catch (_) {
+          // No se pudo obtener posición, el ciclo de background lo actualizará
+        }
       }
     });
   }

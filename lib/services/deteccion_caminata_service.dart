@@ -9,6 +9,7 @@ import 'package:pedometer_2/pedometer_2.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:agente_desconexiones/constants/app_constants.dart';
 import 'package:agente_desconexiones/models/trabajo_activo.dart';
 import 'alertas_cto_service.dart';
 import 'ubicacion_service.dart';
@@ -90,40 +91,60 @@ class DeteccionCaminataService {
         url:       'https://efvicvqffvxocnrqjxrs.supabase.co',
         anonKey:   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmdmljdnFmZnZ4b2NucnFqeHJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0Mzc4MjMsImV4cCI6MjA4MTAxMzgyM30._RIVNg4_FoMKDJWbdi8QuS6LSsjjaAapwkTa_9Gb0Cc',
       );
-    } catch (_) {} // ya inicializado en el mismo isolate
+      print('✅ [UbicBG] Supabase inicializado OK');
+    } catch (e) {
+      print('⚠️ [UbicBG] Supabase ya inicializado o error: $e');
+    }
 
     // ── Timer de ubicación cada 5 minutos ─────────────────────────────────
     Timer? ubicacionTimer;
 
     Future<void> _publicarUbicacion() async {
+      print('📍 [UbicBG] Intentando publicar ubicación...');
       final rut = prefs.getString('rut_tecnico') ?? prefs.getString('user_rut') ?? '';
-      if (rut.isEmpty) return;
+      print('📍 [UbicBG] RUT leído: "${rut.isEmpty ? "VACÍO" : rut}"');
+      if (rut.isEmpty) {
+        print('❌ [UbicBG] RUT vacío — abortando publicación');
+        return;
+      }
       try {
         final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        print('📍 [UbicBG] GPS activo: $serviceEnabled');
         if (!serviceEnabled) {
+          print('⚠️ [UbicBG] GPS apagado → marcando en Supabase');
           await UbicacionService.marcarGpsApagado(rut);
           return;
         }
         final permission = await Geolocator.checkPermission();
+        print('📍 [UbicBG] Permiso ubicación: $permission');
         if (permission == LocationPermission.denied ||
-            permission == LocationPermission.deniedForever) return;
+            permission == LocationPermission.deniedForever) {
+          print('❌ [UbicBG] Permiso denegado — abortando');
+          return;
+        }
 
+        print('📍 [UbicBG] Obteniendo posición GPS...');
         final pos = await Geolocator.getCurrentPosition(
           locationSettings: const LocationSettings(
             accuracy: LocationAccuracy.medium,
             timeLimit: Duration(seconds: 10),
           ),
         );
+        print('📍 [UbicBG] Posición: ${pos.latitude}, ${pos.longitude}');
         await UbicacionService.publicarUbicacion(
           rutTecnico: rut,
           lat:        pos.latitude,
           lng:        pos.longitude,
           gpsActivo:  true,
         );
-      } catch (_) {}
+        print('✅ [UbicBG] Ubicación publicada en Supabase OK');
+      } catch (e) {
+        print('❌ [UbicBG] Error publicando ubicación: $e');
+      }
     }
 
     // Primera publicación inmediata
+    print('🚀 [UbicBG] Primer ciclo de ubicación arrancando...');
     await _publicarUbicacion();
 
     // Publicar cada 5 minutos
@@ -484,13 +505,13 @@ class DeteccionCaminataService {
       }
     });
 
-    // ═══════════════════════════════════════════════════════
-    // POLLING ALERTAS CTO EN BACKGROUND
-    // ═══════════════════════════════════════════════════════
-    Timer.periodic(const Duration(seconds: 60), (_) async {
-      print('🔄 [Background] Consultando alertas CTO...');
-      await AlertasCTOService.consultarDesdeBackground();
-    });
+    // POLLING ALERTAS CTO — solo si el monitoreo está activo
+    if (AppConstants.monitoreoFraudeYAlertasCtoActivo) {
+      Timer.periodic(const Duration(seconds: 60), (_) async {
+        print('🔄 [Background] Consultando alertas CTO...');
+        await AlertasCTOService.consultarDesdeBackground();
+      });
+    }
 
     // ─────────────────────────────────────────────────────────
     // MANTENER SERVICIO VIVO

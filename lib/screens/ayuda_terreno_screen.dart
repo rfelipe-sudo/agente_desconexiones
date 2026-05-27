@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:agente_desconexiones/constants/map_styles.dart';
 import 'package:agente_desconexiones/models/solicitud_ayuda.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
+import 'package:agente_desconexiones/services/fcm_service.dart';
 
 // ═════════════════════════════════════════════════════════════
 // Pantalla principal de Ayuda en Terreno
@@ -324,6 +325,7 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
       onSonido: () {
         if (mounted) {
           HapticFeedback.heavyImpact();
+          unawaited(FcmService.playAyuda());
           _mostrarDialogoRespuesta();
         }
       },

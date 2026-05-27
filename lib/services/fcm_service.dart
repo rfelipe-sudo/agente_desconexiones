@@ -360,6 +360,24 @@ class FcmService {
     }
   }
 
+  /// Toca el sonido de ayuda en terreno (supervisor recibe solicitud / técnico ve que llegó).
+  static Future<void> playAyuda() async {
+    try {
+      await _soundChannel.invokeMethod<void>('playAyuda');
+    } catch (e) {
+      debugPrint('[FCM] playAyuda: $e');
+    }
+  }
+
+  /// Toca el sonido de llegada de material (el que esperó escucha que el otro ya llegó).
+  static Future<void> playMaterialLlegada() async {
+    try {
+      await _soundChannel.invokeMethod<void>('playMaterialLlegada');
+    } catch (e) {
+      debugPrint('[FCM] playMaterialLlegada: $e');
+    }
+  }
+
   void _mostrarSnackTraspasoAprobado(String mensaje) {
     final ctx = creaboxNavigatorKey.currentContext;
     if (ctx == null) return;

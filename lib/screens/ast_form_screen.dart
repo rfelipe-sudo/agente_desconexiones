@@ -7,7 +7,7 @@ import 'package:signature/signature.dart';
 import 'package:agente_desconexiones/models/ast_registro.dart' show ASTRegistro;
 import 'package:agente_desconexiones/models/creavox_orden.dart';
 import 'package:agente_desconexiones/services/creavox_session_service.dart';
-import 'package:agente_desconexiones/services/creavox_sheets_service.dart';
+import 'package:agente_desconexiones/services/ast_service.dart';
 
 const _bg = Color(0xFF0A1628);
 const _surface = Color(0xFF0D1B2A);
@@ -29,7 +29,7 @@ class AstFormScreen extends StatefulWidget {
 class _AstFormScreenState extends State<AstFormScreen> {
   final _formKey = GlobalKey<FormState>();
   final _session = CreavoxSessionService();
-  final _sheets = CreavoxSheetsService();
+  final _astSvc = AstService();
   final _picker = ImagePicker();
 
   final _fechaCtrl = TextEditingController();
@@ -200,9 +200,15 @@ class _AstFormScreenState extends State<AstFormScreen> {
       } catch (_) {}
 
       final tecnico = _session.getTecnico();
+      final rut     = tecnico?.rutTecnico ?? 'sin_rut';
+      final ts      = DateTime.now().millisecondsSinceEpoch;
+
+      final urlFoto  = await _astSvc.subirImagen(_foto!,      'foto_${rut}_$ts.jpg');
+      final urlFirma = await _astSvc.subirImagen(_firmaFile!, 'firma_${rut}_$ts.png');
+
       final registro = ASTRegistro(
         ordenTrabajo: widget.orden.ordenDeTrabajo,
-        rutTecnico: tecnico?.rutTecnico ?? '',
+        rutTecnico: rut,
         nombreTecnico: _nombreCtrl.text,
         cargo: _cargoCtrl.text,
         empresa: _empresaCtrl.text,
@@ -216,21 +222,21 @@ class _AstFormScreenState extends State<AstFormScreen> {
         estadoHerramientas: _estadoHerramientas ?? '',
         condicionesCriticas: _condCriticas ?? '',
         condicionesClimaticas: _condClimaticas ?? '',
-        urlFotoAreaTrabajo: '',
+        urlFotoAreaTrabajo: urlFoto,
         observaciones: _obsCtrl.text,
-        urlFirmaTecnico: '',
+        urlFirmaTecnico: urlFirma,
         latitud: pos?.latitude ?? 0.0,
         longitud: pos?.longitude ?? 0.0,
         fechaHora: DateTime.now(),
       );
 
-      final ok = await _sheets.guardarAST(registro, foto: _foto, firma: _firmaFile);
+      await _astSvc.guardarAST(registro);
       if (mounted) {
-        if (ok) { _snack('AST guardado exitosamente'); Navigator.of(context).pop(); }
-        else { _snack('Error al guardar el AST', error: true); }
+        _snack('AST guardado exitosamente');
+        Navigator.of(context).pop();
       }
     } catch (e) {
-      if (mounted) _snack('Error: $e', error: true);
+      if (mounted) _snack('Error al guardar: $e', error: true);
     } finally {
       if (mounted) setState(() => _loading = false);
     }

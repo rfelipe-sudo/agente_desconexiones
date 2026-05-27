@@ -95,16 +95,20 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
         dias.sort((a, b) => a.fecha!.compareTo(b.fecha!));
       }
 
-      DateTime? latestWeek;
+      DateTime? defaultWeek;
       if (grupos.isNotEmpty) {
-        latestWeek = grupos.keys.reduce((a, b) => a.isAfter(b) ? a : b);
+        final sortedWeeks = grupos.keys.toList()..sort();
+        // Arrancar en la semana anterior a la más reciente (si existe)
+        defaultWeek = sortedWeeks.length > 1
+            ? sortedWeeks[sortedWeeks.length - 2]
+            : sortedWeeks.last;
       }
 
       if (mounted) {
         setState(() {
           _rutas = rutas;
           _semanas = grupos;
-          _semanaSeleccionada = latestWeek;
+          _semanaSeleccionada = defaultWeek;
           _diaSeleccionado = null;
           _trasladoSeleccionado = null;
           _loading = false;
@@ -144,7 +148,10 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
     } else if (_diaSeleccionado != null) {
       _mapDias([_diaSeleccionado!]);
     } else if (_semanaSeleccionada != null) {
-      _mapDias(_semanas[_semanaSeleccionada!] ?? []);
+      final entry = _semanas.entries
+          .where((e) => _mismaSemana(e.key, _semanaSeleccionada))
+          .firstOrNull;
+      _mapDias(entry?.value ?? []);
     } else {
       _mapDias(_rutas);
     }
@@ -371,6 +378,11 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
 
   // ── Helpers ───────────────────────────────────────────────────
 
+  bool _mismaSemana(DateTime? a, DateTime? b) {
+    if (a == null || b == null) return false;
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
   String _labelSemana(DateTime ws) {
     final fin = ws.add(const Duration(days: 5));
     const abr = ['', 'ene', 'feb', 'mar', 'abr', 'may', 'jun',
@@ -558,12 +570,12 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
   // ── List of days ──────────────────────────────────────────────
 
   Widget _buildListaDias() {
-    final semanasVisible = _semanaSeleccionada != null
-        ? [MapEntry(_semanaSeleccionada!, _semanas[_semanaSeleccionada!] ?? [])]
-        : (_semanas.entries.toList()..sort((a, b) => b.key.compareTo(a.key)));
+    // Siempre muestra todas las semanas, ordenadas de más reciente a más antigua.
+    final todasSemanas = _semanas.entries.toList()
+      ..sort((a, b) => b.key.compareTo(a.key));
 
     final items = <_ListItem>[];
-    for (final entry in semanasVisible) {
+    for (final entry in todasSemanas) {
       items.add(_ListItem.header(entry.key, entry.value));
       for (final dia in entry.value) {
         items.add(_ListItem.day(dia));
@@ -586,37 +598,55 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
     final km = dias.fold(0.0, (s, d) => s + d.kmTotal);
     final litros = km / widget.rendimientoKmL;
     final monto = litros * widget.precioLitro;
+    final isSelected = _mismaSemana(_semanaSeleccionada, weekStart);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10, top: 4),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: _accent.withValues(alpha: 0.07),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: _accent.withValues(alpha: 0.25)),
-        ),
-        child: Row(children: [
-          const Icon(Icons.calendar_view_week, color: _accent, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              _labelSemana(weekStart),
-              style: const TextStyle(
-                  color: _accent, fontWeight: FontWeight.bold, fontSize: 13),
+      child: GestureDetector(
+        onTap: () {
+          setState(() {
+            _semanaSeleccionada = weekStart;
+            _diaSeleccionado = null;
+            _trasladoSeleccionado = null;
+          });
+          _rebuildMap();
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? _accent.withValues(alpha: 0.15)
+                : _accent.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected
+                  ? _accent
+                  : _accent.withValues(alpha: 0.25),
+              width: isSelected ? 1.5 : 1,
             ),
           ),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text(
-              '${km.toStringAsFixed(1)} km · ${litros.toStringAsFixed(1)} L',
-              style: const TextStyle(
-                  color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+          child: Row(children: [
+            const Icon(Icons.calendar_view_week, color: _accent, size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _labelSemana(weekStart),
+                style: const TextStyle(
+                    color: _accent, fontWeight: FontWeight.bold, fontSize: 13),
+              ),
             ),
-            Text(
-              '\$${_formatPesos(monto)} · ${dias.length} días',
-              style: const TextStyle(color: _textDim, fontSize: 11),
-            ),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text(
+                '${km.toStringAsFixed(1)} km · ${litros.toStringAsFixed(1)} L',
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              Text(
+                '\$${_formatPesos(monto)} · ${dias.length} días',
+                style: const TextStyle(color: _textDim, fontSize: 11),
+              ),
+            ]),
           ]),
-        ]),
+        ),
       ),
     );
   }
