@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -126,6 +127,9 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
         'id_material':           sol.idMaterial,
         'estado':                'pendiente',
       });
+
+      // Notificar a bodegueros por FCM (fire-and-forget)
+      unawaited(_db.functions.invoke('notificar-bodega-traspaso'));
 
       setState(() {
         _cargando = false;

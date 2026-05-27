@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:agente_desconexiones/models/traspaso_bodega.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_guia_screen.dart';
+import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/services/guia_pdf_service.dart';
 
 class BodegaTraspassosScreen extends StatefulWidget {
@@ -36,6 +37,9 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
   String _nombreBodega = '';
 
   final Set<String> _sapEnProceso = {};
+  // IDs ya conocidos para detectar nuevas entradas
+  final Set<int> _idsConocidos = {};
+  bool _primerasCarga = true;
 
   late final TabController _tabController;
 
@@ -78,11 +82,26 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
         .order('created_at', ascending: false)
         .listen((rows) {
       if (!mounted) return;
+      final nuevos = rows
+          .map((r) => TraspassoBodega.fromMap(r as Map<String, dynamic>))
+          .toList();
+
+      if (_primerasCarga) {
+        // Carga inicial: registrar IDs sin sonar
+        _primerasCarga = false;
+        for (final t in nuevos) { _idsConocidos.add(t.id); }
+      } else {
+        // Actualizaciones posteriores: sonar si hay IDs nuevos pendientes
+        final hayNuevo = nuevos.any(
+          (t) => t.estado == 'pendiente' && !_idsConocidos.contains(t.id),
+        );
+        for (final t in nuevos) { _idsConocidos.add(t.id); }
+        if (hayNuevo) unawaited(FcmService.playAlerta());
+      }
+
       setState(() {
-        _traspasos = rows
-            .map((r) => TraspassoBodega.fromMap(r as Map<String, dynamic>))
-            .toList();
-        _cargando = false;
+        _traspasos = nuevos;
+        _cargando  = false;
       });
     });
   }
