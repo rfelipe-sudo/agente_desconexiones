@@ -38,7 +38,7 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
 
   final Set<String> _sapEnProceso = {};
   // IDs ya conocidos para detectar nuevas entradas
-  final Set<int> _idsConocidos = {};
+  final Set<String> _idsConocidos = {};
   bool _primerasCarga = true;
 
   late final TabController _tabController;
