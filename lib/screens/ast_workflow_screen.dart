@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:agente_desconexiones/models/creavox_orden.dart';
 import 'package:agente_desconexiones/models/creavox_tecnico.dart';
 import 'package:agente_desconexiones/services/creavox_api_service.dart';
@@ -40,6 +42,8 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
   bool _estaEnRango = false;
   String? _error;
 
+  List<Map<String, dynamic>> _historial = [];
+
   Timer? _gpsTimer;
   StreamSubscription<Position>? _gpsSub;
 
@@ -55,6 +59,16 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
       await _session.inicializar();
       _tecnico = _session.getTecnico();
 
+      // Si la sesión Creavox no corresponde al usuario activo en la app, forzar re-login
+      final prefs = await SharedPreferences.getInstance();
+      final rutApp = prefs.getString('rut_tecnico') ??
+                     prefs.getString('user_rut') ??
+                     prefs.getString('rut');
+      if (rutApp != null && _tecnico != null && _tecnico!.rutTecnico != rutApp) {
+        await _session.cerrarSesion();
+        _tecnico = null;
+      }
+
       if (_tecnico == null && mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const AstLoginScreen()),
@@ -63,7 +77,7 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
       }
 
       _tienePermisos = await _pedirPermisos();
-      await _cargarOrden();
+      await Future.wait([_cargarOrden(), _cargarHistorial()]);
 
       if (_tienePermisos && _orden != null) {
         await _actualizarGps();
@@ -74,6 +88,25 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _cargarHistorial() async {
+    if (_tecnico == null) return;
+    try {
+      final hace20h = DateTime.now()
+          .subtract(const Duration(hours: 20))
+          .toUtc()
+          .toIso8601String();
+      final data = await Supabase.instance.client
+          .from('ast_registros')
+          .select('id, orden_trabajo, lugar_actividad, condiciones_criticas, estado_herramientas, fecha_hora')
+          .eq('rut_tecnico', _tecnico!.rutTecnico)
+          .gte('fecha_hora', hace20h)
+          .order('fecha_hora', ascending: false);
+      if (mounted) {
+        setState(() => _historial = List<Map<String, dynamic>>.from(data as List));
+      }
+    } catch (_) {}
   }
 
   Future<bool> _pedirPermisos() async {
@@ -145,8 +178,7 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
   }
 
   Future<void> _refrescar() async {
-    await _actualizarGps();
-    await _cargarOrden();
+    await Future.wait([_actualizarGps(), _cargarOrden(), _cargarHistorial()]);
   }
 
   void _abrirAST() {
@@ -223,6 +255,10 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
                       _buildBotonAST(),
                     ] else
                       _buildSinOrden(),
+                    if (_historial.isNotEmpty) ...[
+                      const SizedBox(height: 24),
+                      _buildHistorial(),
+                    ],
                   ],
                 ),
               ),
@@ -455,6 +491,103 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
               style: const TextStyle(color: Colors.white, fontSize: 13)),
         ),
       ],
+    );
+  }
+
+  Widget _buildHistorial() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.history_rounded, color: _accent, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                'AST realizadas hoy (${_historial.length})',
+                style: const TextStyle(
+                  color: _accent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ..._historial.map(_buildHistorialItem),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistorialItem(Map<String, dynamic> ast) {
+    final ot     = ast['orden_trabajo'] as String? ?? '—';
+    final lugar  = ast['lugar_actividad'] as String? ?? '—';
+    final crit   = ast['condiciones_criticas'] as String? ?? '';
+    final herr   = ast['estado_herramientas'] as String? ?? '';
+    final esCrit = crit.isNotEmpty && crit.toLowerCase() != 'ninguna';
+    final esHerr = herr.isNotEmpty && herr.toLowerCase() != 'todas en buen estado';
+
+    String hora = '';
+    final fechaStr = ast['fecha_hora'] as String?;
+    if (fechaStr != null) {
+      try {
+        final dt = DateTime.parse(fechaStr).toLocal();
+        hora = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      } catch (_) {}
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: _green.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _green.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.check_circle_rounded, color: _green, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(ot,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13)),
+                const SizedBox(height: 2),
+                Text(lugar,
+                    style: const TextStyle(color: _textDim, fontSize: 11)),
+                if (esCrit) ...[
+                  const SizedBox(height: 3),
+                  Text('⚠ $crit',
+                      style: const TextStyle(
+                          color: Colors.orangeAccent, fontSize: 11)),
+                ],
+                if (esHerr) ...[
+                  const SizedBox(height: 2),
+                  Text('🔧 $herr',
+                      style: const TextStyle(
+                          color: Colors.orangeAccent, fontSize: 11)),
+                ],
+              ],
+            ),
+          ),
+          Text(hora,
+              style: const TextStyle(
+                  color: _textDim, fontSize: 11, fontFamily: 'monospace')),
+        ],
+      ),
     );
   }
 }
