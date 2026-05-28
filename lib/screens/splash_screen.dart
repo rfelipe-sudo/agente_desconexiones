@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:agente_desconexiones/config/constants.dart';
 import 'package:agente_desconexiones/constants/app_colors.dart';
 import 'package:agente_desconexiones/providers/auth_provider.dart';
 import 'package:agente_desconexiones/utils/device_helper.dart';
@@ -151,6 +152,12 @@ class _SplashScreenState extends State<SplashScreen>
               ? nombreGuardado
               : existe['nombre_tecnico']?.toString(),
         );
+        // Reportar versión al panel (fire-and-forget)
+        supabase
+            .from('dispositivos_autorizados')
+            .update({'app_version': kAppVersion})
+            .eq('imei', deviceId)
+            .then((_) {}, onError: (_) {});
         if (!mounted) return;
         try {
           await context.read<AuthProvider>().syncUsuarioDesdePrefs();

@@ -24,6 +24,9 @@ const String kKeplerApiToken           = '5de53e7b5f89b6b547c5c93d635f162ae25947
 // Plataforma única por ahora
 const String kFcmPlatform = 'android';
 
+// Versión de la app (se reporta a dispositivos_autorizados al iniciar)
+const String kAppVersion = '1.3';
+
 // Llaves de SharedPreferences
 const String kPrefFcmTokenRegistrado = 'fcm_token_registrado';
 const String kPrefAlertaBloqueoMisActividades = 'alerta_activa_mis_actividades';
