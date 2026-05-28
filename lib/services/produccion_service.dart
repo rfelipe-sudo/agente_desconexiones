@@ -937,7 +937,7 @@ class ProduccionService {
         } else {
           // Día PX-0: usa es_px0 si está disponible, sino lo infiere
           final esPx0 = ordenesDelDia.any((o) => o['es_px0'] == true)
-              || ordenesDelDia.every((o) => o['estado']?.toString() != 'Completado');
+              || !ordenesDelDia.any((o) => cuentaComoProduccion(o));
           if (esPx0) {
             diasPX0List.add({
               'fecha': fecha,
@@ -1053,15 +1053,15 @@ class ProduccionService {
           .from('produccion_creaciones')
           .select()
           .eq('rut_tecnico', rutTecnico)
-          .eq('estado', 'Completado')
           .ilike('fecha_trabajo', '*/$mesPadded/$annoCorto');
 
       final ordenesCompletadas = response as List;
 
-      // Agrupar por día (usar solo órdenes completadas)
+      // Agrupar por día (solo órdenes que cuentan como producción)
       Map<String, Map<String, dynamic>> porDia = {};
 
       for (var orden in ordenesCompletadas) {
+        if (!cuentaComoProduccion(orden)) continue;
         final fecha = orden['fecha_trabajo']?.toString() ?? '';
         if (fecha.isEmpty) continue;
 
@@ -1180,11 +1180,12 @@ class ProduccionService {
       final resp = await _supabase
           .from('produccion_crea')
           .select()
-          .eq('estado', 'Completado')
           .inFilter('rut_tecnico', ruts)
           .inFilter('fecha_trabajo', fechas);
-      final lista =
-          (resp as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      final lista = (resp as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .where((o) => cuentaComoProduccion(o))
+          .toList();
       lista.sort((a, b) => (a['hora_inicio'] ?? '')
           .toString()
           .compareTo((b['hora_inicio'] ?? '').toString()));
