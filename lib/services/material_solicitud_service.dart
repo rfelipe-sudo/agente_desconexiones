@@ -83,30 +83,32 @@ class MaterialSolicitudService {
       await _db.from('solicitudes_material_destinatarios').insert(destinatarios);
     }
 
-    // FCM a TODOS los técnicos, igual que el stream in-app.
-    // No solo a destinatarios calificados: cualquiera podría tener stock
-    // fuera del radio o sin ubicación registrada, y aun así debe escuchar la alerta.
-    try {
-      final tokenRows = await _db
-          .from('nomina_tecnicos')
-          .select('rut, fcm_token')
-          .neq('rut', rutSolicitante);
-      for (final row in (tokenRows as List)) {
-        final rut      = row['rut']       as String? ?? '';
-        final fcmToken = row['fcm_token'] as String?;
-        if (rut.isEmpty || fcmToken == null || fcmToken.isEmpty) continue;
-        if (excluirRuts.contains(rut)) continue;
-        try {
-          await _db.functions.invoke('fcm-send', body: {
-            'token':       fcmToken,
-            'accion':      'solicitud_material',
-            'tipo':        'Solicitud de material',
-            'descripcion': 'Se necesita: $tipoMaterial',
-            'rut':         rut,
-          });
-        } catch (_) {}
-      }
-    } catch (_) {}
+    // FCM solo a los destinatarios calificados (stock suficiente + dentro de 5 km)
+    if (destinatarios.isNotEmpty) {
+      final ruts = destinatarios
+          .map((d) => d['rut_tecnico'] as String)
+          .toList();
+      try {
+        final tokenRows = await _db
+            .from('nomina_tecnicos')
+            .select('rut, fcm_token')
+            .inFilter('rut', ruts);
+        for (final row in (tokenRows as List)) {
+          final rut      = row['rut']       as String? ?? '';
+          final fcmToken = row['fcm_token'] as String?;
+          if (rut.isEmpty || fcmToken == null || fcmToken.isEmpty) continue;
+          try {
+            await _db.functions.invoke('fcm-send', body: {
+              'token':       fcmToken,
+              'accion':      'solicitud_material',
+              'tipo':        'Solicitud de material',
+              'descripcion': 'Se necesita: $tipoMaterial',
+              'rut':         rut,
+            });
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
   }
 
   /// El primer técnico que acepta: cancela los otros destinatarios y actualiza la solicitud.
