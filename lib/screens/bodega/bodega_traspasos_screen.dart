@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:agente_desconexiones/models/traspaso_bodega.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_guia_screen.dart';
+import 'package:agente_desconexiones/services/alerta_sistema_service.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/services/guia_pdf_service.dart';
 
@@ -169,6 +170,13 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
         _recargar();
       }
     } catch (e) {
+      unawaited(AlertaSistemaService().registrarFallo(
+        modulo:    'aprobar_traspaso',
+        tipoError: 'edge_function_error',
+        mensaje:   e.toString(),
+        rutTecnico:    _rutBodega,
+        nombreTecnico: _nombreBodega,
+      ));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           backgroundColor: Colors.red.shade700,

@@ -34,20 +34,30 @@ class CreaboxApplication : MultiDexApplication() {
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
 
-        // ── Canal material ────────────────────────────────────────────────────
-        // Borramos TODOS los canales anteriores + el actual antes de recrear:
-        // Android ignora createNotificationChannel() en canales ya existentes,
-        // así que hay que borrarlos primero para garantizar el sonido correcto.
+        // ── Limpiar canales obsoletos (v1–v5) ─────────────────────────────────
+        // Android congela las propiedades al crear el canal; si un APK anterior
+        // lo creó sin USAGE_ALARM el sonido nunca suena. Eliminar y recrear con
+        // un ID nuevo es la única solución.
         manager.deleteNotificationChannel("mat_alertas")
         manager.deleteNotificationChannel("mat_alertas_2")
         manager.deleteNotificationChannel("mat_alertas_3")
+        manager.deleteNotificationChannel("mat_alertas_4")
+        manager.deleteNotificationChannel("mat_alertas_5")
+
+        // ── Canal material v6 (permanente) ────────────────────────────────────
+        // USAGE_ALARM: el sonido suena incluso con el teléfono en modo vibración.
+        val audioAttrAlarma = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+
         val canalMaterial = NotificationChannel(
-            "mat_alertas_3",
+            "mat_alertas_6",
             "Alertas de material",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
             description = "Alertas de solicitudes de material entre técnicos"
-            setSound(soundUri, audioAttr)
+            setSound(soundUri, audioAttrAlarma)
             enableVibration(true)
             vibrationPattern = longArrayOf(0, 300, 200, 300)
         }

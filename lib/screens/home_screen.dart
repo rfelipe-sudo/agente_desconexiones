@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
@@ -22,7 +23,9 @@ import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/screens/tu_mes_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_equipo_screen.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
+import 'package:agente_desconexiones/services/supabase_service.dart';
 import 'package:agente_desconexiones/models/solicitud_ayuda.dart';
+import 'package:agente_desconexiones/screens/admin/monitor_screen.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_screen.dart';
 import 'package:agente_desconexiones/screens/flota_admin_screen.dart';
 import 'package:agente_desconexiones/screens/jefe_ops_home_screen.dart';
@@ -45,6 +48,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   String _rolFlota = '';
   String _rutSesion = '';
   String _tipoSesion = '';
+  bool _esAdmin = false;
   List<Map<String, dynamic>> _historialDia = [];
   final _ayudaService = AyudaService();
 
@@ -72,6 +76,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _checkEsIto();
     _checkEsBodega();
     _checkRolFlota();
+    _checkEsAdmin();
     _refrescarEtiquetasSesion();
     
     // Inicializar alertas (sin syncUsuarioDesdePrefs aquí: ya aplicó initialize/splash;
@@ -397,18 +402,33 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ),
             ],
           ),
-          _buildProximamenteActionButton(
+          _buildActionButton(
             icon: Icons.wifi_find,
             label: 'WiFi &\nMapas',
+            color: const Color(0xFF0284C7),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF0284C7), Color(0xFF0369A1)],
+            ),
+            onTap: () => Navigator.of(context).pushNamed('/wifi-mapas'),
           ),
           // ── Fila 4 ──────────────────────────────────────────────
-          _buildProximamenteActionButton(
+          _buildActionButton(
             icon: Icons.speed,
             label: 'Medición\nde Velocidad',
+            color: const Color(0xFFDC2626),
+            gradient: const LinearGradient(
+              colors: [Color(0xFFDC2626), Color(0xFFB91C1C)],
+            ),
+            onTap: () => Navigator.of(context).pushNamed('/speed-meter'),
           ),
-          _buildProximamenteActionButton(
+          _buildActionButton(
             icon: Icons.assignment_outlined,
             label: 'Mis\nActividades',
+            color: const Color(0xFF0891B2),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF0891B2), Color(0xFF0E7490)],
+            ),
+            onTap: () => Navigator.of(context).pushNamed('/mis-actividades'),
           ),
           // ── Condicionales ────────────────────────────────────────
           if (_puedeVerEquipo)
@@ -506,6 +526,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               onTap: () => Navigator.of(context).pushNamed('/mi-actividad'),
             ),
           ],
+          if (_esAdmin)
+            _buildActionButton(
+              icon: Icons.monitor_heart_rounded,
+              label: 'Monitor\nSistema',
+              color: const Color(0xFFFF6B35),
+              gradient: const LinearGradient(
+                colors: [Color(0xFFFF6B35), Color(0xFFE55A2B)],
+              ),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => MonitorScreen(rutAdmin: _rutSesion),
+                ),
+              ),
+            ),
         ],
       ),
     ).animate().fadeIn(duration: 300.ms).slideY(begin: -0.1);
@@ -530,6 +564,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       _suscribirSolicitudesMaterial(rut);
       unawaited(FcmService.instance.initSolicitudMonitor());
       unawaited(FcmService.instance.initTraspasoMonitor(rut));
+      unawaited(_actualizarUbicacionTecnico(rut));
     } else {
       debugPrint('🏠 [HOME] ⚠️  rut vacío — monitores no iniciados');
     }
@@ -537,6 +572,30 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final usuario = mounted ? context.read<AuthProvider>().usuario : null;
     if (usuario != null && usuario.esSupervisor) {
       await _cargarHistorialDia();
+    }
+  }
+
+  /// Guarda la ubicación GPS del técnico en tecnicos_ubicacion para que
+  /// notificarDestinatarios() lo encuentre cuando alguien pide material.
+  Future<void> _actualizarUbicacionTecnico(String rut) async {
+    try {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) return;
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      );
+      final prefs  = await SharedPreferences.getInstance();
+      final nombre = prefs.getString('nombre_tecnico') ?? '';
+      await SupabaseService().actualizarUbicacion(
+        tecnicoId: rut,
+        nombre:    nombre,
+        latitud:   pos.latitude,
+        longitud:  pos.longitude,
+      );
+      debugPrint('🏠 [HOME] ubicación actualizada: $rut (${pos.latitude}, ${pos.longitude})');
+    } catch (e) {
+      debugPrint('🏠 [HOME] error actualizando ubicación: $e');
     }
   }
 
@@ -550,19 +609,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   void _suscribirSolicitudesMaterial(String rutPropio) {
-    if (_esBodega) return; // bodega no recibe notificaciones de solicitudes
-    // Supervisores e ITOs tampoco reciben — solo técnicos
+    if (_esBodega) return;
     final usuario = context.read<AuthProvider>().usuario;
     if (usuario != null && usuario.esSupervisor) return;
+    if (_rolFlota.isNotEmpty) return; // jefe_ops / flota tampoco reciben
     _subSolicitudesMat?.cancel();
+    // Solo solicitudes donde este técnico es destinatario designado (estado pendiente)
     _subSolicitudesMat = Supabase.instance.client
-        .from('solicitudes_material')
+        .from('solicitudes_material_destinatarios')
         .stream(primaryKey: ['id'])
-        .eq('estado', 'pendiente')
+        .eq('rut_tecnico', rutPropio)
         .listen((rows) {
-      if (!mounted || _esBodega) return;
+      if (!mounted) return;
       final ajenas = rows
-          .where((r) => (r['rut_solicitante'] as String?) != rutPropio)
+          .where((r) =>
+              (r['estado'] as String?) == 'pendiente')
           .toList();
       final count = ajenas.length;
 
@@ -590,9 +651,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
                             fontSize: 13)),
-                    Text(
-                      '${r['nombre_solicitante'] ?? 'Técnico'} · ${r['tipo_material'] ?? ''}',
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    const Text(
+                      'Alguien cercano necesita material',
+                      style: TextStyle(color: Colors.white, fontSize: 12),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
@@ -810,6 +871,22 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   // Mantenido vacío: la lógica se resuelve en _checkEsBodega.
   Future<void> _checkRolFlota() async {}
+
+  Future<void> _checkEsAdmin() async {
+    final prefs = await SharedPreferences.getInstance();
+    final rut = prefs.getString('rut_tecnico') ??
+                prefs.getString('user_rut') ??
+                prefs.getString('rut') ?? '';
+    if (rut.isEmpty) return;
+    try {
+      final row = await Supabase.instance.client
+          .from('administradores')
+          .select('rut')
+          .eq('rut', rut)
+          .maybeSingle();
+      if (mounted) setState(() => _esAdmin = row != null);
+    } catch (_) {}
+  }
 
   Widget _buildProximamenteActionButton({
     required IconData icon,

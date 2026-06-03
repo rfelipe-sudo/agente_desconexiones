@@ -16,6 +16,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:agente_desconexiones/config/constants.dart';
 import 'package:agente_desconexiones/models/solicitud_material.dart';
 import 'package:agente_desconexiones/screens/pin_entry_screen.dart';
+import 'package:agente_desconexiones/services/alerta_sistema_service.dart';
 import 'package:agente_desconexiones/services/logistica_service.dart';
 
 /// Pantalla de guía de entrega — se abre SOLO en el dispositivo del entregador
@@ -223,8 +224,9 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
       final guiaId = (guia as Map)['id'] as String;
       _guiaId = guiaId;
 
+      // 'estado' ya está en 'en_guia' desde EntregaEnCaminoScreen._abrirGuia()
+      // (geocerca o botón). Solo actualizamos los campos de la guía.
       await _db.from('solicitudes_material').update({
-        'estado':   'en_guia',
         'guia_id':  guiaId,
         'series':   _series,
         if (_idMaterialResuelto != null) 'id_material': _idMaterialResuelto,
@@ -264,9 +266,21 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
       }).eq('id', widget.solicitud.id);
 
       // Generar PIN en Supabase y enviar por FCM al solicitante.
-      await _db.functions.invoke('generar-pin', body: {
-        'solicitud_id': widget.solicitud.id,
-      });
+      try {
+        await _db.functions.invoke('generar-pin', body: {
+          'solicitud_id': widget.solicitud.id,
+        });
+      } catch (ePm) {
+        unawaited(AlertaSistemaService().registrarFallo(
+          modulo:        'generar_pin',
+          tipoError:     'edge_function_error',
+          mensaje:       ePm.toString(),
+          rutTecnico:    widget.rutPropio,
+          nombreTecnico: widget.nombrePropio,
+          solicitudId:   widget.solicitud.id,
+        ));
+        rethrow;
+      }
 
       // Registro de combustible (fire-and-forget, no bloquea el PIN).
       unawaited(_insertarCombustible());

@@ -37,6 +37,9 @@ class DeteccionCaminataService {
   static const double VELOCIDAD_MAXIMA_KMH = 20.0;
   static const double VELOCIDAD_MAXIMA_MS = 5.56;
 
+  // Radio geocerca: alerta sonora si el técnico sale de este radio con trabajo iniciado
+  static const double RADIO_GEOCERCA_METROS = 50.0;
+
   final FlutterBackgroundService _service = FlutterBackgroundService();
 
   // ═══════════════════════════════════════════════════════════
@@ -101,10 +104,11 @@ class DeteccionCaminataService {
 
     Future<void> _publicarUbicacion() async {
       print('📍 [UbicBG] Intentando publicar ubicación...');
-      final rut = prefs.getString('rut_tecnico') ?? prefs.getString('user_rut') ?? '';
-      print('📍 [UbicBG] RUT leído: "${rut.isEmpty ? "VACÍO" : rut}"');
+      // Solo publicar si hay rut_tecnico — supervisores/bodegueros/admin NO publican ubicación
+      final rut = prefs.getString('rut_tecnico') ?? '';
+      print('📍 [UbicBG] RUT leído: "${rut.isEmpty ? "VACÍO (no técnico)" : rut}"');
       if (rut.isEmpty) {
-        print('❌ [UbicBG] RUT vacío — abortando publicación');
+        print('⏭️ [UbicBG] Sin rut_tecnico — perfil no técnico, abortando publicación');
         return;
       }
       try {
@@ -154,6 +158,7 @@ class DeteccionCaminataService {
 
     // Streams de sensores
     StreamSubscription? pedometerSubscription;
+    StreamSubscription? geocercaSubscription;
     Timer? gpsTimer;
     Timer? timerValidacion;
 
@@ -167,6 +172,8 @@ class DeteccionCaminataService {
     bool alertaEnMovimientoEnviada = false;
     double? latitudTrabajo;
     double? longitudTrabajo;
+    // Geocerca 50m: rastrea si el técnico está dentro o fuera
+    bool dentroGeocerca = true;
 
     // ─────────────────────────────────────────────────────────
     // ESCUCHAR COMANDOS DESDE LA APP
@@ -209,7 +216,45 @@ class DeteccionCaminataService {
       // Resetear flags de alertas
       alertaFueraDeRangoEnviada = false;
       alertaEnMovimientoEnviada = false;
+      dentroGeocerca = true;
       segundosCaminando = 0;
+
+      // ── Geocerca 50m: stream de posición (el OS entrega cuando detecta movimiento)
+      // distanceFilter=15 → solo notifica si el dispositivo se movió ≥15 m.
+      // Se cancela automáticamente en finalizarTrabajo (completado/no realizado/cancelado).
+      geocercaSubscription?.cancel();
+      geocercaSubscription = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          distanceFilter: 15,
+        ),
+      ).listen((pos) {
+        if (trabajoActual == null || latitudTrabajo == null || longitudTrabajo == null) return;
+
+        final dist = Geolocator.distanceBetween(
+          latitudTrabajo!, longitudTrabajo!,
+          pos.latitude, pos.longitude,
+        );
+        final fueraAhora = dist > RADIO_GEOCERCA_METROS;
+
+        if (fueraAhora && dentroGeocerca) {
+          dentroGeocerca = false;
+          debugPrint('🚧 [Geocerca] SALIDA — ${dist.toStringAsFixed(0)}m del trabajo (OT ${trabajoActual!.ot})');
+          service.invoke('geocercaSalida', {
+            'ot':         trabajoActual!.ot,
+            'tecnico_id': trabajoActual!.tecnicoId,
+            'distancia':  dist,
+            'lat_tecnico': pos.latitude,
+            'lng_tecnico': pos.longitude,
+            'lat_trabajo': latitudTrabajo,
+            'lng_trabajo': longitudTrabajo,
+          });
+        } else if (!fueraAhora && !dentroGeocerca) {
+          dentroGeocerca = true;
+          debugPrint('✅ [Geocerca] ENTRADA — técnico regresó al área (OT ${trabajoActual!.ot})');
+          service.invoke('geocercaEntrada', {'ot': trabajoActual!.ot});
+        }
+      });
 
       // Guardar en storage
       await prefs.setString('trabajo_activo', jsonEncode(trabajoActual!.toJson()));
@@ -277,14 +322,17 @@ class DeteccionCaminataService {
     });
 
     service.on('finalizarTrabajo').listen((event) async {
-      debugPrint('🏁 Trabajo finalizado - Cancelando timer');
+      debugPrint('🏁 Trabajo finalizado - Cancelando timers y geocerca');
       timerValidacion?.cancel();
+      geocercaSubscription?.cancel();
+      geocercaSubscription = null;
       trabajoActual = null;
       segundosCaminando = 0;
       latitudTrabajo = null;
       longitudTrabajo = null;
       alertaFueraDeRangoEnviada = false;
       alertaEnMovimientoEnviada = false;
+      dentroGeocerca = true;
       await prefs.remove('trabajo_activo');
 
       if (service is AndroidServiceInstance) {
@@ -519,6 +567,7 @@ class DeteccionCaminataService {
 
     service.on('stopService').listen((event) {
       pedometerSubscription?.cancel();
+      geocercaSubscription?.cancel();
       gpsTimer?.cancel();
       timerValidacion?.cancel();
       ubicacionTimer?.cancel();

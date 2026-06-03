@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import '../models/ford_ruta.dart';
-import '../services/ford_api_service.dart';
+import '../services/produccion_rutas_service.dart';
 
 const _bg = Color(0xFF0A1628);
 const _surface = Color(0xFF0D1B2A);
@@ -39,7 +39,7 @@ class FordRutasScreen extends StatefulWidget {
 }
 
 class _FordRutasScreenState extends State<FordRutasScreen> {
-  final _svc = FordApiService();
+  final _svc = ProduccionRutasService();
 
   List<FordDiaRuta> _rutas = [];
   Map<DateTime, List<FordDiaRuta>> _semanas = {};

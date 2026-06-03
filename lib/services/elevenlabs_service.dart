@@ -390,14 +390,36 @@ class ElevenLabsService extends ChangeNotifier {
       await _player.load();
       await Future.delayed(const Duration(milliseconds: 50)); // Pequeño delay para pre-buffer
       
+      // Suscribirse ANTES de play() para no perder el evento completed en broadcast stream.
+      // La bandera playHasStarted evita que un estado completed residual resuelva antes de tiempo.
+      final completionCompleter = Completer<void>();
+      bool playHasStarted = false;
+      final stateSub = _player.playerStateStream.listen((s) {
+        if (playHasStarted &&
+            s.processingState == ProcessingState.completed &&
+            !completionCompleter.isCompleted) {
+          completionCompleter.complete();
+        }
+      }, onError: (e) {
+        if (!completionCompleter.isCompleted) completionCompleter.completeError(e);
+      });
+
+      playHasStarted = true;
       await _player.play();
-      
-      // Esperar a que termine la reproducción
-      await _player.playerStateStream
-          .timeout(const Duration(seconds: 30))
-          .firstWhere(
-            (state) => state.processingState == ProcessingState.completed,
-          );
+
+      // Seguridad: verificar si ya completó durante el await de play()
+      if (_player.processingState == ProcessingState.completed &&
+          !completionCompleter.isCompleted) {
+        completionCompleter.complete();
+      }
+
+      try {
+        await completionCompleter.future.timeout(const Duration(seconds: 30));
+      } on TimeoutException {
+        print('⚠️ Timeout esperando fin de reproducción');
+      } finally {
+        await stateSub.cancel();
+      }
       
       print('✅ Audio reproducido completamente');
       
@@ -414,8 +436,9 @@ class ElevenLabsService extends ChangeNotifier {
     } finally {
       _isPlayingResponse = false;
       _isBuffering = false;
+      _lastAgentResponse = ''; // Evitar que bloquee la próxima respuesta del agente
       _setState(ElevenLabsState.listening);
-      
+
       // Reiniciar la grabación después de reproducir
       await _resumeRecording();
     }

@@ -16,11 +16,16 @@ import 'package:agente_desconexiones/providers/alerta_provider.dart';
 import 'package:agente_desconexiones/services/sesion_dispositivo_service.dart';
 
 /// Handler de mensajes FCM cuando la app está en **background o terminated**.
-/// La notificación ya la muestra el sistema operativo (notification+data FCM).
-/// Aquí solo persiste la acción en SharedPreferences.
+/// Muestra notificación local con sonido para material y flota.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  WidgetsFlutterBinding.ensureInitialized();
   await _aplicarAccion(message.data);
+  // fcm-send envía notification+data: Android ya mostró la notificación del
+  // sistema usando el canal. Solo crear local para mensajes data-only.
+  if (message.notification == null) {
+    await _mostrarNotificacionLocal(message.data);
+  }
 }
 
 /// Muestra (o cancela) una notificación local con sonido personalizado.
@@ -34,34 +39,52 @@ Future<void> _mostrarNotificacionLocal(Map<String, dynamic> data) async {
 
   final esMaterial    = accion == 'solicitud_material';
   final esCancelacion = accion == 'solicitud_cancelada';
-  if (!esMaterial && !esCancelacion) return;
+  final esFlota          = accion == 'sol_comb_flota' || accion == 'sol_comb_jefe_ops';
+  final esTraspasoBodega = accion == 'traspaso_bodega';
+  if (!esMaterial && !esCancelacion && !esFlota && !esTraspasoBodega) return;
 
+  // El canal 'mat_alertas_6' es creado EXCLUSIVAMENTE por CreaboxApplication.kt
+  // con AudioAttributes.USAGE_ALARM. No se recrea desde Dart para evitar que
+  // flutter_local_notifications congele el canal sin USAGE_ALARM.
   final flnp = FlutterLocalNotificationsPlugin();
   await flnp.initialize(const InitializationSettings(
     android: AndroidInitializationSettings('@mipmap/ic_launcher'),
   ));
 
-  final title = esMaterial
-      ? (data['title']?.toString() ?? '¡Solicitud de material!')
-      : 'Solicitud cancelada';
-  final body = data['body']?.toString()
-      ?? data['descripcion']?.toString()
-      ?? (esMaterial ? 'Un colega necesita material' : 'La solicitud fue cancelada');
+  final String title;
+  final String body;
+  final int    notifId;
+  if (esMaterial) {
+    title   = data['title']?.toString() ?? '¡Solicitud de material!';
+    body    = data['body']?.toString() ?? data['descripcion']?.toString() ?? 'Un colega necesita material';
+    notifId = 42;
+  } else if (esCancelacion) {
+    title   = 'Solicitud cancelada';
+    body    = data['body']?.toString() ?? data['descripcion']?.toString() ?? 'La solicitud fue cancelada';
+    notifId = 42;
+  } else if (esTraspasoBodega) {
+    title   = data['tipo']?.toString() ?? 'Nuevo traspaso en bodega';
+    body    = data['body']?.toString() ?? data['descripcion']?.toString() ?? 'Hay un traspaso pendiente de aprobación';
+    notifId = 44;
+  } else {
+    title   = data['tipo']?.toString() ?? '¡Solicitud de flota!';
+    body    = data['body']?.toString() ?? data['descripcion']?.toString() ?? 'Nueva solicitud de flota';
+    notifId = 43;
+  }
 
-  // Reemplaza la notificación 42 (nueva solicitud → cancelada, o nueva solicitud).
   final androidDetails = AndroidNotificationDetails(
-    'mat_alertas_3',
+    'mat_alertas_6',
     'Alertas de material',
     channelDescription: 'Alertas de solicitudes de material entre técnicos',
     importance: Importance.high,
     priority: Priority.high,
     sound: const RawResourceAndroidNotificationSound('alerta_urgente'),
-    playSound: esMaterial, // sin alarma para el aviso de cancelación
+    playSound: esMaterial || esFlota || esTraspasoBodega,
     enableVibration: true,
     vibrationPattern: Int64List.fromList([0, 300, 200, 300]),
   );
 
-  await flnp.show(42, title, body, NotificationDetails(android: androidDetails));
+  await flnp.show(notifId, title, body, NotificationDetails(android: androidDetails));
 }
 
 /// Clave SharedPreferences que indica que hay una solicitud de material pendiente.
@@ -440,31 +463,25 @@ class FcmService {
     _pinUltimo = null;
   }
 
+  Future<void> _solicitarExencionBateria() async {
+    try {
+      final ignorado =
+          await _soundChannel.invokeMethod<bool>('isBatteryOptimizationIgnored') ?? false;
+      if (!ignorado) {
+        await _soundChannel.invokeMethod<void>('requestIgnoreBatteryOptimizations');
+      }
+    } catch (_) {}
+  }
+
   /// Configura todos los handlers de FCM.
   /// Llamar desde main.dart **después** de `Firebase.initializeApp()`.
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
 
-    // Canal para alertas de material — crearlo al arrancar garantiza que existe
-    // antes de que llegue cualquier FCM en background o closed.
-    final flnp = FlutterLocalNotificationsPlugin();
-    await flnp.initialize(const InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-    ));
-    await flnp
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(AndroidNotificationChannel(
-          'mat_alertas_3',
-          'Alertas de material',
-          description: 'Alertas de solicitudes de material entre técnicos',
-          importance: Importance.high,
-          sound: const RawResourceAndroidNotificationSound('alerta_urgente'),
-          playSound: true,
-          enableVibration: true,
-          vibrationPattern: Int64List.fromList([0, 300, 200, 300]),
-        ));
+    // El canal 'mat_alertas_6' lo crea CreaboxApplication.kt con USAGE_ALARM.
+    // No se recrea desde Dart para evitar race condition que congele el canal
+    // sin USAGE_ALARM (Android congela propiedades en la primera creación).
 
     // Permisos (Android 13+).
     await FirebaseMessaging.instance.requestPermission(
@@ -472,6 +489,10 @@ class FcmService {
       badge: true,
       sound: true,
     );
+
+    // Exención de battery optimization — necesario en OEMs agresivos (Xiaomi,
+    // Samsung, Huawei) para que FCM llegue cuando la app está en background.
+    unawaited(_solicitarExencionBateria());
 
     // Foreground.
     FirebaseMessaging.onMessage.listen(_onForeground);
@@ -523,6 +544,9 @@ class FcmService {
     if (m.data['accion'] == 'solicitud_material') {
       try { await _soundChannel.invokeMethod<void>('playAlerta'); } catch (_) {}
     }
+    if (m.data['accion'] == 'sol_comb_flota' || m.data['accion'] == 'sol_comb_jefe_ops') {
+      try { await _soundChannel.invokeMethod<void>('playAlerta'); } catch (_) {}
+    }
     if (m.data['accion'] == 'traspaso_aprobado') {
       _mostrarSnackTraspasoAprobado(m.data['descripcion']?.toString() ?? 'Traspaso aprobado por bodega');
     }
@@ -532,7 +556,8 @@ class FcmService {
     if (m.data['accion'] == 'sap_confirmado') {
       _mostrarSnackTraspasoAprobado(m.data['descripcion']?.toString() ?? 'TRANSFERENCIA EN TOA REALIZADA ✓');
     }
-    await _mostrarNotificacionLocal(m.data);
+    // No llamar _mostrarNotificacionLocal en foreground: el sistema FCM ya mostró
+    // la notificación (notification+data). playAlerta/snack ya manejan el feedback.
   }
 
   Future<void> _onOpened(RemoteMessage m) async {
@@ -607,6 +632,12 @@ class FcmService {
     } catch (e) {
       debugPrint('[FCM] error guardando token en Supabase: $e');
     }
+    try {
+      await Supabase.instance.client
+          .from('nomina_bodega')
+          .update({'fcm_token': token})
+          .eq('rut', rut);
+    } catch (_) {}
 
     final prefs = await SharedPreferences.getInstance();
     final anterior = prefs.getString(kPrefFcmTokenRegistrado);
@@ -658,8 +689,15 @@ class FcmService {
           .eq('rut', rut);
       debugPrint('[FCM] token guardado en nomina_tecnicos');
     } catch (e) {
-      debugPrint('[FCM] no se pudo guardar token en Supabase: $e');
+      debugPrint('[FCM] no se pudo guardar token en nomina_tecnicos: $e');
     }
+    // Bodegueros pueden no estar en nomina_tecnicos — guardar en nomina_bodega también
+    try {
+      await Supabase.instance.client
+          .from('nomina_bodega')
+          .update({'fcm_token': token})
+          .eq('rut', rut);
+    } catch (_) {}
 
     // Registrar en Kepler (best-effort, solo si cambió)
     final anterior = prefs.getString(kPrefFcmTokenRegistrado);

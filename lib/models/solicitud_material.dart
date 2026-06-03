@@ -51,6 +51,7 @@ class SolicitudMaterial {
   final String? modalidad; // 'yo_te_lo_llevo' | 'ven_por_el'
   final int?    idMaterial;   // ID interno Kepler — se guarda al aceptar
   final String? folioKepler;  // Folio devuelto por Kepler al confirmar PIN
+  final List<Map<String, dynamic>> materialesAdicionales;
 
   const SolicitudMaterial({
     required this.id,
@@ -72,6 +73,7 @@ class SolicitudMaterial {
     this.modalidad,
     this.idMaterial,
     this.folioKepler,
+    this.materialesAdicionales = const [],
   });
 
   factory SolicitudMaterial.fromMap(Map<String, dynamic> m) =>
@@ -98,6 +100,9 @@ class SolicitudMaterial {
         modalidad:        m['modalidad'] as String?,
         idMaterial:       m['id_material'] as int?,
         folioKepler:      m['folio_kepler'] as String?,
+        materialesAdicionales: (m['materiales_adicionales'] as List?)
+            ?.map((e) => Map<String, dynamic>.from(e as Map))
+            .toList() ?? [],
       );
 
   SolicitudMaterial copyWith({

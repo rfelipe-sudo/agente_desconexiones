@@ -21,6 +21,7 @@ import 'package:agente_desconexiones/services/churn_service.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
 import 'package:agente_desconexiones/services/sesion_dispositivo_service.dart';
 import 'package:agente_desconexiones/services/supabase_service.dart';
+import 'package:agente_desconexiones/services/alarm_audio_service.dart';
 import 'package:agente_desconexiones/screens/splash_screen.dart';
 import 'package:agente_desconexiones/screens/dispositivo_bloqueado_screen.dart';
 import 'package:agente_desconexiones/screens/registro_rut_screen.dart';
@@ -415,7 +416,51 @@ void _configurarListenerAlertasAutomaticas() {
     );
   });
 
-  print('✅ Listeners de alertas configurados (no_se_bajo, fuera_de_rango, en_movimiento)');
+  // ─────────────────────────────────────────────────────────
+  // GEOCERCA 50m — suena cuando el técnico sale del área de trabajo
+  // ─────────────────────────────────────────────────────────
+  service.on('geocercaSalida').listen((data) async {
+    if (data == null) return;
+    final ot       = data['ot']?.toString() ?? '';
+    final tecnicoId = data['tecnico_id']?.toString() ?? '';
+    final dist     = (data['distancia'] as num?)?.toDouble() ?? 0.0;
+    final latTec   = (data['lat_tecnico'] as num?)?.toDouble();
+    final lngTec   = (data['lng_tecnico'] as num?)?.toDouble();
+    final latTrab  = (data['lat_trabajo'] as num?)?.toDouble();
+    final lngTrab  = (data['lng_trabajo'] as num?)?.toDouble();
+
+    print('🚧 [Main] Geocerca SALIDA — OT $ot a ${dist.toStringAsFixed(0)}m → activando alarma');
+    await AlarmAudioService().iniciarAlarma('geocerca_$ot');
+
+    // Registrar en Supabase para el panel de supervisión
+    try {
+      await Supabase.instance.client.from('geo_alertas_ubicacion').insert({
+        'rut':              tecnicoId,
+        'fecha':            DateTime.now().toIso8601String().substring(0, 10),
+        'timestamp_marca':  DateTime.now().toUtc().toIso8601String(),
+        'lat_marca':        latTec,
+        'lon_marca':        lngTec,
+        'lat_trabajo':      latTrab,
+        'lon_trabajo':      lngTrab,
+        'distancia_metros': dist,
+        'umbral_metros':    50,
+        'tipo_alerta':      'geocerca_salida',
+        'mensaje':          'Técnico salió de geocerca 50m — OT $ot (${dist.toStringAsFixed(0)}m)',
+        'notificacion_enviada': false,
+        'created_at':       DateTime.now().toUtc().toIso8601String(),
+      });
+    } catch (e) {
+      print('⚠️ [Geocerca] Error guardando en Supabase: $e');
+    }
+  });
+
+  service.on('geocercaEntrada').listen((data) async {
+    if (data == null) return;
+    print('✅ [Main] Geocerca ENTRADA — técnico regresó → silenciando alarma');
+    await AlarmAudioService().detenerAlarma();
+  });
+
+  print('✅ Listeners de alertas configurados (no_se_bajo, fuera_de_rango, en_movimiento, geocerca_50m)');
 }
 
 class AgenteDesconexionesApp extends StatelessWidget {

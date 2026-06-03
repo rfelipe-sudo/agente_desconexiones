@@ -66,6 +66,6 @@ class ASTRegistro {
     'url_firma': urlFirmaTecnico,
     'latitud': latitud,
     'longitud': longitud,
-    'fecha_hora': fechaHora.toIso8601String(),
+    'fecha_hora': fechaHora.toUtc().toIso8601String(),
   };
 }

@@ -45,5 +45,8 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# APKs en assets (binarios grandes, no versionar)
+assets/apk/
+
 # Kotlin compiler session cache (per-build artifact, never commit)
 **/.kotlin/

@@ -26,7 +26,7 @@ class CreavoxSheetsService {
 
       final data = {
         'tipo': 'ast',
-        'timestamp': registro.fechaHora.toIso8601String(),
+        'timestamp': registro.fechaHora.toUtc().toIso8601String(),
         'rut_tecnico': tecnico?.rutTecnico ?? '',
         'orden_trabajo': registro.ordenTrabajo,
         'nombre_tecnico': registro.nombreTecnico,

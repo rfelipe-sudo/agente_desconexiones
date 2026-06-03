@@ -250,7 +250,17 @@ class _EntregaEnCaminoScreenState extends State<EntregaEnCaminoScreen> {
     }
   }
 
-  void _abrirGuia() {
+  Future<void> _abrirGuia() async {
+    if (!mounted) return;
+    // Marcar estado 'en_guia' AQUÍ — cuando el entregador llega físicamente
+    // (geocerca 200 m o botón manual). El solicitante recibe la alerta en este
+    // momento, no cuando se firma el documento.
+    try {
+      await Supabase.instance.client
+          .from('solicitudes_material')
+          .update({'estado': 'en_guia'})
+          .eq('id', widget.solicitud.id);
+    } catch (_) {}
     if (!mounted) return;
     Navigator.pushReplacement<void, void>(
       context,
@@ -517,7 +527,7 @@ class _EntregaEnCaminoScreenState extends State<EntregaEnCaminoScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
-                          onPressed: _abrirGuia,
+                          onPressed: () => _abrirGuia(),
                           icon: const Icon(Icons.draw_outlined, size: 16),
                           label: const Text('Ya llegué — abrir guía',
                               style: TextStyle(

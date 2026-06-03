@@ -28,6 +28,14 @@ class _FlotaAdminScreenState extends State<FlotaAdminScreen> {
   int    _extraCount       = 0;
   int    _mantencionCount  = 0;
 
+  // Conteos previos e inicialización para detectar nuevas entradas con sonido
+  int  _operacionalPrev = 0;
+  int  _extraPrev       = 0;
+  int  _mantencionPrev  = 0;
+  bool _opInit   = false;
+  bool _exInit   = false;
+  bool _mantInit = false;
+
   StreamSubscription<List<Map<String, dynamic>>>? _subOp;
   StreamSubscription<List<Map<String, dynamic>>>? _subEx;
   StreamSubscription<List<Map<String, dynamic>>>? _subMant;
@@ -70,7 +78,15 @@ class _FlotaAdminScreenState extends State<FlotaAdminScreen> {
         .eq('estado', 'pendiente')
         .listen((rows) {
       if (!mounted) return;
-      setState(() => _operacionalCount = rows.length);
+      final n = rows.length;
+      if (!_opInit) {
+        _opInit = true;
+        _operacionalPrev = n;
+      } else if (n > _operacionalPrev) {
+        FcmService.playAlerta();
+      }
+      _operacionalPrev = n;
+      setState(() => _operacionalCount = n);
     });
 
     _subEx = Supabase.instance.client
@@ -79,7 +95,15 @@ class _FlotaAdminScreenState extends State<FlotaAdminScreen> {
         .eq('estado', 'pendiente_flota')
         .listen((rows) {
       if (!mounted) return;
-      setState(() => _extraCount = rows.length);
+      final n = rows.length;
+      if (!_exInit) {
+        _exInit = true;
+        _extraPrev = n;
+      } else if (n > _extraPrev) {
+        FcmService.playAlerta();
+      }
+      _extraPrev = n;
+      setState(() => _extraCount = n);
     });
 
     _subMant = Supabase.instance.client
@@ -88,7 +112,15 @@ class _FlotaAdminScreenState extends State<FlotaAdminScreen> {
         .eq('estado', 'pendiente')
         .listen((rows) {
       if (!mounted) return;
-      setState(() => _mantencionCount = rows.length);
+      final n = rows.length;
+      if (!_mantInit) {
+        _mantInit = true;
+        _mantencionPrev = n;
+      } else if (n > _mantencionPrev) {
+        FcmService.playAlerta();
+      }
+      _mantencionPrev = n;
+      setState(() => _mantencionCount = n);
     });
   }
 

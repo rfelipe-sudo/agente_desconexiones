@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_auditorias_screen.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_stock_screen.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_traspasos_screen.dart';
+import 'package:agente_desconexiones/services/fcm_service.dart';
 
 class BodegaScreen extends StatefulWidget {
   const BodegaScreen({super.key});
@@ -29,6 +30,8 @@ class _BodegaScreenState extends State<BodegaScreen> {
 
   int _pendientesCount  = 0;
   int _alertasStockCount = 0;
+  int _prevPendientesCount  = -1; // -1 = carga inicial, no sonar
+  int _prevAlertasStockCount = -1;
   StreamSubscription<List<Map<String, dynamic>>>? _subTraspasos;
   StreamSubscription<List<Map<String, dynamic>>>? _subAlertasStock;
 
@@ -74,6 +77,11 @@ class _BodegaScreenState extends State<BodegaScreen> {
       final pendientes = rows
           .where((r) => (r['estado'] as String?) == 'pendiente')
           .length;
+      // Sonar solo cuando llega un traspaso NUEVO (no en la carga inicial)
+      if (_prevPendientesCount >= 0 && pendientes > _prevPendientesCount) {
+        unawaited(FcmService.playAlerta());
+      }
+      _prevPendientesCount = pendientes;
       setState(() => _pendientesCount = pendientes);
     });
   }
@@ -85,7 +93,12 @@ class _BodegaScreenState extends State<BodegaScreen> {
         .eq('estado', 'pendiente')
         .listen((rows) {
       if (!mounted) return;
-      setState(() => _alertasStockCount = rows.length);
+      final count = rows.length;
+      if (_prevAlertasStockCount >= 0 && count > _prevAlertasStockCount) {
+        unawaited(FcmService.playAlerta());
+      }
+      _prevAlertasStockCount = count;
+      setState(() => _alertasStockCount = count);
     });
   }
 

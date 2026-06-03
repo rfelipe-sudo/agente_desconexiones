@@ -27,6 +27,11 @@ class _JefeOpsHomeScreenState extends State<JefeOpsHomeScreen> {
   int    _pendientes = 0;
   int    _reversaPendientes = 0;
 
+  int  _pendientesPrev = 0;
+  int  _reversaPrev    = 0;
+  bool _subInit        = false;
+  bool _subReversaInit = false;
+
   StreamSubscription<List<Map<String, dynamic>>>? _sub;
   StreamSubscription<List<Map<String, dynamic>>>? _subReversa;
 
@@ -67,7 +72,15 @@ class _JefeOpsHomeScreenState extends State<JefeOpsHomeScreen> {
         .eq('estado', 'aprobado_supervisor')
         .listen((rows) {
       if (!mounted) return;
-      setState(() => _pendientes = rows.length);
+      final n = rows.length;
+      if (!_subInit) {
+        _subInit = true;
+        _pendientesPrev = n;
+      } else if (n > _pendientesPrev) {
+        FcmService.playAlerta();
+      }
+      _pendientesPrev = n;
+      setState(() => _pendientes = n);
     });
 
     _subReversa = Supabase.instance.client
@@ -76,8 +89,15 @@ class _JefeOpsHomeScreenState extends State<JefeOpsHomeScreen> {
         .eq('estado', 'pendiente_supervision')
         .listen((rows) {
       if (!mounted) return;
-      setState(() => _reversaPendientes =
-          rows.where((r) => r['estado'] == 'pendiente_supervision').length);
+      final n = rows.where((r) => r['estado'] == 'pendiente_supervision').length;
+      if (!_subReversaInit) {
+        _subReversaInit = true;
+        _reversaPrev = n;
+      } else if (n > _reversaPrev) {
+        FcmService.playAlerta();
+      }
+      _reversaPrev = n;
+      setState(() => _reversaPendientes = n);
     });
   }
 

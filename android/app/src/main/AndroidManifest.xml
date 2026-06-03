@@ -15,6 +15,8 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Exención de battery optimization para que FCM llegue en background en OEMs agresivos -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <!-- Permiso de notificaciones (requerido en Android 13+) -->
@@ -68,6 +70,11 @@
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyBY14w076XgTfwyOPjLnE-ov1I1upnp5Ak" />
+        <!-- Canal por defecto para FCM: garantiza sonido alerta_urgente incluso
+             si el canal mat_alertas_5 aún no fue creado por CreaboxApplication -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="mat_alertas_6" />
         
         <!-- Servicio en segundo plano para detección de caminata -->
         <!-- El plugin flutter_background_service_android lo declara automáticamente -->

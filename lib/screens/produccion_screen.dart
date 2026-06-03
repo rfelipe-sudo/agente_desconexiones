@@ -490,29 +490,26 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
                     // Estadísticas del mes
                     const Text('Resumen del Mes', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    // Cards de kilómetros y combustible - OCULTADAS (para uso futuro)
-                    if (false) ...[
-                      Row(
-                        children: [
-                          Expanded(child: _buildStatCard(
-                            icon: Icons.speed,
-                            color: Colors.purple,
-                            titulo: 'Km recorridos',
-                            valor: '${((_resumenMes['kmTotales'] ?? 0) as num).toDouble().toStringAsFixed(1)}',
-                            subtitulo: 'km',
-                          )),
-                          const SizedBox(width: 8),
-                          Expanded(child: _buildStatCard(
-                            icon: Icons.local_gas_station,
-                            color: Colors.red,
-                            titulo: 'Combustible',
-                            valor: '${((_resumenMes['combustibleTotal'] ?? 0) as num).toDouble().toStringAsFixed(1)}',
-                            subtitulo: 'litros',
-                          )),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                    ],
+                    Row(
+                      children: [
+                        Expanded(child: _buildStatCard(
+                          icon: Icons.speed,
+                          color: Colors.purple,
+                          titulo: 'Km recorridos',
+                          valor: '${((_resumenMes['kmTotales'] ?? 0) as num).toDouble().toStringAsFixed(1)}',
+                          subtitulo: 'km',
+                        )),
+                        const SizedBox(width: 8),
+                        Expanded(child: _buildStatCard(
+                          icon: Icons.local_gas_station,
+                          color: Colors.red,
+                          titulo: 'Combustible',
+                          valor: '${((_resumenMes['combustibleTotal'] ?? 0) as num).toDouble().toStringAsFixed(1)}',
+                          subtitulo: 'litros',
+                        )),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
                     Row(
                       children: [
                         Expanded(

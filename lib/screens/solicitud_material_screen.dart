@@ -23,6 +23,7 @@ import 'package:agente_desconexiones/models/solicitud_material.dart';
 import 'package:agente_desconexiones/screens/entrega_en_camino_screen.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/services/material_solicitud_service.dart';
+import 'package:agente_desconexiones/services/supabase_service.dart';
 import 'package:agente_desconexiones/screens/tecnicos_cercanos_mapa_screen.dart';
 
 class SolicitudMaterialScreen extends StatefulWidget {
@@ -51,6 +52,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   // ── Formulario ───────────────────────────────────────────────
   MaterialItem? _materialSeleccionado;
   int _cantidad = 1;
+  final List<({MaterialItem material, int cantidad})> _adicionales = [];
 
   // ── Estado solicitud propia ──────────────────────────────────
   SolicitudMaterial? _miSolicitud;
@@ -93,6 +95,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
 
   // Evita mostrar el banner de modalidad más de una vez por solicitud
   bool _bannerModalidadMostrado = false;
+  bool _llegadaMostrada         = false;
 
   final _db      = Supabase.instance.client;
   final _service = MaterialSolicitudService();
@@ -168,6 +171,16 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
     if (_rut == null) {
       debugPrint('🔴 [SolicitudMat] sin RUT, abortando init');
       return;
+    }
+
+    // Registrar ubicación para que notificarDestinatarios() encuentre este técnico.
+    if (_posicion != null) {
+      unawaited(SupabaseService().actualizarUbicacion(
+        tecnicoId: _rut!,
+        nombre:    _nombre ?? '',
+        latitud:   _posicion!.latitude,
+        longitud:  _posicion!.longitude,
+      ));
     }
 
     final rows = await _db
@@ -263,15 +276,32 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   void _suscribirSolicitudPropia() {
     if (_miSolicitud == null) return;
     _subPropia?.cancel();
+    final solicitudIdEsperado = _miSolicitud!.id;
     _subPropia = _db
         .from('solicitudes_material')
         .stream(primaryKey: ['id'])
-        .eq('id', _miSolicitud!.id)
+        .eq('id', solicitudIdEsperado)
         .listen((rows) {
       if (rows.isEmpty || !mounted) return;
       final updated =
           SolicitudMaterial.fromMap(rows.first as Map<String, dynamic>);
+      // Ignorar si este evento pertenece a una suscripción anterior
+      if (updated.id != _miSolicitud?.id) return;
       setState(() => _miSolicitud = updated);
+
+      if (updated.estado == 'cancelada') {
+        _timer10min?.cancel();
+        _timerGpsAceptada?.cancel();
+        _timerGpsAceptada = null;
+        _pollingEntregador?.cancel();
+        _pollingEntregador = null;
+        _subPropia?.cancel();
+        _bannerModalidadMostrado = false;
+        _llegadaMostrada         = false;
+        unawaited(FcmService.instance.detenerPinMonitor());
+        setState(() => _miSolicitud = null);
+        return;
+      }
 
       if (updated.estado != 'pendiente') {
         _timer10min?.cancel();
@@ -319,7 +349,12 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         _timerGpsAceptada = null;
         _pollingEntregador?.cancel();
         _pollingEntregador = null;
-        _mostrarLlegadaEntregador(updated);
+        // Guard: el stream puede dispararse varias veces con estado 'en_guia'
+        // (ej. cuando _firmarEntregador actualiza guia_id). Solo mostrar una vez.
+        if (!_llegadaMostrada) {
+          _llegadaMostrada = true;
+          _mostrarLlegadaEntregador(updated);
+        }
       }
       if (updated.estado == 'completada') {
         _timerGpsAceptada?.cancel();
@@ -328,6 +363,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         _pollingEntregador = null;
         _subPropia?.cancel();
         _bannerModalidadMostrado = false;
+        _llegadaMostrada         = false;
         unawaited(FcmService.instance.detenerPinMonitor());
         setState(() => _miSolicitud = null);
         _cargarGuiasMes();
@@ -458,27 +494,49 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   }
 
   void _suscribirCercanas() {
-    debugPrint('🔵 [SolicitudMat] suscribirCercanas → iniciando stream');
+    if (_rut == null) return;
+    debugPrint('🔵 [SolicitudMat] suscribirCercanas → escuchando destinatarios de $_rut');
     _subDestinatarios?.cancel();
+    // Suscribirse SOLO a las filas donde este técnico fue seleccionado como
+    // destinatario válido (el servidor ya aplicó filtro de rol + 5 km + stock).
     _subDestinatarios = _db
-        .from('solicitudes_material')
+        .from('solicitudes_material_destinatarios')
         .stream(primaryKey: ['id'])
-        .eq('estado', 'pendiente')
-        .listen((rows) {
-      debugPrint('🟢 [SolicitudMat] stream cercanas disparado → ${rows.length} filas totales');
+        .eq('rut_tecnico', _rut!)
+        .listen((destRows) async {
+      debugPrint('🟢 [SolicitudMat] stream destinatarios → ${destRows.length} filas');
       if (!mounted) return;
-      final todas = rows
-          .map((r) => SolicitudMaterial.fromMap(r as Map<String, dynamic>))
-          .where((s) {
-            final esPropia = s.rutSolicitante == _rut;
-            debugPrint('🟢 [SolicitudMat] sol id=${s.id} rutSolicitante=${s.rutSolicitante} _rut=$_rut esPropia=$esPropia');
-            return !esPropia && s.estado == 'pendiente';
-          })
+
+      // Solo las filas con estado 'pendiente' dan acceso a la solicitud
+      final pendientesIds = destRows
+          .where((r) => r['estado'] == 'pendiente')
+          .map((r) => r['solicitud_id'] as String)
           .toList();
-      debugPrint('🟢 [SolicitudMat] de otros técnicos: ${todas.length}');
-      // Sin filtro de distancia por ahora — se muestran todas
-      final filtradas = todas;
-      debugPrint('🟢 [SolicitudMat] solicitudes visibles: ${filtradas.length}');
+
+      if (pendientesIds.isEmpty) {
+        if (_cercanas.isNotEmpty && _streamInicializado) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          _cancelarNotificacionMaterial();
+        }
+        _streamInicializado = true;
+        setState(() => _cercanas = []);
+        _actualizarMarkers();
+        return;
+      }
+
+      // Obtener datos completos de esas solicitudes (solo las aún pendientes)
+      final solicRows = await _db
+          .from('solicitudes_material')
+          .select()
+          .inFilter('id', pendientesIds)
+          .eq('estado', 'pendiente');
+
+      final filtradas = (solicRows as List)
+          .map((r) => SolicitudMaterial.fromMap(r as Map<String, dynamic>))
+          .where((s) => s.rutSolicitante != _rut)
+          .toList();
+
+      debugPrint('🟢 [SolicitudMat] solicitudes visibles (rol + 5km validados): ${filtradas.length}');
 
       // Notificar por cada solicitud que no hayamos alertado antes
       for (final sol in filtradas) {
@@ -493,8 +551,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         }
       }
 
-      // Detectar solicitudes que desaparecieron del listado (fueron aceptadas
-      // por otro técnico o canceladas por el emisor).
+      // Detectar solicitudes que desaparecieron (aceptadas por otro o canceladas)
       final nuevosIds = filtradas.map((s) => s.id).toSet();
       for (final sol in _cercanas) {
         if (!nuevosIds.contains(sol.id) && _notificadas.contains(sol.id)) {
@@ -506,8 +563,6 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         }
       }
 
-      // Si no quedan solicitudes pendientes, limpiar cualquier banner residual
-      // (cubre el caso de reinicios de estado donde _cercanas/_notificadas se pierden).
       if (filtradas.isEmpty) {
         ScaffoldMessenger.of(context).clearSnackBars();
         _cancelarNotificacionMaterial();
@@ -623,15 +678,20 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
     setState(() => _enviando = true);
     try {
       final row = await _db.from('solicitudes_material').insert({
-        'rut_solicitante':    _rut,
-        'nombre_solicitante': _nombre,
-        'lat_solicitante':    _posicion?.latitude,
-        'lng_solicitante':    _posicion?.longitude,
-        'tipo_material':      _materialSeleccionado!.nombre,
-        'es_seriado':         _materialSeleccionado!.esSeriado,
-        'cantidad':           _cantidad,
-        'series':             [],
-        'estado':             'pendiente',
+        'rut_solicitante':       _rut,
+        'nombre_solicitante':    _nombre,
+        'lat_solicitante':       _posicion?.latitude,
+        'lng_solicitante':       _posicion?.longitude,
+        'tipo_material':         _materialSeleccionado!.nombre,
+        'es_seriado':            _materialSeleccionado!.esSeriado,
+        'cantidad':              _cantidad,
+        'series':                [],
+        'estado':                'pendiente',
+        'materiales_adicionales': _adicionales.map((a) => {
+          'tipo':       a.material.nombre,
+          'cantidad':   a.cantidad,
+          'es_seriado': a.material.esSeriado,
+        }).toList(),
       }).select().single();
 
       final sol = SolicitudMaterial.fromMap(row as Map<String, dynamic>);
@@ -639,19 +699,20 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
       setState(() {
         _miSolicitud = sol;
         _enviando    = false;
+        _adicionales.clear();
       });
       _suscribirSolicitudPropia();
       if (_rut != null) unawaited(FcmService.instance.initPinMonitor(_rut!, sol.id));
-      _actualizarMarkers();
 
-      // Notificar técnicos cercanos con stock (background)
+      // Notificar técnicos cercanos con stock (background) — ANTES de operaciones de mapa
       debugPrint('🔵 [SolicitudMat] lanzando notificarDestinatarios en background...');
       _service.notificarDestinatarios(
-        solicitudId:    sol.id,
-        tipoMaterial:   sol.tipoMaterial,
-        latSolicitante: sol.latSolicitante,
-        lngSolicitante: sol.lngSolicitante,
-        rutSolicitante: _rut!,
+        solicitudId:       sol.id,
+        tipoMaterial:      sol.tipoMaterial,
+        latSolicitante:    sol.latSolicitante,
+        lngSolicitante:    sol.lngSolicitante,
+        rutSolicitante:    _rut!,
+        nombreSolicitante: _nombre ?? '',
       );
 
       // Alerta de stock al bodeguero si material seriado y supera umbrales
@@ -669,6 +730,13 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
       _timer10min = Timer(const Duration(minutes: 10), () {
         _mostrarAlertaSinRespuesta(sol);
       });
+
+      // Actualizar mapa en try/catch — un error de mapa no debe bloquear la solicitud
+      try {
+        _actualizarMarkers();
+      } catch (e) {
+        debugPrint('⚠️ [SolicitudMat] error actualizando mapa (ignorado): $e');
+      }
     } catch (e) {
       debugPrint('🔴 [SolicitudMat] error al enviar: $e');
       setState(() => _enviando = false);
@@ -847,7 +915,9 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
             ]),
             const SizedBox(height: 4),
             Text(
-              '${sol.tipoMaterial} ×${sol.cantidad} para ${sol.nombreSolicitante}',
+              sol.materialesAdicionales.isEmpty
+                  ? '${sol.tipoMaterial} ×${sol.cantidad} para ${sol.nombreSolicitante}'
+                  : '${sol.tipoMaterial} y ${sol.materialesAdicionales.length} material${sol.materialesAdicionales.length == 1 ? '' : 'es'} más para ${sol.nombreSolicitante}',
               style: TextStyle(color: _textDim, fontSize: 12),
             ),
           ],
@@ -1000,10 +1070,10 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         .update({'estado': 'cancelada'}).eq('id', sol.id);
     // Notificar a TODOS los destinatarios (pendientes o aceptados) para que
     // eliminen el banner de solicitud de sus bandejas de notificaciones.
-    _service.notificarCancelacion(
+    unawaited(_service.notificarCancelacion(
       solicitudId:  sol.id,
       tipoMaterial: sol.tipoMaterial,
-    );
+    ));
     _subPropia?.cancel();
     unawaited(FcmService.instance.detenerPinMonitor());
     setState(() => _miSolicitud = null);
@@ -1021,11 +1091,16 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_miSolicitud != null && _miSolicitud!.estado == 'pendiente') {
-      return _buildMapaView();
-    }
-    if (_miSolicitud != null && _miSolicitud!.estado == 'aceptada') {
-      return _buildAceptadaView();
+    // Si hay solicitudes cercanas pendientes de aceptar, mostrar siempre
+    // la vista de lista para que sean visibles aunque el usuario tenga
+    // su propia solicitud activa en mapa.
+    if (_cercanas.isEmpty) {
+      if (_miSolicitud != null && _miSolicitud!.estado == 'pendiente') {
+        return _buildMapaView();
+      }
+      if (_miSolicitud != null && _miSolicitud!.estado == 'aceptada') {
+        return _buildAceptadaView();
+      }
     }
 
     return Scaffold(
@@ -1760,6 +1835,17 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
           Text('× ${sol.cantidad}',
               style: const TextStyle(
                   color: Colors.white, fontWeight: FontWeight.bold)),
+          if (sol.materialesAdicionales.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              decoration: BoxDecoration(
+                  color: _textDim.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4)),
+              child: Text('+${sol.materialesAdicionales.length} más',
+                  style: const TextStyle(color: _textDim, fontSize: 9)),
+            ),
+          ],
           if (sol.esSeriado) ...[
             const SizedBox(width: 6),
             Container(
@@ -1840,6 +1926,9 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         const SizedBox(height: 12),
         _fila('Material', sol.tipoMaterial),
         _fila('Cantidad', '${sol.cantidad}'),
+        ...sol.materialesAdicionales.map((m) =>
+          _fila('+ ${m['tipo'] as String? ?? ''}', '${m['cantidad'] ?? 1}'),
+        ),
         const SizedBox(height: 12),
         if (sol.estado == 'en_guia')
           Container(
@@ -2220,6 +2309,53 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
           ),
         ],
 
+        // ── Materiales adicionales ────────────────────────────────
+        if (_adicionales.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          const Text('Materiales adicionales',
+              style: TextStyle(color: _textDim, fontSize: 12)),
+          const SizedBox(height: 6),
+          ..._adicionales.asMap().entries.map((e) => Container(
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: _bg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _border),
+            ),
+            child: Row(children: [
+              Icon(
+                e.value.material.esSeriado ? Icons.qr_code : Icons.category_outlined,
+                color: _accent, size: 16,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${e.value.material.nombre} × ${e.value.cantidad}',
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+              GestureDetector(
+                onTap: () => setState(() => _adicionales.removeAt(e.key)),
+                child: const Icon(Icons.close, color: _textDim, size: 16),
+              ),
+            ]),
+          )),
+        ],
+        if (_adicionales.length < 2) ...[
+          const SizedBox(height: 8),
+          TextButton.icon(
+            onPressed: _agregarMaterialAdicional,
+            icon: const Icon(Icons.add_circle_outline, size: 16),
+            label: const Text('Agregar otro material'),
+            style: TextButton.styleFrom(
+              foregroundColor: _accent,
+              padding: EdgeInsets.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+        ],
+
         const SizedBox(height: 12),
 
         // Botón ver técnicos en mapa
@@ -2349,6 +2485,92 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         );
       }),
     ]);
+  }
+
+  Future<void> _agregarMaterialAdicional() async {
+    MaterialItem? sel;
+    int cant = 1;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          backgroundColor: _surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: _border),
+          ),
+          title: const Text('Agregar material',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 340,
+            child: Column(children: [
+              Expanded(
+                child: ListView(
+                  children: kMateriales.map((m) {
+                    final esSel = sel?.nombre == m.nombre;
+                    return InkWell(
+                      onTap: () => setS(() { sel = m; cant = 1; }),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: esSel ? _accent.withValues(alpha: 0.1) : Colors.transparent,
+                          border: Border(left: BorderSide(
+                              color: esSel ? _accent : Colors.transparent, width: 3)),
+                        ),
+                        child: Row(children: [
+                          Icon(m.esSeriado ? Icons.qr_code : Icons.category_outlined,
+                              color: esSel ? _accent : _textDim, size: 15),
+                          const SizedBox(width: 8),
+                          Text(m.nombre,
+                              style: TextStyle(
+                                  color: esSel ? Colors.white : _textDim,
+                                  fontSize: 13,
+                                  fontWeight: esSel ? FontWeight.w600 : FontWeight.normal)),
+                        ]),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              if (sel != null) ...[
+                const Divider(height: 1, color: Color(0xFF1E3A5F)),
+                const SizedBox(height: 10),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  _btnCantidad(Icons.remove, () { if (cant > 1) setS(() => cant--); }),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Text('$cant',
+                        style: const TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
+                  ),
+                  _btnCantidad(Icons.add, () => setS(() => cant++)),
+                ]),
+                const SizedBox(height: 4),
+              ],
+            ]),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar', style: TextStyle(color: _textDim)),
+            ),
+            if (sel != null)
+              FilledButton(
+                onPressed: () {
+                  setState(() => _adicionales.add((material: sel!, cantidad: cant)));
+                  Navigator.pop(ctx);
+                },
+                style: FilledButton.styleFrom(
+                    backgroundColor: _accent, foregroundColor: Colors.black),
+                child: const Text('Agregar',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _btnCantidad(IconData icon, VoidCallback onTap) => InkWell(

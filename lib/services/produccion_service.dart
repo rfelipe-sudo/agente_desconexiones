@@ -20,6 +20,16 @@ class ProduccionService {
   static const int _precioCombustiblePorLitro = 1200; // Pesos chilenos
   static const int _jornadaMinutos = 540; // 9 horas de jornada
 
+  // Técnicos que conservan el turno antiguo 9:45-18:45 (L-V) / 10:00-15:00 (S)
+  static const Set<String> _rutsTurnoAntiguo = {
+    '18117649-0', '17024384-6',
+  };
+
+  // Técnicos con turno rotativo: L/J/S 9:45-17:15  |  M/X/V 9:45-18:15
+  static const Set<String> _rutsTurnoRotativo = {
+    '19548078-8', '19162849-7', '19878777-9',
+  };
+
   final _supabase = Supabase.instance.client;
   final _marcasService = KrpMarcasService();
 
@@ -1519,8 +1529,7 @@ class ProduccionService {
       List<Map<String, dynamic>> detalleInicioTardio = [];
       List<Map<String, dynamic>> detalleHorasExtras = [];
       int horasExtrasTotal = 0;
-      // Para fallback de hora fin: guardar última hora_fin por fecha
-      final Map<String, String> ultimaHoraFinPorDia = {};
+      final Map<String, List<Map<String, dynamic>>> overtimePorSemana = {};
 
       for (var entry in porDia.entries) {
         final fechaStr = entry.key;
@@ -1536,10 +1545,22 @@ class ProduccionService {
           fecha = DateTime(anno, mes, dia);
         }
 
-        // Determinar parámetros según día de la semana
+        // Determinar parámetros según día de la semana y turno del técnico
         final esSabado = fecha?.weekday == DateTime.saturday;
-        final horaInicioJornada = esSabado ? 600 : 585;   // 10:00 o 9:45
-        final horaFinJornada = esSabado ? 900 : 1125;     // 15:00 o 18:45
+        final int horaInicioJornada;
+        final int horaFinJornada;
+        if (_rutsTurnoRotativo.contains(rutTecnico)) {
+          // L/J/S: 9:45–17:15  |  M/X/V: 9:45–18:15
+          final wd = fecha?.weekday ?? DateTime.monday;
+          horaInicioJornada = 585; // 9:45 todos los días
+          horaFinJornada = (esSabado || wd == DateTime.monday || wd == DateTime.thursday)
+              ? 1035  // 17:15
+              : 1095; // 18:15
+        } else {
+          horaInicioJornada = esSabado ? 600 : 585; // 10:00 o 9:45
+          horaFinJornada = esSabado ? 900
+              : (_rutsTurnoAntiguo.contains(rutTecnico) ? 1125 : 1065); // 15:00 | 18:45 | 17:45
+        }
         final tiempoProductivoDia = esSabado ? 240 : 480; // 4h o 8h
 
         if (esSabado) {
@@ -1568,9 +1589,7 @@ class ProduccionService {
         // Primera y última orden del día
         final primeraHora = _parseHoraAMinutos(ordenesDelDia.first['hora_inicio']?.toString() ?? '00:00');
         final ultimaHora = _parseHoraAMinutos(ordenesDelDia.last['hora_fin']?.toString() ?? '00:00');
-        // Registrar hora fin de la última orden del día (string original si existe)
         final ultimaHoraStr = ordenesDelDia.last['hora_fin']?.toString() ?? '';
-        ultimaHoraFinPorDia[fechaStr] = ultimaHoraStr;
 
         // Inicio tardío (si empieza después de la hora esperada pero antes de las 11:00)
         // No contar como atraso si pasa las 11:00 (660 minutos)
@@ -1591,6 +1610,27 @@ class ProduccionService {
           tiempoFinTempranoTotal += (horaFinJornada - ultimaHora);
         }
 
+        // Horas extra: si la última orden termina después del fin de jornada
+        if (ultimaHora > horaFinJornada && partesFecha.length == 3) {
+          final extrasMin = ultimaHora - horaFinJornada;
+          horasExtrasTotal += extrasMin;
+          final diaNum = int.tryParse(partesFecha[0]) ?? 0;
+          int semNum = 1;
+          if (diaNum > 28) semNum = 5;
+          else if (diaNum > 21) semNum = 4;
+          else if (diaNum > 14) semNum = 3;
+          else if (diaNum > 7) semNum = 2;
+          overtimePorSemana.putIfAbsent('semana_$semNum', () => []).add({
+            'fecha': fechaStr,
+            'horasExtrasMin': extrasMin,
+            'esSabado': esSabado,
+            'horaFin': ultimaHoraStr,
+            'dia': diaNum,
+            'mes': int.tryParse(partesFecha[1]) ?? 0,
+            'anno': int.tryParse(partesFecha[2]) ?? 0,
+          });
+        }
+
         // Tiempo en terreno del día
         final tiempoEnTerreno = ultimaHora - primeraHora;
 
@@ -1600,116 +1640,31 @@ class ProduccionService {
         }
       }
 
-      // Horas extras (vista v_tiempos_tecnicos): minutos posteriores a 18:30 L-V o 15:00 Sáb
-      // Horario: 9:45 a 18:30 (L-V) o 10:00 a 15:00 (Sáb)
-      try {
-        // Usamos select('*') para no fallar si cambian los nombres de columnas
-        final extrasResponse = await _supabase
-            .from('v_tiempos_tecnicos')
-            .select('*')
-            .eq('rut_tecnico', rutTecnico)
-            .gt('horas_extras_min', 0)
-            .order('fecha_trabajo', ascending: false);
-
-        final extras = List<Map<String, dynamic>>.from(extrasResponse as List);
-
-        // Candidatos de nombres de campos para hora fin
-        const horaFinKeys = [
-          'hora_fin',
-          'hora_termino',
-          'hora_fin_orden',
-          'hora_fin_real',
-        ];
-
-        // Agrupar por semana
-        Map<String, List<Map<String, dynamic>>> porSemana = {};
-
-        for (final item in extras) {
-          final fechaStr = item['fecha_trabajo']?.toString() ?? '';
-          final partes = fechaStr.split('/');
-          if (partes.length != 3) continue;
-
-          final diaRegistro = int.tryParse(partes[0]) ?? 0;
-          final mesRegistro = int.tryParse(partes[1]) ?? 0;
-          final annoRegistro = int.tryParse(partes[2]) ?? 0;
-          if (mesRegistro != mesConsulta || annoRegistro != annoConsulta) continue;
-
-          final minutos = (item['horas_extras_min'] as num?)?.toInt() ?? 0;
-          horasExtrasTotal += minutos;
-
-          // Tomar horaFin de la vista; si no viene, usar fallback de la última orden completada del día
-          String horaFin = _pickFirstNonEmpty(item, horaFinKeys);
-          if (horaFin.isEmpty) {
-            horaFin = ultimaHoraFinPorDia[fechaStr] ?? '';
-          }
-
-          // Determinar semana: del 1-7, 8-14, 15-21, 22-28, 29-31
-          int semanaNum = 1;
-          if (diaRegistro <= 7) {
-            semanaNum = 1;
-          } else if (diaRegistro <= 14) {
-            semanaNum = 2;
-          } else if (diaRegistro <= 21) {
-            semanaNum = 3;
-          } else if (diaRegistro <= 28) {
-            semanaNum = 4;
-          } else {
-            semanaNum = 5;
-          }
-
-          final claveSemana = 'semana_$semanaNum';
-          porSemana.putIfAbsent(claveSemana, () => []).add({
-            'fecha': fechaStr,
-            'horasExtrasMin': minutos,
-            'esSabado': item['es_sabado'] as bool? ?? false,
-            'horaFin': horaFin,
-            'dia': diaRegistro,
-            'mes': mesRegistro,
-            'anno': annoRegistro,
-          });
-        }
-
-        // Convertir agrupación por semana a lista de semanas
-        for (final entry in porSemana.entries) {
-          final diasSemana = entry.value;
-          final totalSemana = diasSemana.fold<int>(0, (sum, d) => sum + (d['horasExtrasMin'] as int));
-          
-          // Ordenar días de la semana por fecha
-          diasSemana.sort((a, b) => (a['dia'] as int).compareTo(b['dia'] as int));
-          
-          final primerDia = diasSemana.first;
-          final mesSemana = primerDia['mes'] as int;
-          final annoSemana = primerDia['anno'] as int;
-          
-          // Extraer número de semana de la clave (ej: "semana_1" -> 1)
-          final semanaNum = int.tryParse(entry.key.split('_').last) ?? 1;
-          
-          // Calcular inicio y fin de semana
-          final inicioSemana = semanaNum == 1 ? 1 : (semanaNum - 1) * 7 + 1;
-          final finSemana = semanaNum == 5 
-              ? DateTime(annoSemana, mesSemana + 1, 0).day // Último día del mes
-              : semanaNum * 7;
-          
-          detalleHorasExtras.add({
-            'tipo': 'semana',
-            'inicioSemana': inicioSemana,
-            'finSemana': finSemana,
-            'mes': mesSemana,
-            'anno': annoSemana,
-            'totalMinutos': totalSemana,
-            'dias': diasSemana,
-          });
-        }
-
-        // Ordenar semanas por número descendente
-        detalleHorasExtras.sort((a, b) {
-          final semanaA = a['inicioSemana'] as int;
-          final semanaB = b['inicioSemana'] as int;
-          return semanaB.compareTo(semanaA);
+      // Construir detalleHorasExtras desde cálculo Dart (basado en horaFinJornada por RUT)
+      for (final entry in overtimePorSemana.entries) {
+        final diasEntry = entry.value;
+        final totalSemana = diasEntry.fold<int>(0, (s, d) => s + (d['horasExtrasMin'] as int));
+        diasEntry.sort((a, b) => (a['dia'] as int).compareTo(b['dia'] as int));
+        final primerDia = diasEntry.first;
+        final mesSemana  = primerDia['mes']  as int;
+        final annoSemana = primerDia['anno'] as int;
+        final semNum     = int.tryParse(entry.key.split('_').last) ?? 1;
+        final inicioSemana = semNum == 1 ? 1 : (semNum - 1) * 7 + 1;
+        final finSemana    = semNum == 5
+            ? DateTime(annoSemana, mesSemana + 1, 0).day
+            : semNum * 7;
+        detalleHorasExtras.add({
+          'tipo':         'semana',
+          'inicioSemana': inicioSemana,
+          'finSemana':    finSemana,
+          'mes':          mesSemana,
+          'anno':         annoSemana,
+          'totalMinutos': totalSemana,
+          'dias':         diasEntry,
         });
-      } catch (e) {
-        print('❌ [Tiempo] Error obteniendo horas extras: $e');
       }
+      detalleHorasExtras.sort((a, b) =>
+          (b['inicioSemana'] as int).compareTo(a['inicioSemana'] as int));
 
       // Tiempo sin actividad = Inicio tardío + Fin temprano
       final tiempoSinActividad = tiempoInicioTardioTotal + tiempoFinTempranoTotal;
@@ -1786,18 +1741,6 @@ class ProduccionService {
   }
 
   /// Devuelve el primer valor no vacío de las llaves candidatas
-  String _pickFirstNonEmpty(Map<String, dynamic> map, List<String> keys) {
-    for (final k in keys) {
-      final v = map[k];
-      if (v == null) continue;
-      final s = v.toString().trim();
-      if (s.isNotEmpty && s.toLowerCase() != 'null') {
-        return s;
-      }
-    }
-    return '';
-  }
-
   /// Parsear hora "HH:MM" a minutos desde medianoche
   int _parseHoraAMinutos(String hora) {
     try {
