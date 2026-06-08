@@ -1,0 +1,2157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CREABOX — Control de Acceso</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#07090f;--bg2:#0d1117;--bg3:#131a24;--bg4:#1a2336;
+  --border:rgba(56,139,253,.08);--border2:rgba(56,139,253,.18);
+  --text:#cdd9e5;--muted:#4d6175;
+  --blue:#388bfd;--green:#3fb950;--yellow:#d29922;--red:#f85149;--purple:#bc8cff;
+  --font:'Syne',sans-serif;--mono:'JetBrains Mono',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse 80% 60% at 50% -10%,rgba(56,139,253,.06) 0%,transparent 60%);}
+.shell{display:flex;height:100vh;overflow:hidden;}
+.sidebar{width:220px;flex-shrink:0;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:10;}
+.sidebar-top{padding:20px 16px 16px;}
+.logo{display:flex;align-items:center;gap:10px;margin-bottom:28px;}
+.logo-icon{width:34px;height:34px;border-radius:8px;flex-shrink:0;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;font-size:16px;}
+.logo-text{font-size:13px;font-weight:800;letter-spacing:1.5px;}
+.logo-text span{color:var(--blue);}
+.nav-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;padding:0 8px;margin-bottom:6px;}
+.nav-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;margin-bottom:2px;font-size:12px;font-weight:600;cursor:pointer;color:var(--muted);transition:all .15s;border:none;background:none;width:100%;text-align:left;}
+.nav-item:hover{color:var(--text);background:var(--bg3);}
+.nav-item.on{color:var(--blue);background:rgba(56,139,253,.1);}
+.nav-icon{font-size:14px;width:18px;text-align:center;}
+.nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;}
+.sidebar-bottom{margin-top:auto;padding:16px;border-top:1px solid var(--border);}
+.live-row{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:bl 2s infinite;}
+@keyframes bl{0%,100%{opacity:1;}50%{opacity:.3;}}
+.upd{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:4px;}
+.main{flex:1;overflow-y:auto;display:flex;flex-direction:column;}
+.topbar{padding:14px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:rgba(7,9,15,.8);backdrop-filter:blur(12px);position:sticky;top:0;z-index:5;}
+.page-title{font-size:15px;font-weight:700;}
+.page-sub{font-size:11px;color:var(--muted);margin-top:1px;}
+.topbar-right{display:flex;gap:8px;}
+.btn{padding:6px 14px;border-radius:7px;font-size:11px;font-weight:700;font-family:var(--font);cursor:pointer;border:none;letter-spacing:.5px;transition:all .15s;text-transform:uppercase;}
+.btn-primary{background:var(--blue);color:#fff;}
+.btn-primary:hover{background:#4d9bff;}
+.btn-ghost{background:var(--bg3);color:var(--muted);border:1px solid var(--border2);}
+.btn-ghost:hover{color:var(--text);}
+.btn-danger{background:rgba(248,81,73,.12);color:var(--red);border:1px solid rgba(248,81,73,.2);}
+.btn-danger:hover{background:rgba(248,81,73,.22);}
+.btn-success{background:rgba(63,185,80,.12);color:var(--green);border:1px solid rgba(63,185,80,.2);}
+.btn-success:hover{background:rgba(63,185,80,.22);}
+.btn-sm{padding:4px 10px;font-size:10px;}
+.content{padding:24px 28px;flex:1;position:relative;z-index:1;}
+.kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:20px;}
+.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;transition:border-color .2s;}
+.kpi:hover{border-color:var(--border2);}
+.kpi-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;}
+.kpi-val{font-size:26px;font-weight:800;font-family:var(--mono);line-height:1;}
+.kv-blue{color:var(--blue);}.kv-green{color:var(--green);}.kv-yellow{color:var(--yellow);}.kv-red{color:var(--red);}.kv-purple{color:var(--purple);}
+.kpi-sub{font-size:10px;color:var(--muted);margin-top:5px;}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px;}
+.card-h{padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.card-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);}
+.card-title b{color:var(--text);}
+.toolbar{padding:10px 18px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.srch{flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:7px 12px 7px 30px;border-radius:7px;font-size:12px;font-family:var(--font);outline:none;transition:border-color .15s;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%234d6175' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:10px center;}
+.srch:focus{border-color:var(--blue);}.srch::placeholder{color:var(--muted);}
+.chip{padding:5px 12px;border-radius:20px;font-size:10px;font-weight:700;cursor:pointer;background:var(--bg3);border:1px solid var(--border);color:var(--muted);font-family:var(--font);transition:all .15s;text-transform:uppercase;letter-spacing:.5px;}
+.chip.on{background:rgba(56,139,253,.1);border-color:var(--blue);color:var(--blue);}
+.chip:hover:not(.on){color:var(--text);}
+.tw{overflow-x:auto;max-height:calc(100vh-340px);overflow-y:auto;}
+table{width:100%;border-collapse:collapse;}
+thead th{padding:9px 16px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;border-bottom:1px solid var(--border);text-align:left;position:sticky;top:0;background:var(--bg2);z-index:1;white-space:nowrap;}
+tbody tr{border-bottom:1px solid var(--border);transition:background .1s;cursor:pointer;}
+tbody tr:hover{background:var(--bg3);}
+tbody tr:last-child{border-bottom:none;}
+td{padding:10px 16px;font-size:12px;vertical-align:middle;}
+.st{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:4px;font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;font-family:var(--mono);}
+.s-ok{background:rgba(63,185,80,.08);color:var(--green);border:1px solid rgba(63,185,80,.15);}
+.s-pend{background:rgba(210,153,34,.08);color:var(--yellow);border:1px solid rgba(210,153,34,.15);}
+.s-block{background:rgba(248,81,73,.08);color:var(--red);border:1px solid rgba(248,81,73,.15);}
+.sd{width:5px;height:5px;border-radius:50%;background:currentColor;}
+.tp{display:inline-block;padding:2px 7px;border-radius:3px;font-size:9px;font-weight:700;font-family:var(--mono);letter-spacing:.5px;}
+.tp-T{background:rgba(56,139,253,.1);color:var(--blue);}
+.tp-TNE{background:rgba(188,140,255,.1);color:var(--purple);}
+.tp-TA{background:rgba(63,185,80,.1);color:var(--green);}
+.overlay{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.8);backdrop-filter:blur(10px);align-items:center;justify-content:center;}
+.overlay.open{display:flex;}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:14px;width:480px;max-width:95vw;animation:up .2s ease;}
+.modal.wide{width:580px;}
+@keyframes up{from{opacity:0;transform:translateY(14px)scale(.97);}to{opacity:1;transform:none;}}
+.mh{padding:18px 22px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
+.mt{font-size:13px;font-weight:700;}
+.xb{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;transition:color .15s;line-height:1;}
+.xb:hover{color:var(--text);}
+.mb{padding:20px 22px;}
+.mf{padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;}
+.field{margin-bottom:14px;}
+.lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;display:block;}
+.inp{width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:7px;font-size:12px;font-family:var(--font);outline:none;transition:border-color .15s;}
+.inp:focus{border-color:var(--blue);}
+.sel{width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:7px;font-size:12px;font-family:var(--font);cursor:pointer;outline:none;}
+.r2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.vbox{background:var(--bg3);border-radius:8px;padding:12px 14px;margin-top:8px;display:none;}
+.vbox.ok{border:1px solid rgba(63,185,80,.25);}
+.vbox.err{border:1px solid rgba(248,81,73,.25);}
+.vname{font-size:13px;font-weight:700;margin-bottom:3px;}
+.vmeta{font-size:11px;color:var(--muted);font-family:var(--mono);}
+.dh{display:flex;align-items:center;gap:14px;background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:16px;}
+.dav{width:48px;height:48px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff;}
+.dn{font-size:14px;font-weight:700;}
+.ds{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px;}
+.sg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;}
+.sb{background:var(--bg3);border-radius:8px;padding:12px;text-align:center;}
+.sv{font-size:22px;font-weight:800;font-family:var(--mono);color:var(--blue);}
+.sl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-top:3px;}
+.ig{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:11px;margin-bottom:16px;}
+.ik{color:var(--muted);}
+.iv{font-family:var(--mono);font-size:10px;}
+.sei{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:11px;}
+.sei:last-child{border-bottom:none;}
+.toasts{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:6px;}
+.toast{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 16px;font-size:12px;display:flex;align-items:center;gap:10px;min-width:240px;animation:tin .2s ease;box-shadow:0 8px 30px rgba(0,0,0,.5);}
+.toast.ok{border-color:rgba(63,185,80,.3);}.toast.err{border-color:rgba(248,81,73,.3);}
+@keyframes tin{from{opacity:0;transform:translateX(14px);}to{opacity:1;}}
+.empty{padding:50px;text-align:center;color:var(--muted);}
+.empty-i{font-size:32px;margin-bottom:10px;opacity:.5;}
+.pb{height:3px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-top:6px;}
+.pf{height:100%;border-radius:2px;background:var(--blue);transition:width .5s ease;}
+.er{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:11px;}
+.er:last-child{border-bottom:none;}
+.etag{padding:2px 7px;border-radius:3px;font-size:9px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:.5px;}
+.et-v{background:rgba(56,139,253,.1);color:var(--blue);}
+.et-s{background:rgba(210,153,34,.1);color:var(--yellow);}
+.et-e{background:rgba(248,81,73,.1);color:var(--red);}
+.et-o{background:rgba(188,140,255,.1);color:var(--purple);}
+#pane-equipos{padding:0;}
+.eq-bar{padding:12px 0 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.eq-bar-info{font-size:11px;color:var(--muted);font-family:var(--mono);}
+.eq-board{display:flex;gap:10px;overflow-x:auto;padding-bottom:12px;align-items:flex-start;min-height:420px;}
+.eq-board::-webkit-scrollbar{height:6px;}
+.eq-board::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px;}
+.eq-col{width:220px;flex-shrink:0;display:flex;flex-direction:column;max-height:calc(100vh - 240px);}
+.eq-col.eq-sin .eq-col-h{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.06);}
+.eq-col-h{padding:10px 12px;border:1px solid var(--border);border-radius:10px 10px 0 0;background:var(--bg3);display:flex;align-items:center;gap:8px;border-bottom:none;}
+.eq-col.eq-sin .eq-col-h{background:linear-gradient(135deg,rgba(210,153,34,.14),rgba(210,153,34,.04));}
+.eq-avatar{width:28px;height:28px;border-radius:7px;flex-shrink:0;background:rgba(56,139,253,.12);border:1px solid rgba(56,139,253,.25);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--blue);}
+.eq-col.eq-sin .eq-avatar{background:rgba(210,153,34,.15);border-color:rgba(210,153,34,.4);color:var(--yellow);}
+.eq-col-name{font-size:11px;font-weight:700;flex:1;min-width:0;line-height:1.3;}
+.eq-col-cnt{font-size:10px;font-weight:700;color:var(--muted);background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:2px 7px;}
+.eq-list{flex:1;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 10px 10px;background:var(--bg2);min-height:120px;}
+.eq-list.eq-drag-over{background:rgba(56,139,253,.04);outline:1.5px dashed rgba(56,139,253,.25);}
+.eq-list::-webkit-scrollbar{width:4px;}
+.eq-item{display:flex;align-items:center;gap:7px;padding:7px 9px;margin:5px;border-radius:7px;border:1px solid var(--border);border-left:3px solid rgba(56,139,253,.5);background:var(--bg3);cursor:grab;transition:all .12s;}
+.eq-item:hover{background:rgba(56,139,253,.08);border-color:rgba(56,139,253,.35);}
+.eq-item.sortable-chosen{cursor:grabbing;transform:scale(1.02);box-shadow:0 4px 14px rgba(0,0,0,.35);}
+.eq-item.sortable-ghost{opacity:.3;}
+.eq-col.eq-sin .eq-item{border-left-color:rgba(210,153,34,.6);}
+.eq-handle{color:var(--muted);font-size:11px;flex-shrink:0;}
+.eq-ini{width:22px;height:22px;border-radius:5px;background:rgba(56,139,253,.1);border:1px solid rgba(56,139,253,.2);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--blue);flex-shrink:0;}
+.eq-col.eq-sin .eq-ini{background:rgba(210,153,34,.1);border-color:rgba(210,153,34,.25);color:var(--yellow);}
+.eq-col.eq-lic .eq-col-h{border-color:rgba(188,140,255,.35);background:rgba(188,140,255,.08);}
+.eq-col.eq-lic .eq-col-h{background:linear-gradient(135deg,rgba(188,140,255,.16),rgba(188,140,255,.05));}
+.eq-col.eq-lic .eq-avatar{background:rgba(188,140,255,.15);border-color:rgba(188,140,255,.4);color:var(--purple);}
+.eq-col.eq-lic .eq-item{border-left-color:rgba(188,140,255,.65);}
+.eq-col.eq-lic .eq-ini{background:rgba(188,140,255,.1);border-color:rgba(188,140,255,.25);color:var(--purple);}
+.eq-nom{font-size:11px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.eq-empty{text-align:center;padding:16px 8px;color:var(--muted);font-size:10px;font-style:italic;}
+.eq-div{width:1px;background:var(--border);flex-shrink:0;align-self:stretch;margin:0 2px;}
+.eq-loading{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:var(--muted);font-size:12px;height:200px;width:100%;}
+.eq-spin{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.eq-import-res{max-height:280px;overflow-y:auto;font-size:11px;margin-top:10px;}
+.eq-import-res .ok{color:var(--green);}.eq-import-res .warn{color:var(--yellow);}.eq-import-res .bad{color:var(--red);}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<nav class="sidebar">
+  <div class="sidebar-top">
+    <div class="logo">
+      <div class="logo-icon">📱</div>
+      <div class="logo-text">CREA<span>BOX</span></div>
+    </div>
+    <div class="nav-lbl">Panel</div>
+    <button class="nav-item on" onclick="setNav('dispositivos',this)">
+      <span class="nav-icon">📱</span>Dispositivos
+      <span class="nav-badge" id="navPend" style="display:none">0</span>
+    </button>
+    <button class="nav-item" onclick="setNav('sesiones',this)">
+      <span class="nav-icon">⏱</span>Sesiones
+    </button>
+    <button class="nav-item" onclick="setNav('uso',this)">
+      <span class="nav-icon">📊</span>Uso de la app
+    </button>
+    <button class="nav-item" id="navDup" onclick="setNav('duplicados',this)">
+      <span class="nav-icon">⚠️</span>Duplicados
+      <span class="nav-badge" id="navDupBadge" style="display:none">0</span>
+    </button>
+    <button class="nav-item" id="navGps" onclick="setNav('gps',this)">
+      <span class="nav-icon">📡</span>GPS Apagado
+      <span class="nav-badge" id="navGpsBadge" style="display:none">0</span>
+    </button>
+    <button class="nav-item" id="navTec" onclick="setNav('tecnicos',this)">
+      <span class="nav-icon">👷</span>Técnicos
+    </button>
+    <button class="nav-item" id="navEq" onclick="setNav('equipos',this)">
+      <span class="nav-icon">👥</span>Equipos
+    </button>
+    <button class="nav-item" id="navCom" onclick="setNav('comunicados',this)">
+      <span class="nav-icon">📢</span>Comunicados
+    </button>
+  </div>
+  <div class="sidebar-bottom">
+    <div class="live-row"><div class="dot"></div>En vivo</div>
+    <div class="upd" id="lastUpdate">—</div>
+  </div>
+</nav>
+
+<div class="main">
+  <div class="topbar">
+    <div>
+      <div class="page-title" id="pageTitle">Dispositivos registrados</div>
+      <div class="page-sub" id="pageSub">Control de acceso CREABOX</div>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-ghost" onclick="cargarTodo()">↻ Actualizar</button>
+      <button class="btn btn-primary" id="btnAdd" onclick="abrirAgregar()">+ Agregar dispositivo</button>
+      <button class="btn btn-success" id="btnImportPlantel" onclick="eqAbrirImport()" style="display:none">📥 Importar plantel</button>
+      <input type="file" id="eqFileInput" accept=".xlsx,.xls" style="display:none" onchange="eqProcesarExcel(this)">
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- DISPOSITIVOS -->
+    <div id="pane-dispositivos">
+      <div class="kpi-grid" style="grid-template-columns:repeat(8,1fr)">
+        <div class="kpi"><div class="kpi-lbl">Total</div><div class="kpi-val kv-blue" id="kTotal">—</div><div class="kpi-sub">registrados</div></div>
+        <div class="kpi"><div class="kpi-lbl">Autorizados</div><div class="kpi-val kv-green" id="kAuth">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">Pendientes</div><div class="kpi-val kv-yellow" id="kPend">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">Bloqueados</div><div class="kpi-val kv-red" id="kBlock">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">Sin técnico</div><div class="kpi-val kv-purple" id="kNoRut">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">Activos hoy</div><div class="kpi-val" id="kHoy">—</div></div>
+        <div class="kpi" id="kpiVer" style="cursor:pointer" onclick="setF('sin_version',document.querySelectorAll('.chip')[4])" title="Dispositivos autorizados sin versión reportada"><div class="kpi-lbl">📦 Sin versión</div><div class="kpi-val kv-yellow" id="kSinVer">—</div><div class="kpi-sub">pendiente actualizar</div></div>
+        <div class="kpi" id="kpiDup" style="cursor:pointer;border-color:rgba(210,153,34,.25)" onclick="setNav('duplicados',document.getElementById('navDup'))" title="RUTs con más de 1 dispositivo registrado"><div class="kpi-lbl">⚠️ Duplicados</div><div class="kpi-val kv-yellow" id="kDup">—</div><div class="kpi-sub">mismo RUT</div></div>
+      </div>
+      <div class="card">
+        <div class="card-h">
+          <div class="card-title"><b>Dispositivos</b></div>
+        </div>
+        <div class="toolbar">
+          <input class="srch" type="text" placeholder="Buscar IMEI, RUT o nombre..." id="srchD" oninput="renderDisp()">
+          <button class="chip on" onclick="setF('todos',this)">Todos</button>
+          <button class="chip" onclick="setF('pendiente',this)">⏳ Pendientes</button>
+          <button class="chip" onclick="setF('autorizado',this)">✅ Auth</button>
+          <button class="chip" onclick="setF('bloqueado',this)">🔴 Bloq</button>
+          <button class="chip" onclick="setF('sin_version',this)">📦 Sin versión</button>
+        </div>
+        <div class="tw">
+          <table>
+            <thead><tr>
+              <th>Estado</th><th>Técnico</th><th>Tipo</th>
+              <th>Device ID</th><th>Modelo</th>
+              <th>Versión</th><th>Sesiones</th><th>Tiempo</th><th>Último acceso</th><th>Acciones</th>
+            </tr></thead>
+            <tbody id="tbD"><tr><td colspan="10" style="text-align:center;padding:30px;color:var(--muted)">Cargando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- SESIONES -->
+    <div id="pane-sesiones" style="display:none">
+      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi"><div class="kpi-lbl">Hoy</div><div class="kpi-val kv-blue" id="sHoy">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">7 días</div><div class="kpi-val" id="s7d">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">Prom. duración</div><div class="kpi-val" id="sProm">—</div><div class="kpi-sub">minutos</div></div>
+        <div class="kpi"><div class="kpi-lbl">Técnicos activos hoy</div><div class="kpi-val kv-green" id="sTec">—</div></div>
+      </div>
+      <div class="card">
+        <div class="card-h">
+          <div class="card-title"><b>Sesiones</b></div>
+          <select class="sel" style="width:auto;padding:5px 10px;font-size:10px" id="selDias" onchange="cargarSesiones()">
+            <option value="1">Hoy</option><option value="7" selected>7 días</option><option value="30">30 días</option>
+          </select>
+        </div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Técnico</th><th>Inicio</th><th>Fin</th><th>Duración</th><th>Pantalla inicio</th><th>Versión</th></tr></thead>
+            <tbody id="tbS"><tr><td colspan="6" style="text-align:center;padding:30px;color:var(--muted)">Cargando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- USO -->
+    <div id="pane-uso" style="display:none">
+      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi"><div class="kpi-lbl">Eventos hoy</div><div class="kpi-val kv-blue" id="uEv">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">Pantalla top</div><div class="kpi-val" id="uTop" style="font-size:14px">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">Solicitudes combustible</div><div class="kpi-val kv-yellow" id="uSol">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">Errores app</div><div class="kpi-val kv-red" id="uErr">—</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="card">
+          <div class="card-h"><div class="card-title"><b>Top técnicos por uso</b></div></div>
+          <div id="topTec" style="padding:4px 0"></div>
+        </div>
+        <div class="card">
+          <div class="card-h"><div class="card-title"><b>Eventos recientes</b></div></div>
+          <div id="evRec" style="padding:8px 16px;max-height:340px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GPS APAGADO -->
+    <div id="pane-gps" style="display:none">
+      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi" style="border-color:rgba(248,81,73,.2)"><div class="kpi-lbl">GPS apagado ahora</div><div class="kpi-val kv-red" id="gApagados">—</div><div class="kpi-sub">técnicos sin señal</div></div>
+        <div class="kpi"><div class="kpi-lbl">Con GPS activo</div><div class="kpi-val kv-green" id="gActivos">—</div><div class="kpi-sub">reportando posición</div></div>
+        <div class="kpi"><div class="kpi-lbl">Alertas hoy</div><div class="kpi-val kv-yellow" id="gAlertasHoy">—</div><div class="kpi-sub">apagones registrados</div></div>
+        <div class="kpi"><div class="kpi-lbl">Últ. alerta</div><div class="kpi-val" id="gUltima" style="font-size:14px">—</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="card" style="border-color:rgba(248,81,73,.2)">
+          <div class="card-h" style="background:rgba(248,81,73,.04)">
+            <div class="card-title"><b>🔴 Con GPS apagado ahora</b></div>
+            <button class="btn btn-ghost btn-sm" onclick="cargarGps()">↻ Actualizar</button>
+          </div>
+          <div id="gpsApagadoList" style="padding:4px 0;min-height:60px"></div>
+        </div>
+        <div class="card">
+          <div class="card-h">
+            <div class="card-title"><b>Historial de alertas — últimas 24h</b></div>
+          </div>
+          <div id="gpsAlertasList" style="padding:8px 16px;max-height:340px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TÉCNICOS -->
+    <div id="pane-tecnicos" style="display:none">
+      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi"><div class="kpi-lbl">Total nómina</div><div class="kpi-val kv-blue" id="tTotal">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">Vigentes</div><div class="kpi-val kv-green" id="tVigentes">—</div></div>
+        <div class="kpi"><div class="kpi-lbl">No vigentes</div><div class="kpi-val kv-red" id="tNoVig">—</div></div>
+        <div class="kpi" style="border-color:rgba(210,153,34,.25)"><div class="kpi-lbl">Sin supervisor</div><div class="kpi-val kv-yellow" id="tSinSup">—</div></div>
+      </div>
+      <div class="card">
+        <div class="card-h">
+          <div class="card-title"><b>Nómina de técnicos</b></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input class="srch" type="text" placeholder="Buscar RUT o nombre..." id="srchT" oninput="renderTecnicos()" style="max-width:260px;flex:none">
+            <button class="btn btn-primary btn-sm" onclick="abrirAgregarTecnico()">+ Agregar técnico</button>
+          </div>
+        </div>
+        <div style="padding:8px 18px;border-bottom:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap">
+          <button class="chip on" onclick="setFT('todos',this)">Todos</button>
+          <button class="chip" onclick="setFT('vigente',this)">✅ Vigentes</button>
+          <button class="chip" onclick="setFT('no_vigente',this)">❌ No vigentes</button>
+          <button class="chip" onclick="setFT('licencia_medica',this)">🏥 Licencia médica</button>
+          <button class="chip" onclick="setFT('sin_supervisor',this)">⚠️ Sin supervisor</button>
+        </div>
+        <div class="tw">
+          <table>
+            <thead><tr>
+              <th>Técnico</th><th>RUT</th><th>Tipo</th><th>Vigencia</th><th>CC</th><th>Ingreso</th><th>Supervisor</th>
+            </tr></thead>
+            <tbody id="tbT"><tr><td colspan="7" style="text-align:center;padding:30px;color:var(--muted)">Cargando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- EQUIPOS -->
+    <div id="pane-equipos" style="display:none">
+      <div class="eq-bar">
+        <input class="srch" type="text" placeholder="Buscar nombre o RUT…" id="eqBuscar" oninput="eqFiltrar(this.value)" style="max-width:240px;flex:none">
+        <span class="eq-bar-info" id="eqInfo">—</span>
+        <span class="eq-bar-info" id="eqLastUpd" style="margin-left:auto">—</span>
+      </div>
+      <div class="eq-board" id="eqBoard">
+        <div class="eq-loading"><div class="eq-spin"></div>Cargando equipos…</div>
+      </div>
+    </div>
+
+    <!-- COMUNICADOS -->
+    <div id="pane-comunicados" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1.2fr;gap:16px;margin-bottom:16px">
+        <div class="card">
+          <div class="card-h">
+            <div class="card-title"><b>Nuevo comunicado</b></div>
+          </div>
+          <div style="padding:18px">
+            <div class="field">
+              <label class="lbl">Título</label>
+              <input class="inp" id="comTitulo" placeholder="Ej: Actualización operativa v1.5">
+            </div>
+            <div class="field">
+              <label class="lbl">Mensaje</label>
+              <textarea class="inp" id="comMensaje" rows="6" placeholder="Texto del comunicado que debe leer y firmar el técnico..." style="resize:vertical;min-height:120px"></textarea>
+            </div>
+            <div class="field">
+              <label class="lbl">Modo de envío</label>
+              <select class="sel" id="comTipo" onchange="toggleComModo()">
+                <option value="por_roles">📢 Por roles — elige uno o más</option>
+                <option value="personalizado">👤 Personalizado — RUT(s) específicos</option>
+              </select>
+            </div>
+            <div class="field" id="comRolesWrap">
+              <label class="lbl">Roles destinatarios (puedes elegir varios)</label>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">
+                <button type="button" class="chip com-rol on" data-rol="todos" onclick="toggleComRol(this)">Todos</button>
+                <button type="button" class="chip com-rol" data-rol="tecnico" onclick="toggleComRol(this)">Técnicos</button>
+                <button type="button" class="chip com-rol" data-rol="ito" onclick="toggleComRol(this)">ITOs</button>
+                <button type="button" class="chip com-rol" data-rol="supervisor" onclick="toggleComRol(this)">Supervisores</button>
+                <button type="button" class="chip com-rol" data-rol="bodeguero" onclick="toggleComRol(this)">Bodegueros</button>
+                <button type="button" class="chip com-rol" data-rol="flota" onclick="toggleComRol(this)">Flota</button>
+                <button type="button" class="chip com-rol" data-rol="administrativo" onclick="toggleComRol(this)">Administrativos</button>
+              </div>
+              <div style="font-size:10px;color:var(--muted);margin-top:8px">Si marcas <b>Todos</b>, se deseleccionan los demás. Puedes combinar roles específicos sin «Todos».</div>
+            </div>
+            <div class="field" id="comRutsWrap" style="display:none">
+              <label class="lbl">RUTs destino (uno por línea o separados por coma)</label>
+              <textarea class="inp" id="comRuts" rows="3" placeholder="19878777-9&#10;12345678-9"></textarea>
+            </div>
+            <div class="field">
+              <label class="lbl">Enviado por</label>
+              <input class="inp" id="comCreador" placeholder="Ej: Coordinación CREABOX" value="Dashboard CREABOX">
+            </div>
+            <button type="button" class="btn btn-primary" id="comBtnEnviar" style="width:100%">📢 Enviar y notificar</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h">
+            <div class="card-title"><b>Historial de comunicados</b></div>
+            <button class="btn btn-ghost btn-sm" onclick="cargarComunicados()">↻</button>
+          </div>
+          <div class="tw" style="max-height:420px">
+            <table>
+              <thead><tr>
+                <th>Fecha</th><th>Título</th><th>Tipo</th><th>Lecturas</th><th>Acciones</th>
+              </tr></thead>
+              <tbody id="tbCom"><tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted)">Cargando...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="card" id="comDetalleCard" style="display:none">
+        <div class="card-h">
+          <div class="card-title"><b id="comDetTitulo">Lecturas y firmas</b></div>
+          <input class="srch" type="text" placeholder="Buscar por nombre o RUT..." id="srchComLect" oninput="renderComLecturas()" style="max-width:260px;flex:none">
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('comDetalleCard').style.display='none'">Cerrar</button>
+        </div>
+        <div id="comDetLeyenda" style="padding:14px 18px;border-bottom:1px solid var(--border)"></div>
+        <div class="tw" style="max-height:400px">
+          <table>
+            <thead><tr>
+              <th style="width:40px"></th><th>Nombre</th><th>RUT</th><th>Estado</th><th>Leído</th><th>Firma</th><th>Certificado</th>
+            </tr></thead>
+            <tbody id="tbComLect"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- DUPLICADOS -->
+    <div id="pane-duplicados" style="display:none">
+      <div class="card" style="margin-bottom:16px;border-color:rgba(210,153,34,.25)">
+        <div class="card-h" style="background:rgba(210,153,34,.04)">
+          <div class="card-title"><b>⚠️ RUTs con múltiples dispositivos</b></div>
+          <div style="font-size:10px;color:var(--muted)">Mismo técnico — distinto teléfono. Conserva el activo y elimina los antiguos.</div>
+        </div>
+        <div id="dupList" style="padding:8px 0">
+          <div class="empty"><div class="empty-i">✅</div>Sin duplicados detectados</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-h">
+          <div class="card-title"><b>Todos los dispositivos — agrupados por técnico</b></div>
+          <input class="srch" type="text" placeholder="Buscar técnico o RUT..." id="srchG" oninput="renderGrupos()" style="max-width:280px;flex:none">
+        </div>
+        <div id="gruposList" style="padding:0"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+
+<!-- MODAL AGREGAR -->
+<div class="overlay" id="mAgregar">
+  <div class="modal">
+    <div class="mh"><div class="mt">+ Registrar dispositivo</div><button class="xb" onclick="cl('mAgregar')">×</button></div>
+    <div class="mb">
+      <div class="field">
+        <label class="lbl">Device ID / IMEI</label>
+        <input class="inp" id="aImei" placeholder="Pegar el ID del dispositivo">
+      </div>
+      <div class="field">
+        <label class="lbl">RUT del técnico</label>
+        <div style="display:flex;gap:8px">
+          <input class="inp" id="aRut" placeholder="Ej: 12345678-9" style="flex:1">
+          <button class="btn btn-ghost" onclick="buscarRut()">Buscar</button>
+        </div>
+        <div class="vbox" id="vbox">
+          <div class="vname" id="vname"></div>
+          <div class="vmeta" id="vmeta"></div>
+        </div>
+      </div>
+      <div class="field">
+        <label class="lbl">Modelo del dispositivo</label>
+        <input class="inp" id="aModelo" placeholder="Ej: Samsung Galaxy A54">
+      </div>
+      <div class="field">
+        <label class="lbl">Estado inicial</label>
+        <select class="sel" id="aEstado">
+          <option value="true">✅ Autorizado inmediatamente</option>
+          <option value="false">⏳ Pendiente de revisión</option>
+        </select>
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn btn-ghost" onclick="cl('mAgregar')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarAgregar()">Registrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DETALLE -->
+<div class="overlay" id="mDetalle">
+  <div class="modal wide">
+    <div class="mh"><div class="mt" id="dTitle">Detalle</div><button class="xb" onclick="cl('mDetalle')">×</button></div>
+    <div class="mb" id="dBody"></div>
+    <div class="mf">
+      <button class="btn btn-danger btn-sm" onclick="eliminarBtn()">🗑 Eliminar</button>
+      <button class="btn btn-danger btn-sm" id="dBlock" onclick="toggleEst()">Bloquear</button>
+      <button class="btn btn-success btn-sm" id="dEnable" style="display:none" onclick="toggleEst()">✅ Habilitar</button>
+      <button class="btn btn-ghost btn-sm" onclick="cl('mDetalle')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CONFIRMAR ELIMINAR -->
+<div class="overlay" id="mConfirm">
+  <div class="modal" style="width:360px">
+    <div class="mh"><div class="mt">⚠️ Eliminar dispositivo</div><button class="xb" onclick="cl('mConfirm')">×</button></div>
+    <div class="mb">
+      <p style="font-size:13px;color:var(--muted);line-height:1.7">
+        ¿Eliminar el dispositivo de <b id="confN" style="color:var(--text)">—</b>?<br>
+        Esta acción no se puede deshacer.
+      </p>
+    </div>
+    <div class="mf">
+      <button class="btn btn-ghost" onclick="cl('mConfirm')">Cancelar</button>
+      <button class="btn btn-danger" onclick="confirmarEliminar()">Sí, eliminar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL AGREGAR TÉCNICO -->
+<div class="overlay" id="mAgregarTecnico">
+  <div class="modal wide">
+    <div class="mh"><div class="mt">👷 Agregar técnico a nómina</div><button class="xb" onclick="cl('mAgregarTecnico')">×</button></div>
+    <div class="mb">
+      <div class="r2">
+        <div class="field">
+          <label class="lbl">RUT</label>
+          <input class="inp" id="tRut" placeholder="Ej: 12345678-9">
+        </div>
+        <div class="field">
+          <label class="lbl">Tipo personal</label>
+          <select class="sel" id="tTipo">
+            <option value="T">T — Técnico</option>
+            <option value="TNE">TNE — Técnico No Empleado</option>
+            <option value="TA">TA — Técnico Administrativo</option>
+          </select>
+        </div>
+      </div>
+      <div class="r2">
+        <div class="field">
+          <label class="lbl">Nombres</label>
+          <input class="inp" id="tNombres" placeholder="Ej: JUAN CARLOS">
+        </div>
+        <div class="field">
+          <label class="lbl">Apellido paterno</label>
+          <input class="inp" id="tPaterno" placeholder="Ej: GONZALEZ">
+        </div>
+      </div>
+      <div class="r2">
+        <div class="field">
+          <label class="lbl">Apellido materno</label>
+          <input class="inp" id="tMaterno" placeholder="Ej: PEREZ">
+        </div>
+        <div class="field">
+          <label class="lbl">Centro de costo (CC)</label>
+          <input class="inp" id="tCc" placeholder="Ej: CC01">
+        </div>
+      </div>
+      <div class="r2">
+        <div class="field">
+          <label class="lbl">Fecha de ingreso</label>
+          <input class="inp" type="date" id="tFecha">
+        </div>
+        <div class="field">
+          <label class="lbl">Estado vigencia</label>
+          <select class="sel" id="tVigencia">
+            <option value="vigente">✅ Vigente</option>
+            <option value="licencia_medica">🏥 Licencia médica</option>
+            <option value="no_vigente">❌ No vigente</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label class="lbl">Supervisor asignado</label>
+        <select class="sel" id="tSupervisor">
+          <option value="">— Sin supervisor —</option>
+        </select>
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn btn-ghost" onclick="cl('mAgregarTecnico')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarAgregarTecnico()">Guardar técnico</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal mover técnico -->
+<div class="overlay" id="mEqMover">
+  <div class="modal">
+    <div class="mh"><div class="mt">Confirmar cambio de equipo</div><button class="xb" onclick="cl('mEqMover')">×</button></div>
+    <div class="mb"><p id="eqMoverMsg" style="font-size:12px;color:var(--muted);line-height:1.6;margin:0">¿Mover técnico?</p></div>
+    <div class="mf">
+      <button class="btn btn-ghost" onclick="eqCancelarMover()">Cancelar</button>
+      <button class="btn btn-primary" id="eqBtnConfirm" onclick="eqConfirmarMover()">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal importar plantel -->
+<div class="overlay" id="mEqImport">
+  <div class="modal wide">
+    <div class="mh"><div class="mt">Importar plantel desde Excel</div><button class="xb" onclick="cl('mEqImport')">×</button></div>
+    <div class="mb">
+      <p style="font-size:11px;color:var(--muted);margin-bottom:10px">Archivo <b>Maestro CLAROVTR</b>, hoja <b>MAESTRO</b>. Columnas RUN, Nombre Trabajador, Estado y Supervisor. Solo filas <b>operativas</b>. Los RUT nuevos se crean en nómina automáticamente.</p>
+      <div id="eqImportResumen" style="font-size:12px;font-weight:600;margin-bottom:8px">—</div>
+      <div class="eq-import-res" id="eqImportDetalle"></div>
+    </div>
+    <div class="mf">
+      <button class="btn btn-ghost" onclick="cl('mEqImport')">Cancelar</button>
+      <button class="btn btn-primary" id="eqBtnImport" onclick="eqEjecutarImport()" disabled>Aplicar cambios</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+const SB_URL='https://efvicvqffvxocnrqjxrs.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmdmljdnFmZnZ4b2NucnFqeHJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0Mzc4MjMsImV4cCI6MjA4MTAxMzgyM30._RIVNg4_FoMKDJWbdi8QuS6LSsjjaAapwkTa_9Gb0Cc';
+const sb=supabase.createClient(SB_URL,SB_KEY);
+
+let dispositivos=[],filtro='todos',selImei=null;
+
+document.addEventListener('DOMContentLoaded',()=>{
+  cargarTodo();
+  cargarGps();
+  setInterval(cargarTodo,60000);
+  sb.channel('disp').on('postgres_changes',{event:'*',schema:'public',table:'dispositivos_autorizados'},()=>cargarDispositivos()).subscribe();
+  sb.channel('gps-alertas').on('postgres_changes',{event:'INSERT',schema:'public',table:'alertas_gps_apagado'},(payload)=>{
+    const nom=payload.new?.nombre_tecnico||payload.new?.rut_tecnico||'Técnico';
+    toast(`📡 GPS apagado: ${nom}`,'err');
+    cargarGps();
+    // Auto-navegar al panel GPS si no estamos ya ahí
+    if(document.getElementById('pane-gps').style.display==='none'){
+      setNav('gps',document.getElementById('navGps'));
+    }
+  }).subscribe();
+  sb.channel('gps-ubicaciones').on('postgres_changes',{event:'*',schema:'public',table:'ubicaciones_activas'},()=>cargarGps()).subscribe();
+  document.getElementById('comBtnEnviar')?.addEventListener('click',()=>enviarComunicado());
+});
+
+async function cargarTodo(){
+  await Promise.all([cargarDispositivos(),cargarSesiones(),cargarUso()]);
+  document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString('es-CL');
+}
+
+async function cargarDispositivos(){
+  const{data}=await sb.from('dispositivos_autorizados').select('*').order('primer_registro',{ascending:false});
+  dispositivos=data||[];
+  const hoy=new Date().toISOString().substring(0,10);
+  const pend=dispositivos.filter(d=>!d.habilitado&&!d.motivo_bloqueo).length;
+  document.getElementById('kTotal').textContent=dispositivos.length;
+  document.getElementById('kAuth').textContent=dispositivos.filter(d=>d.habilitado).length;
+  document.getElementById('kPend').textContent=pend;
+  document.getElementById('kBlock').textContent=dispositivos.filter(d=>!d.habilitado&&d.motivo_bloqueo).length;
+  document.getElementById('kNoRut').textContent=dispositivos.filter(d=>!d.rut_tecnico).length;
+  document.getElementById('kHoy').textContent=dispositivos.filter(d=>d.ultimo_acceso?.startsWith(hoy)).length;
+  const nSinVer=dispositivos.filter(d=>d.habilitado&&!d.app_version).length;
+  document.getElementById('kSinVer').textContent=nSinVer;
+  document.getElementById('kpiVer').style.borderColor=nSinVer>0?'rgba(210,153,34,.4)':'rgba(63,185,80,.25)';
+
+  // Detectar RUTs con más de 1 dispositivo
+  const porRut={};
+  dispositivos.filter(d=>d.rut_tecnico).forEach(d=>{
+    if(!porRut[d.rut_tecnico])porRut[d.rut_tecnico]=[];
+    porRut[d.rut_tecnico].push(d);
+  });
+  const rutsDup=Object.values(porRut).filter(arr=>arr.length>1);
+  const nDup=rutsDup.length;
+  document.getElementById('kDup').textContent=nDup;
+  const kpiEl=document.getElementById('kpiDup');
+  kpiEl.style.borderColor=nDup>0?'rgba(210,153,34,.5)':'rgba(63,185,80,.25)';
+  kpiEl.querySelector('.kpi-lbl').textContent=nDup>0?'⚠️ Duplicados':'✅ Sin duplicados';
+  const nb=document.getElementById('navPend');
+  nb.textContent=pend;nb.style.display=pend>0?'':'none';
+  const nbDup=document.getElementById('navDupBadge');
+  nbDup.textContent=nDup;nbDup.style.display=nDup>0?'':'none';
+  renderDisp();
+}
+
+function est(d){return d.habilitado?'autorizado':d.motivo_bloqueo?'bloqueado':'pendiente';}
+
+function renderDisp(){
+  const q=document.getElementById('srchD').value.toLowerCase();
+  const tb=document.getElementById('tbD');
+  // Detectar RUTs duplicados para marcarlos
+  const cntRut={};
+  dispositivos.filter(d=>d.rut_tecnico).forEach(d=>{cntRut[d.rut_tecnico]=(cntRut[d.rut_tecnico]||0)+1;});
+  const list=dispositivos.filter(d=>{
+    const mq=!q||(d.imei||'').toLowerCase().includes(q)||(d.rut_tecnico||'').toLowerCase().includes(q)||(d.nombre_tecnico||'').toLowerCase().includes(q);
+    const fok=filtro==='todos'||est(d)===filtro||(filtro==='sin_version'&&!d.app_version);
+    return mq&&fok;
+  });
+  if(!list.length){tb.innerHTML=`<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--muted)">Sin resultados</td></tr>`;return;}
+  tb.innerHTML=list.map(d=>{
+    const e=est(d);
+    const sc=e==='autorizado'?'s-ok':e==='pendiente'?'s-pend':'s-block';
+    const lb=e==='autorizado'?'Autorizado':e==='pendiente'?'Pendiente':'Bloqueado';
+    const nom=d.nombre_tecnico||'Sin asignar';
+    const ini=nom.split(' ').slice(0,2).map(p=>p[0]).join('').toUpperCase()||'?';
+    const col=e==='autorizado'?'#3fb950':e==='pendiente'?'#d29922':'#f85149';
+    const acc=d.ultimo_acceso?new Date(d.ultimo_acceso).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+    const hrs=d.total_minutos?Math.round(d.total_minutos/60)+'h':'—';
+    const tipo=d.tipo_personal?`<span class="tp tp-${d.tipo_personal}">${d.tipo_personal}</span>`:'—';
+    const devId=(d.imei||'').substring(0,16)+(d.imei?.length>16?'…':'');
+    const isDup=d.rut_tecnico&&cntRut[d.rut_tecnico]>1;
+    const dupTag=isDup?`<span title="Este RUT tiene ${cntRut[d.rut_tecnico]} dispositivos" style="display:inline-block;margin-left:5px;padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;background:rgba(210,153,34,.15);color:var(--yellow);cursor:pointer" onclick="event.stopPropagation();setNav('duplicados',document.getElementById('navDup'))">×${cntRut[d.rut_tecnico]}</span>`:'';
+    return`<tr onclick="verDetalle('${d.imei}')" style="${isDup?'background:rgba(210,153,34,.03)':''}">
+      <td><span class="st ${sc}"><span class="sd"></span>${lb}</span></td>
+      <td><div style="display:flex;align-items:center;gap:9px">
+        <div style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:${col}22;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:${col}">${ini}</div>
+        <div><div style="font-size:12px;font-weight:600">${nom}${dupTag}</div><div style="font-size:10px;color:var(--muted);font-family:var(--mono)">${d.rut_tecnico||'—'}</div></div>
+      </div></td>
+      <td>${tipo}</td>
+      <td style="font-family:var(--mono);font-size:10px;color:var(--muted)">${devId}</td>
+      <td style="font-size:11px;color:var(--muted)">${d.modelo_dispositivo||'—'}</td>
+      <td>${d.app_version?`<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:9px;font-weight:700;font-family:var(--mono);background:rgba(56,139,253,.1);color:var(--blue);border:1px solid rgba(56,139,253,.2)">${d.app_version}</span>`:'<span style="color:var(--muted);font-size:10px">—</span>'}</td>
+      <td style="font-family:var(--mono);color:var(--blue)">${d.total_sesiones||0}</td>
+      <td style="font-family:var(--mono);color:var(--muted)">${hrs}</td>
+      <td style="font-size:11px;color:var(--muted)">${acc}</td>
+      <td onclick="event.stopPropagation()"><div style="display:flex;gap:4px">
+        ${e!=='autorizado'
+          ?`<button class="btn btn-success btn-sm" onclick="cambiarEstado('${d.imei}',true)">Habilitar</button>`
+          :`<button class="btn btn-danger btn-sm" onclick="cambiarEstado('${d.imei}',false)">Bloquear</button>`}
+        <button class="btn btn-ghost btn-sm" onclick="eliminarRapido('${d.imei}')">🗑</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function setF(f,btn){filtro=f;document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));btn.classList.add('on');renderDisp();}
+
+async function verDetalle(imei){
+  const d=dispositivos.find(x=>x.imei===imei);if(!d)return;
+  selImei=imei;
+  const e=est(d);
+  const nom=d.nombre_tecnico||'Sin asignar';
+  const col=e==='autorizado'?'#3fb950':e==='pendiente'?'#d29922':'#f85149';
+  const ini=nom.split(' ').slice(0,2).map(p=>p[0]).join('').toUpperCase()||'?';
+  const hrs=Math.round((d.total_minutos||0)/60);
+  document.getElementById('dTitle').textContent=nom;
+  const bB=document.getElementById('dBlock'),bE=document.getElementById('dEnable');
+  if(e==='autorizado'){bB.style.display='';bE.style.display='none';}else{bB.style.display='none';bE.style.display='';}
+  const{data:ses}=await sb.from('app_sesiones').select('*').eq('imei',imei).order('inicio',{ascending:false}).limit(5);
+  document.getElementById('dBody').innerHTML=`
+    <div class="dh">
+      <div class="dav" style="background:${col}22;color:${col}">${ini}</div>
+      <div>
+        <div class="dn">${nom}</div>
+        <div class="ds">${d.rut_tecnico||'Sin RUT asignado'}</div>
+        ${d.tipo_personal?`<span class="tp tp-${d.tipo_personal}" style="margin-top:5px;display:inline-block">${d.tipo_personal}</span>`:''}
+      </div>
+      <div style="margin-left:auto"><span class="st ${e==='autorizado'?'s-ok':e==='pendiente'?'s-pend':'s-block'}"><span class="sd"></span>${e}</span></div>
+    </div>
+    <div class="sg">
+      <div class="sb"><div class="sv">${d.total_sesiones||0}</div><div class="sl">Sesiones</div></div>
+      <div class="sb"><div class="sv">${hrs}h</div><div class="sl">Tiempo total</div></div>
+      <div class="sb"><div class="sv" style="font-size:14px">${d.app_version||'—'}</div><div class="sl">Versión app</div></div>
+    </div>
+    <div class="ig">
+      <span class="ik">Device ID</span><span class="iv">${d.imei}</span>
+      <span class="ik">Modelo</span><span class="iv">${d.modelo_dispositivo||'—'}</span>
+      <span class="ik">Primer registro</span><span class="iv">${d.primer_registro?new Date(d.primer_registro).toLocaleString('es-CL'):'—'}</span>
+      <span class="ik">Último acceso</span><span class="iv">${d.ultimo_acceso?new Date(d.ultimo_acceso).toLocaleString('es-CL'):'—'}</span>
+      ${d.motivo_bloqueo?`<span class="ik" style="color:var(--red)">Motivo bloqueo</span><span class="iv" style="color:var(--red)">${d.motivo_bloqueo}</span>`:''}
+    </div>
+    <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px">Últimas sesiones</div>
+    ${(ses||[]).length===0?'<div style="color:var(--muted);font-size:11px">Sin sesiones aún</div>'
+      :(ses||[]).map(s=>{
+        const i2=new Date(s.inicio).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+        const dr=s.duracion_min!=null?s.duracion_min+' min':'<span style="color:var(--green)">activa</span>';
+        return`<div class="sei"><div><div>${i2}</div><div style="color:var(--muted);font-size:10px">${s.pantalla_inicio||'—'}</div></div><div style="font-family:var(--mono);color:var(--blue)">${dr}</div></div>`;
+      }).join('')}
+  `;
+  document.getElementById('mDetalle').classList.add('open');
+}
+
+async function toggleEst(){
+  if(!selImei)return;
+  const d=dispositivos.find(x=>x.imei===selImei);
+  const habilitar=est(d)!=='autorizado';
+  let motivo=null;
+  if(!habilitar)motivo=prompt('Motivo del bloqueo:')||'Bloqueado por administrador';
+  await cambiarEstado(selImei,habilitar,motivo);
+  cl('mDetalle');
+}
+
+async function cambiarEstado(imei,hab,motivo=null){
+  const{error}=await sb.rpc('gestionar_dispositivo',{p_imei:imei,p_habilitado:hab,p_motivo:motivo,p_gestionado_por:'panel_control'});
+  if(error){toast('Error: '+error.message,'err');return;}
+  toast(hab?'✅ Dispositivo habilitado':'🔴 Dispositivo bloqueado','ok');
+  await cargarDispositivos();
+}
+
+function eliminarBtn(){
+  if(!selImei)return;
+  const d=dispositivos.find(x=>x.imei===selImei);
+  document.getElementById('confN').textContent=d?.nombre_tecnico||d?.rut_tecnico||selImei;
+  cl('mDetalle');
+  document.getElementById('mConfirm').classList.add('open');
+}
+
+function eliminarRapido(imei){
+  selImei=imei;
+  const d=dispositivos.find(x=>x.imei===imei);
+  document.getElementById('confN').textContent=d?.nombre_tecnico||d?.rut_tecnico||imei;
+  document.getElementById('mConfirm').classList.add('open');
+}
+
+async function confirmarEliminar(){
+  const{error}=await sb.from('dispositivos_autorizados').delete().eq('imei',selImei);
+  if(error){toast('Error: '+error.message,'err');return;}
+  toast('🗑 Dispositivo eliminado','ok');
+  cl('mConfirm');selImei=null;
+  await cargarDispositivos();
+}
+
+function abrirAgregar(){
+  ['aImei','aRut','aModelo'].forEach(id=>document.getElementById(id).value='');
+  const v=document.getElementById('vbox');v.style.display='none';v.className='vbox';
+  document.getElementById('mAgregar').classList.add('open');
+}
+
+function _rutKey(r){return String(r||'').replace(/[.\-\s]/g,'').toUpperCase();}
+
+async function _resolverRutNomina(rut){
+  const{data}=await sb.rpc('validar_rut_tecnico',{p_rut:rut});
+  const r=data?.[0];
+  if(r?.existe)return r;
+  const key=_rutKey(rut);
+  const{data:bods}=await sb.from('nomina_bodega').select('rut,nombre');
+  const bod=(bods||[]).find(b=>_rutKey(b.rut)===key);
+  if(bod)return{existe:true,nombre:bod.nombre,tipo_personal:'BODEGA',es_vigente:true,rol:'bodeguero'};
+  return r||{existe:false};
+}
+
+async function buscarRut(){
+  const rut=document.getElementById('aRut').value.trim();if(!rut)return;
+  const v=document.getElementById('vbox');
+  const r=await _resolverRutNomina(rut);
+  v.style.display='';
+  v.className=r?.existe?'vbox ok':'vbox err';
+  document.getElementById('vname').textContent=r?.existe?r.nombre:'RUT no encontrado en nómina';
+  const rolLbl=r?.rol==='bodeguero'?'Bodeguero':r?.tipo_personal;
+  document.getElementById('vmeta').textContent=r?.existe?`${rolLbl||r.tipo_personal} · ${r.es_vigente?'✅ Vigente':'⚠️ No vigente'}`:'';
+}
+
+async function confirmarAgregar(){
+  const imei=document.getElementById('aImei').value.trim();
+  const rut=document.getElementById('aRut').value.trim();
+  const modelo=document.getElementById('aModelo').value.trim();
+  const hab=document.getElementById('aEstado').value==='true';
+  if(!imei){toast('El Device ID es requerido','err');return;}
+  // Verificar si el RUT ya tiene dispositivo(s) registrado(s)
+  if(rut){
+    const existing=dispositivos.filter(d=>d.rut_tecnico===rut);
+    if(existing.length>0){
+      const nombres=existing.map(d=>`• ${(d.imei||'').substring(0,20)} (${d.habilitado?'Autorizado':'Inactivo'}) — ${d.modelo_dispositivo||'sin modelo'}`).join('\n');
+      const ok=confirm(`⚠️ El RUT ${rut} ya tiene ${existing.length} dispositivo(s) registrado(s):\n\n${nombres}\n\n¿Registrar igual? Si es un cambio de teléfono, considera eliminar el anterior.`);
+      if(!ok)return;
+    }
+  }
+  let nombre=null;
+  if(rut){const r=await _resolverRutNomina(rut);nombre=r?.nombre||null;}
+  const{error}=await sb.from('dispositivos_autorizados').insert({imei,rut_tecnico:rut||null,nombre_tecnico:nombre,modelo_dispositivo:modelo||null,habilitado:hab});
+  if(error){toast(error.code==='23505'?'IMEI ya registrado':error.message,'err');return;}
+  toast('✅ Dispositivo registrado','ok');cl('mAgregar');await cargarDispositivos();
+}
+
+async function cargarSesiones(){
+  const dias=parseInt(document.getElementById('selDias')?.value||7);
+  const desde=new Date(Date.now()-dias*86400000).toISOString();
+  const{data}=await sb.from('app_sesiones').select('*').gte('inicio',desde).order('inicio',{ascending:false}).limit(100);
+  const ses=data||[];const hoy=new Date().toISOString().substring(0,10);
+  const hoyL=ses.filter(s=>s.inicio.startsWith(hoy));
+  const durs=ses.filter(s=>s.duracion_min).map(s=>s.duracion_min);
+  const prom=durs.length?Math.round(durs.reduce((a,b)=>a+b,0)/durs.length):0;
+  document.getElementById('sHoy').textContent=hoyL.length;
+  document.getElementById('s7d').textContent=ses.length;
+  document.getElementById('sProm').textContent=prom;
+  document.getElementById('sTec').textContent=new Set(hoyL.map(s=>s.rut_tecnico).filter(Boolean)).size;
+  const tb=document.getElementById('tbS');
+  if(!ses.length){tb.innerHTML=`<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--muted)">Sin sesiones</td></tr>`;return;}
+  tb.innerHTML=ses.slice(0,50).map(s=>{
+    const ini=new Date(s.inicio).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const fin=s.fin?new Date(s.fin).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}):'—';
+    const dur=s.duracion_min!=null?s.duracion_min+' min':'<span style="color:var(--green)">activa</span>';
+    return`<tr><td><div style="font-size:12px;font-weight:600">${s.nombre_tecnico||'—'}</div><div style="font-size:10px;color:var(--muted);font-family:var(--mono)">${s.rut_tecnico||'—'}</div></td><td style="font-size:11px;color:var(--muted)">${ini}</td><td style="font-size:11px;color:var(--muted)">${fin}</td><td style="font-family:var(--mono)">${dur}</td><td style="font-size:11px;color:var(--muted)">${s.pantalla_inicio||'—'}</td><td style="font-family:var(--mono);font-size:10px;color:var(--muted)">${s.app_version||'—'}</td></tr>`;
+  }).join('');
+}
+
+async function cargarUso(){
+  const hoy=new Date().toISOString().substring(0,10);
+  const{data:ev}=await sb.from('app_eventos').select('*').gte('created_at',hoy).order('created_at',{ascending:false}).limit(200);
+  const evs=ev||[];
+  document.getElementById('uEv').textContent=evs.length;
+  document.getElementById('uSol').textContent=evs.filter(e=>e.tipo==='solicitud_combustible').length;
+  document.getElementById('uErr').textContent=evs.filter(e=>e.tipo==='error_app').length;
+  const pan={};evs.filter(e=>e.tipo==='pantalla_vista'&&e.pantalla).forEach(e=>{pan[e.pantalla]=(pan[e.pantalla]||0)+1;});
+  const top=Object.entries(pan).sort((a,b)=>b[1]-a[1])[0];
+  document.getElementById('uTop').textContent=top?top[0]:'—';
+  const{data:topD}=await sb.from('dispositivos_autorizados').select('nombre_tecnico,rut_tecnico,total_sesiones,total_minutos').gt('total_sesiones',0).order('total_sesiones',{ascending:false}).limit(8);
+  const maxS=topD?.[0]?.total_sesiones||1;
+  document.getElementById('topTec').innerHTML=(topD||[]).length===0
+    ?`<div class="empty"><div class="empty-i">📊</div>Sin datos aún</div>`
+    :(topD||[]).map((t,i)=>{
+        const hrs=Math.round((t.total_minutos||0)/60);
+        const pct=Math.round(t.total_sesiones/maxS*100);
+        return`<div style="padding:10px 16px;border-bottom:1px solid var(--border)"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><div style="font-size:12px;font-weight:600">${t.nombre_tecnico||t.rut_tecnico||'—'}</div><div style="font-size:11px;color:var(--blue);font-family:var(--mono)">${t.total_sesiones} ses · ${hrs}h</div></div><div class="pb"><div class="pf" style="width:${pct}%"></div></div></div>`;
+      }).join('');
+  document.getElementById('evRec').innerHTML=evs.slice(0,30).length===0
+    ?`<div class="empty"><div class="empty-i">📡</div>Sin eventos</div>`
+    :evs.slice(0,30).map(e=>{
+        const h=new Date(e.created_at).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
+        const cls=e.tipo==='solicitud_combustible'?'et-s':e.tipo==='error_app'?'et-e':e.tipo==='pantalla_vista'?'et-v':'et-o';
+        return`<div class="er"><span class="etag ${cls}">${e.tipo.replace(/_/g,' ')}</span><span style="flex:1;color:var(--muted)">${e.nombre_tecnico||e.rut_tecnico||'—'}</span><span style="font-size:10px;color:var(--muted);font-family:var(--mono)">${h}</span></div>`;
+      }).join('');
+}
+
+const PANES={dispositivos:{t:'Dispositivos registrados',s:'Control de acceso CREABOX'},sesiones:{t:'Historial de sesiones',s:'Cuándo y cuánto usan la app'},uso:{t:'Uso de la aplicación',s:'Qué hacen los técnicos dentro de la app'},duplicados:{t:'Duplicados / Cambios de equipo',s:'RUTs con más de un dispositivo registrado'},gps:{t:'GPS Apagado',s:'Técnicos que apagaron o perdieron señal GPS'},tecnicos:{t:'Nómina de técnicos',s:'Técnicos autorizados en CREABOX con supervisor asignado'},equipos:{t:'Equipos por supervisor',s:'Arrastra técnicos entre supervisores — sincroniza app CREABOX y paneles'},comunicados:{t:'Comunicados oficiales',s:'Mensajes masivos o personalizados con confirmación de lectura y firma'}};
+function setNav(id,btn){
+  document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+  document.querySelectorAll('[id^="pane-"]').forEach(p=>p.style.display='none');
+  document.getElementById('pane-'+id).style.display='';
+  document.getElementById('pageTitle').textContent=PANES[id].t;
+  document.getElementById('pageSub').textContent=PANES[id].s;
+  document.getElementById('btnAdd').style.display=id==='dispositivos'?'':'none';
+  document.getElementById('btnImportPlantel').style.display=id==='equipos'?'':'none';
+  if(id==='duplicados')renderDuplicados();
+  if(id==='gps')cargarGps();
+  if(id==='tecnicos')cargarTecnicos();
+  if(id==='equipos')cargarEquipos();
+  if(id==='comunicados')cargarComunicados();
+}
+
+let comunicadosCache=[];
+let comDetalleActivo=null;
+let comDetalleFilas=[];
+const COM_ROL_LABELS={todos:'Todos',tecnico:'Técnicos',ito:'ITOs',supervisor:'Supervisores',bodeguero:'Bodegueros',flota:'Flota',administrativo:'Administrativos'};
+function toggleComModo(){
+  const t=document.getElementById('comTipo').value;
+  document.getElementById('comRutsWrap').style.display=t==='personalizado'?'':'none';
+  document.getElementById('comRolesWrap').style.display=t==='personalizado'?'none':'';
+}
+function getComRolesSeleccionados(){
+  return [...document.querySelectorAll('.com-rol.on')].map(b=>b.dataset.rol);
+}
+function toggleComRol(btn){
+  const rol=btn.dataset.rol;
+  if(rol==='todos'){
+    document.querySelectorAll('.com-rol').forEach(b=>b.classList.remove('on'));
+    btn.classList.add('on');
+    return;
+  }
+  document.querySelector('.com-rol[data-rol="todos"]')?.classList.remove('on');
+  btn.classList.toggle('on');
+  if(!getComRolesSeleccionados().length){
+    document.querySelector('.com-rol[data-rol="todos"]')?.classList.add('on');
+  }
+}
+function parseRutsCom(txt){
+  return [...new Set(txt.split(/[\n,;]+/).map(r=>r.trim().toUpperCase().replace(/\./g,'')).filter(r=>r.length>3))];
+}
+function formatComRoles(roles){
+  if(!roles?.length)return '—';
+  return roles.map(r=>COM_ROL_LABELS[r]||r).join(', ');
+}
+function comErrorMsg(e){
+  if(!e)return 'Error desconocido';
+  if(typeof e==='string')return e;
+  return e.message||e.details||e.hint||e.error_description||JSON.stringify(e);
+}
+async function enviarComunicado(){
+  const btn=document.getElementById('comBtnEnviar');
+  const titulo=document.getElementById('comTitulo').value.trim();
+  const mensaje=document.getElementById('comMensaje').value.trim();
+  const tipo=document.getElementById('comTipo').value;
+  const creado_por=document.getElementById('comCreador').value.trim()||'Dashboard CREABOX';
+  if(!titulo||!mensaje){toast('Título y mensaje requeridos','err');return;}
+  const roles_destino=tipo==='por_roles'?getComRolesSeleccionados():[];
+  const ruts_destino=tipo==='personalizado'?parseRutsCom(document.getElementById('comRuts').value):[];
+  if(tipo==='por_roles'&&!roles_destino.length){toast('Elige al menos un rol','err');return;}
+  if(tipo==='personalizado'&&!ruts_destino.length){toast('Indica al menos un RUT','err');return;}
+  const btnLabel=btn?.textContent||'';
+  if(btn){btn.disabled=true;btn.textContent='Enviando…';}
+  try{
+    const {data:ins,error:insErr}=await sb.from('comunicados_creabox').insert({
+      titulo,mensaje,tipo,
+      roles_destino,
+      rut_destino:ruts_destino.length===1?ruts_destino[0]:null,
+      ruts_destino,creado_por,activo:true
+    }).select('id').single();
+    if(insErr)throw new Error(insErr.message||'No se pudo guardar el comunicado');
+    let j={enviados:0};
+    try{
+      const res=await fetch(`${SB_URL}/functions/v1/enviar-comunicado-creabox`,{
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json',
+          apikey:SB_KEY,
+          Authorization:`Bearer ${SB_KEY}`,
+        },
+        body:JSON.stringify({comunicado_id:ins.id}),
+      });
+      const raw=await res.text();
+      try{j=JSON.parse(raw);}catch(_){j={error:raw||'Respuesta inválida del servidor'};}
+      if(!res.ok)throw new Error(j.error||j.message||`Error FCM (${res.status})`);
+    }catch(fcmErr){
+      toast(`Comunicado guardado, pero falló la notificación: ${comErrorMsg(fcmErr)}`,'err');
+      await cargarComunicados();
+      return;
+    }
+    const sinTok=j.sin_token??0;
+    const dest=j.destinatarios??0;
+    if((j.enviados||0)===0&&dest>0){
+      toast(`Comunicado guardado · 0 push enviados (${sinTok} sin token FCM en app). Abre CREABOX en el celular y reintenta.`,'err');
+    }else{
+      toast(`Comunicado enviado · ${j.enviados||0} push · ${sinTok} sin token · ${dest} destinatarios`,'ok');
+    }
+    document.getElementById('comTitulo').value='';
+    document.getElementById('comMensaje').value='';
+    document.getElementById('comRuts').value='';
+    document.querySelectorAll('.com-rol').forEach(b=>b.classList.remove('on'));
+    document.querySelector('.com-rol[data-rol="todos"]')?.classList.add('on');
+    await cargarComunicados();
+  }catch(e){
+    console.error('[Comunicados]',e);
+    toast('Error: '+comErrorMsg(e),'err');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=btnLabel||'📢 Enviar y notificar';}
+  }
+}
+async function cargarComunicados(){
+  const {data,error}=await sb.from('comunicados_creabox').select('id,titulo,tipo,created_at,activo,rut_destino,ruts_destino,roles_destino').order('created_at',{ascending:false}).limit(50);
+  if(error){toast(error.message,'err');return;}
+  comunicadosCache=data||[];
+  const ids=comunicadosCache.map(c=>c.id);
+  let lecturasPor={};
+  if(ids.length){
+    const {data:lect}=await sb.from('comunicados_lecturas').select('comunicado_id,estado').in('comunicado_id',ids);
+    (lect||[]).forEach(l=>{
+      if(!lecturasPor[l.comunicado_id])lecturasPor[l.comunicado_id]={leido:0,pend:0};
+      if(l.estado==='leido')lecturasPor[l.comunicado_id].leido++; else lecturasPor[l.comunicado_id].pend++;
+    });
+  }
+  const tb=document.getElementById('tbCom');
+  if(!comunicadosCache.length){tb.innerHTML='<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted)">Sin comunicados</td></tr>';return;}
+  tb.innerHTML=comunicadosCache.map(c=>{
+    const f=new Date(c.created_at).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const st=c.tipo==='personalizado'
+      ?'<span class="st s-pend"><span class="sd"></span>PERSONAL</span>'
+      :c.tipo==='por_roles'
+      ?`<span class="st s-ok"><span class="sd"></span>${formatComRoles(c.roles_destino)}</span>`
+      :'<span class="st s-ok"><span class="sd"></span>MASIVO</span>';
+    const lc=lecturasPor[c.id]||{leido:0,pend:0};
+    const lectTxt=`<span style="color:var(--green)">${lc.leido} ✓</span>`;
+    return`<tr onclick="verComunicado('${c.id}')"><td style="font-family:var(--mono);font-size:10px">${f}</td><td><b>${c.titulo}</b></td><td>${st}</td><td>${lectTxt}</td><td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();reenviarCom('${c.id}')">↻ Reenviar</button></td></tr>`;
+  }).join('');
+}
+async function reenviarCom(id){
+  try{
+    const res=await fetch(`${SB_URL}/functions/v1/enviar-comunicado-creabox`,{method:'POST',headers:{'Content-Type':'application/json',apikey:SB_KEY,Authorization:`Bearer ${SB_KEY}`},body:JSON.stringify({comunicado_id:id})});
+    const j=await res.json();
+    if(!res.ok)throw new Error(j.error||'Error');
+    toast(`Reenviado · ${j.enviados||0} notificaciones`,'ok');
+  }catch(e){toast(e.message,'err');}
+}
+function canonRutCom(r){
+  const s=String(r||'').trim().toUpperCase().replace(/\./g,'');
+  if(s.length<2)return s;
+  const body=s.slice(0,-1).replace(/-/g,'');
+  return body+'-'+s.slice(-1);
+}
+function esVigenteCom(v){return String(v||'').trim().toLowerCase()==='vigente';}
+function esLicenciaMedicaCom(v){return String(v||'').trim().toLowerCase()==='licencia_medica';}
+
+async function buildDestinatariosCom(c){
+  const mapa=new Map();
+  const agregar=(rut,nombre)=>{
+    const k=canonRutCom(rut);
+    if(k.length<3)return;
+    if(!mapa.has(k))mapa.set(k,{rut:k,nombre:(nombre||k).trim()});
+  };
+
+  if(c.tipo==='personalizado'){
+    const ruts=[...(c.ruts_destino||[]),c.rut_destino].filter(Boolean).map(canonRutCom);
+    const unicos=[...new Set(ruts)];
+    const [{data:tec},{data:bod},{data:sup},{data:flota}]=await Promise.all([
+      sb.from('nomina_tecnicos').select('rut,nombres,paterno,materno'),
+      sb.from('nomina_bodega').select('rut,nombre'),
+      sb.from('supervisores_crea').select('rut,nombre'),
+      sb.from('roles_flota').select('rut,rol'),
+    ]);
+    const buscarNombre=(rut)=>{
+      const k=canonRutCom(rut);
+      for(const t of tec||[]){if(canonRutCom(t.rut)===k)return `${t.nombres||''} ${t.paterno||''} ${t.materno||''}`.trim();}
+      for(const b of bod||[]){if(canonRutCom(b.rut)===k)return b.nombre;}
+      for(const s of sup||[]){if(canonRutCom(s.rut)===k)return s.nombre;}
+      for(const f of flota||[]){if(canonRutCom(f.rut)===k)return f.rol||'Flota';}
+      return k;
+    };
+    unicos.forEach(r=>agregar(r,buscarNombre(r)));
+  }else{
+    const roles=(c.roles_destino||[]).map(r=>String(r).toLowerCase());
+    const todos=roles.includes('todos');
+    const quiereTecnico=todos||roles.includes('tecnico');
+    const quiereIto=todos||roles.includes('ito');
+    const quiereAdmin=todos||roles.includes('administrativo');
+
+    if(quiereTecnico||quiereIto||quiereAdmin||c.tipo==='masivo'){
+      const {data:nomina}=await sb.from('nomina_tecnicos').select('rut,nombres,paterno,materno,tipo_personal,estado_vigencia');
+      for(const t of nomina||[]){
+        if(!esVigenteCom(t.estado_vigencia))continue;
+        const tipoPer=String(t.tipo_personal||'').trim().toUpperCase();
+        let incluir=false;
+        if(c.tipo==='masivo'&&!roles.length)incluir=tipoPer!=='ITO'&&tipoPer!=='TA';
+        else if(todos)incluir=true;
+        else{
+          if(quiereTecnico&&(tipoPer==='T'||tipoPer==='TNE'||tipoPer===''))incluir=true;
+          if(quiereIto&&tipoPer==='ITO')incluir=true;
+          if(quiereAdmin&&tipoPer==='TA')incluir=true;
+        }
+        if(incluir)agregar(t.rut,`${t.nombres||''} ${t.paterno||''} ${t.materno||''}`.trim());
+      }
+    }
+    if(todos||roles.includes('supervisor')){
+      const {data:sups}=await sb.from('supervisores_crea').select('rut,nombre').eq('activo',true);
+      (sups||[]).forEach(s=>agregar(s.rut,s.nombre));
+    }
+    if(todos||roles.includes('bodeguero')){
+      const {data:bod}=await sb.from('nomina_bodega').select('rut,nombre');
+      (bod||[]).forEach(b=>agregar(b.rut,b.nombre));
+    }
+    if(todos||roles.includes('flota')){
+      const {data:fl}=await sb.from('roles_flota').select('rut,rol').eq('activo',true);
+      (fl||[]).forEach(f=>agregar(f.rut,f.rol||'Flota'));
+    }
+  }
+  return [...mapa.values()].sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
+}
+
+function renderComDetLeyenda(c){
+  const el=document.getElementById('comDetLeyenda');
+  const f=c.created_at?new Date(c.created_at).toLocaleString('es-CL'):'—';
+  el.innerHTML=`
+    <div style="font-size:10px;color:var(--muted);margin-bottom:8px">Información entregada · ${f}</div>
+    <div style="background:#1D4ED8;color:#fff;font-weight:700;padding:12px 14px;border-radius:8px;margin-bottom:8px;text-align:center">${c.titulo||'—'}</div>
+    <div style="background:#15803D;color:#fff;font-weight:700;padding:12px 14px;border-radius:8px;white-space:pre-wrap;line-height:1.45">${c.mensaje||'—'}</div>`;
+}
+
+function renderComLecturas(){
+  const q=(document.getElementById('srchComLect')?.value||'').toLowerCase().trim();
+  const tb=document.getElementById('tbComLect');
+  if(!comDetalleFilas.length){
+    tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--muted)">Sin destinatarios</td></tr>';
+    return;
+  }
+  const filas=comDetalleFilas.filter(r=>{
+    if(!q)return true;
+    return (r.nombre||'').toLowerCase().includes(q)||(r.rut||'').toLowerCase().includes(q);
+  });
+  if(!filas.length){
+    tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--muted)">Sin resultados para la búsqueda</td></tr>';
+    return;
+  }
+  tb.innerHTML=filas.map(r=>{
+    const firmo=r.estado==='leido';
+    const icono=firmo
+      ?'<span title="Firmó" style="font-size:18px">✅</span>'
+      :'<span title="Sin firmar" style="font-size:18px;color:#ef4444">❌</span>';
+    const st=firmo
+      ?'<span class="st s-ok"><span class="sd"></span>FIRMADO</span>'
+      :'<span class="st s-block"><span class="sd"></span>SIN FIRMAR</span>';
+    const leido=r.leido_at?new Date(r.leido_at).toLocaleString('es-CL'):'—';
+    const firma=r.firma_base64
+      ?`<img src="data:image/png;base64,${r.firma_base64}" style="max-height:40px;border-radius:4px;background:#fff;border:1px solid var(--border)" alt="firma">`
+      :'<span style="color:var(--muted)">—</span>';
+    const rutEsc=String(r.rut||'').replace(/'/g,'');
+    const btn=r.firma_base64
+      ?`<button class="btn btn-ghost btn-sm" onclick="descargarCertificadoCom('${rutEsc}')">⬇ Descargar</button>`
+      :'—';
+    return`<tr><td style="text-align:center">${icono}</td><td>${r.nombre||'—'}</td><td style="font-family:var(--mono);font-size:10px">${r.rut}</td><td>${st}</td><td style="font-size:10px">${leido}</td><td>${firma}</td><td>${btn}</td></tr>`;
+  }).join('');
+}
+
+function parrafoLegalCom(nombre,rut,rol='destinatario'){
+  const nombreLimpio=(nombre||'').trim()||'el firmante';
+  const rutLimpio=(rut||'').trim()||'—';
+  return `El ${rol} ${nombreLimpio} (RUT: ${rutLimpio}) suscribió el presente documento electrónicamente en la fecha y condiciones que se indican a continuación. Esta firma electrónica simple es válida de conformidad con la Ley N° 19.799 sobre Documentos Electrónicos, Firma Electrónica y Servicios de Certificación (Chile).`;
+}
+function formatSha256Com(hex){
+  const h=String(hex||'').replace(/[^A-Fa-f0-9]/g,'').toUpperCase();
+  if(h.length<64)return h;
+  const p=[];
+  for(let i=0;i<64;i+=8)p.push(h.substring(i,i+8));
+  return p.join('-');
+}
+async function sha256HexFromB64(b64){
+  const bin=atob(b64);
+  const bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  const hash=await crypto.subtle.digest('SHA-256',bytes);
+  return [...new Uint8Array(hash)].map(b=>b.toString(16).padStart(2,'0')).join('').toUpperCase();
+}
+
+async function descargarCertificadoCom(rut){
+  const r=comDetalleFilas.find(x=>x.rut===rut);
+  const c=comDetalleActivo;
+  if(!r?.firma_base64||!c)return;
+  const sha=await sha256HexFromB64(r.firma_base64);
+  const shaFmt=formatSha256Com(sha);
+  const canvas=document.createElement('canvas');
+  canvas.width=800;canvas.height=1400;
+  const ctx=canvas.getContext('2d');
+  ctx.fillStyle='#ffffff';ctx.fillRect(0,0,800,1400);
+
+  const enviado=c.created_at?new Date(c.created_at).toLocaleString('es-CL'):'—';
+  const leido=r.leido_at?new Date(r.leido_at).toLocaleString('es-CL'):'—';
+  const encabezado=`Comunicado CREABOX — ${c.titulo||''} — Enviado: ${enviado}`;
+
+  ctx.fillStyle='#666';ctx.font='11px sans-serif';
+  let y=wrapCanvasText(ctx,encabezado,44,36,712,14)+12;
+
+  ctx.fillStyle='#1D4ED8';ctx.fillRect(44,y,712,56);
+  ctx.fillStyle='#fff';ctx.font='bold 18px sans-serif';
+  wrapCanvasText(ctx,c.titulo||'',54,y+28,692,22);
+  y+=68;
+
+  const msgH=Math.min(160,Math.max(80,Math.ceil((c.mensaje||'').length/55)*18));
+  ctx.fillStyle='#15803D';ctx.fillRect(44,y,712,msgH);
+  ctx.fillStyle='#fff';ctx.font='bold 14px sans-serif';
+  wrapCanvasText(ctx,c.mensaje||'',54,y+24,692,18);
+  y+=msgH+20;
+
+  const yBloque=y;
+  ctx.fillStyle='#111';ctx.font='bold 15px sans-serif';
+  ctx.fillText('Firma Electrónica del Destinatario',44,y);y+=24;
+  ctx.font='12px sans-serif';
+  y=wrapCanvasText(ctx,parrafoLegalCom(r.nombre,r.rut),44,y,400,16)+16;
+
+  ctx.fillStyle='#666';ctx.font='bold 11px sans-serif';
+  ctx.fillText('Signatario:',44,y);y+=14;
+  ctx.fillStyle='#111';ctx.font='bold 13px sans-serif';
+  ctx.fillText(r.nombre||'—',44,y);y+=22;
+  ctx.fillStyle='#666';ctx.font='bold 11px sans-serif';
+  ctx.fillText('RUT:',44,y);y+=14;
+  ctx.fillStyle='#111';ctx.font='bold 13px sans-serif';
+  ctx.fillText(r.rut||'—',44,y);y+=22;
+  ctx.fillStyle='#666';ctx.font='bold 11px sans-serif';
+  ctx.fillText('Fecha de firma:',44,y);y+=14;
+  ctx.fillStyle='#111';ctx.font='bold 13px sans-serif';
+  ctx.fillText(leido,44,y);y+=22;
+  ctx.fillStyle='#666';ctx.font='bold 11px sans-serif';
+  ctx.fillText('Dispositivo:',44,y);y+=14;
+  ctx.fillStyle='#111';ctx.font='bold 13px sans-serif';
+  ctx.fillText('Dispositivo Móvil — App CREABOX',44,y);y+=24;
+  ctx.fillStyle='#666';ctx.font='bold 11px sans-serif';
+  ctx.fillText('Código SHA-256:',44,y);y+=14;
+  ctx.fillStyle='#b91c1c';ctx.font='11px monospace';
+  wrapCanvasText(ctx,shaFmt,44,y,360,14);y+=36;
+  ctx.fillStyle='#666';ctx.font='italic 11px sans-serif';
+  ctx.fillText('Firma Electrónica Simple — Ley N° 19.799 (Chile)',44,y);
+
+  const img=new Image();
+  img.onload=()=>{
+    const bx=430,by=yBloque+24,bw=330,bh=220;
+    ctx.strokeStyle='#bbb';ctx.strokeRect(bx,by,bw,bh);
+    ctx.fillStyle='#111';ctx.font='bold 12px sans-serif';
+    ctx.fillText('Firma del Destinatario',bx+8,by-8);
+    const ratio=Math.min((bw-16)/img.width,(bh-16)/img.height);
+    const w=img.width*ratio,h=img.height*ratio;
+    ctx.drawImage(img,bx+(bw-w)/2,by+(bh-h)/2,w,h);
+    ctx.fillStyle='#666';ctx.font='italic 11px sans-serif';
+    ctx.fillText('Firma electrónica — '+leido,bx,by+bh+16);
+
+    ctx.fillStyle='#888';ctx.font='10px sans-serif';
+    ctx.fillText('CREABOX — Documento con Firma Electrónica Simple. Ley N° 19.799 (Chile)',44,1360);
+
+    const a=document.createElement('a');
+    a.download=`comunicado_${(r.rut||'').replace(/-/g,'')}_${c.id?.slice(0,8)||'cert'}.png`;
+    a.href=canvas.toDataURL('image/png');
+    a.click();
+  };
+  img.src='data:image/png;base64,'+r.firma_base64;
+}
+
+function wrapCanvasText(ctx,text,x,y,maxW,lineH){
+  const words=String(text).split(/\s+/);
+  let line='',cy=y;
+  for(const w of words){
+    const test=line?line+' '+w:w;
+    if(ctx.measureText(test).width>maxW&&line){
+      ctx.fillText(line,x,cy);line=w;cy+=lineH;
+    }else line=test;
+  }
+  if(line){ctx.fillText(line,x,cy);cy+=lineH;}
+  return cy;
+}
+
+async function verComunicado(id){
+  const c0=comunicadosCache.find(x=>x.id===id);
+  if(!c0)return;
+  const {data:full,error:errFull}=await sb.from('comunicados_creabox').select('*').eq('id',id).single();
+  if(errFull){toast(errFull.message,'err');return;}
+  comDetalleActivo=full;
+  document.getElementById('comDetalleCard').style.display='';
+  document.getElementById('comDetTitulo').textContent=(full.titulo||'Comunicado')+' — lecturas y firmas';
+  document.getElementById('srchComLect').value='';
+  renderComDetLeyenda(full);
+
+  const [destinatarios,{data:lect,error}]=await Promise.all([
+    buildDestinatariosCom(full),
+    sb.from('comunicados_lecturas').select('*').eq('comunicado_id',id),
+  ]);
+  if(error){toast(error.message,'err');return;}
+
+  const lectPorRut={};
+  (lect||[]).forEach(l=>{lectPorRut[canonRutCom(l.rut_tecnico)]=l;});
+
+  comDetalleFilas=destinatarios.map(d=>{
+    const l=lectPorRut[d.rut];
+    if(l)return{
+      rut:d.rut,
+      nombre:l.nombre_tecnico||d.nombre,
+      estado:l.estado,
+      leido_at:l.leido_at,
+      firma_base64:l.firma_base64,
+    };
+    return{rut:d.rut,nombre:d.nombre,estado:'pendiente',leido_at:null,firma_base64:null};
+  });
+  (lect||[]).forEach(l=>{
+    const k=canonRutCom(l.rut_tecnico);
+    if(comDetalleFilas.some(x=>x.rut===k))return;
+    comDetalleFilas.push({
+      rut:k,
+      nombre:l.nombre_tecnico||k,
+      estado:l.estado,
+      leido_at:l.leido_at,
+      firma_base64:l.firma_base64,
+    });
+  });
+  comDetalleFilas.sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es'));
+
+  const firmados=comDetalleFilas.filter(r=>r.estado==='leido').length;
+  document.getElementById('comDetTitulo').textContent=
+    `${full.titulo||'Comunicado'} — ${firmados}/${comDetalleFilas.length} firmados`;
+  renderComLecturas();
+}
+
+function cl(id){document.getElementById(id).classList.remove('open');}
+document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
+
+function renderDuplicados(){
+  const porRut={};
+  dispositivos.filter(d=>d.rut_tecnico).forEach(d=>{
+    if(!porRut[d.rut_tecnico])porRut[d.rut_tecnico]=[];
+    porRut[d.rut_tecnico].push(d);
+  });
+  const grupos=Object.values(porRut).filter(arr=>arr.length>1)
+    .sort((a,b)=>b.length-a.length);
+
+  const dupEl=document.getElementById('dupList');
+  if(!grupos.length){
+    dupEl.innerHTML=`<div class="empty"><div class="empty-i">✅</div>Sin duplicados detectados</div>`;
+  } else {
+    dupEl.innerHTML=grupos.map(arr=>{
+      const rut=arr[0].rut_tecnico;
+      const nom=arr.find(d=>d.nombre_tecnico)?.nombre_tecnico||'Sin nombre';
+
+      // Ordenar: habilitado+con sesiones > habilitado > pendiente > bloqueado, desempate por ultimo_acceso
+      const score=d=>{
+        if(d.habilitado&&d.total_sesiones>0) return 3;
+        if(d.habilitado) return 2;
+        if(!d.motivo_bloqueo) return 1; // pendiente
+        return 0; // bloqueado
+      };
+      const sorted=[...arr].sort((a,b)=>score(b)-score(a)||(b.ultimo_acceso||'')>(a.ultimo_acceso||'')?1:-1);
+      const keeper=sorted[0];
+
+      const rows=sorted.map((d,i)=>{
+        const e=est(d);
+        const sc=e==='autorizado'?'s-ok':e==='pendiente'?'s-pend':'s-block';
+        const acc=d.ultimo_acceso?new Date(d.ultimo_acceso).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'Nunca';
+        const isKeeper=d.imei===keeper.imei;
+        const keeperLabel=isKeeper
+          ?`<span style="font-size:9px;background:rgba(63,185,80,.15);color:var(--green);padding:2px 7px;border-radius:3px;font-weight:700">${d.habilitado?'✅ CONSERVAR':'⚠️ CONSERVAR (activar)'}</span>`
+          :`<button class="btn btn-danger btn-sm" onclick="eliminarRapido('${d.imei}')">🗑 Eliminar</button>`;
+        return`<div style="display:flex;align-items:center;gap:12px;padding:9px 18px;background:${isKeeper?'rgba(63,185,80,.03)':'rgba(248,81,73,.02)'};border-bottom:1px solid var(--border)">
+          <div style="width:20px;text-align:center;font-size:12px">${isKeeper?'🟢':'🔴'}</div>
+          <div style="flex:1">
+            <div style="font-size:11px;font-family:var(--mono);color:${isKeeper?'var(--text)':'var(--muted)'}">${d.imei}</div>
+            <div style="font-size:10px;color:var(--muted)">${d.modelo_dispositivo||'Modelo desconocido'} · Último acceso: ${acc} · ${d.total_sesiones||0} ses · <span class="st ${sc}" style="padding:1px 5px;font-size:8px"><span class="sd"></span>${e}</span></div>
+          </div>
+          ${keeperLabel}
+        </div>`;
+      }).join('');
+      return`<div style="border-bottom:2px solid var(--border2);margin-bottom:4px">
+        <div style="padding:10px 18px;display:flex;align-items:center;gap:10px;background:rgba(210,153,34,.05)">
+          <div style="font-size:13px;font-weight:700">${nom}</div>
+          <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${rut}</div>
+          <span style="margin-left:auto;background:rgba(210,153,34,.15);color:var(--yellow);padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700">${arr.length} DISPOSITIVOS</span>
+        </div>
+        ${rows}
+      </div>`;
+    }).join('');
+  }
+  renderGrupos();
+}
+
+function renderGrupos(){
+  const q=(document.getElementById('srchG')?.value||'').toLowerCase();
+  const porRut={};
+  dispositivos.filter(d=>d.rut_tecnico).forEach(d=>{
+    if(!porRut[d.rut_tecnico])porRut[d.rut_tecnico]=[];
+    porRut[d.rut_tecnico].push(d);
+  });
+  // Sin RUT
+  const sinRut=dispositivos.filter(d=>!d.rut_tecnico);
+  let grupos=Object.values(porRut).sort((a,b)=>(a[0].nombre_tecnico||'').localeCompare(b[0].nombre_tecnico||''));
+  if(q){
+    grupos=grupos.filter(arr=>(arr[0].nombre_tecnico||'').toLowerCase().includes(q)||(arr[0].rut_tecnico||'').includes(q));
+  }
+  const el=document.getElementById('gruposList');
+  if(!grupos.length&&!sinRut.length){el.innerHTML=`<div class="empty"><div class="empty-i">📱</div>Sin dispositivos</div>`;return;}
+  el.innerHTML=grupos.map(arr=>{
+    const rut=arr[0].rut_tecnico;
+    const nom=arr[0].nombre_tecnico||'Sin nombre';
+    const tipo=arr[0].tipo_personal||'';
+    const sorted=[...arr].sort((a,b)=>(b.ultimo_acceso||'')>(a.ultimo_acceso||'')?1:-1);
+    const tienesDup=arr.length>1;
+    return`<div style="border-bottom:1px solid var(--border)">
+      <div style="padding:8px 18px;display:flex;align-items:center;gap:8px;background:${tienesDup?'rgba(210,153,34,.04)':''}">
+        <div style="font-size:12px;font-weight:700">${nom}</div>
+        ${tipo?`<span class="tp tp-${tipo}">${tipo}</span>`:''}
+        <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${rut}</div>
+        ${tienesDup?`<span style="margin-left:auto;color:var(--yellow);font-size:9px;font-weight:700">⚠️ ${arr.length} dispositivos</span>`:`<span style="margin-left:auto;color:var(--muted);font-size:10px">${arr.length} disp.</span>`}
+      </div>
+      ${sorted.map((d,i)=>{
+        const e=est(d);const sc=e==='autorizado'?'s-ok':e==='pendiente'?'s-pend':'s-block';
+        const acc=d.ultimo_acceso?new Date(d.ultimo_acceso).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'Nunca';
+        return`<div style="padding:6px 18px 6px 34px;display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted);border-top:1px solid var(--border)">
+          <span style="font-size:10px">${i===0&&tienesDup?'🟢':'📱'}</span>
+          <span style="font-family:var(--mono);font-size:10px;flex:1">${d.imei}</span>
+          <span>${d.modelo_dispositivo||'—'}</span>
+          <span class="st ${sc}" style="padding:2px 6px;font-size:8px"><span class="sd"></span>${e}</span>
+          <span>${acc}</span>
+          <button class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:9px" onclick="eliminarRapido('${d.imei}')">🗑</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+
+
+async function geocodificarInverso(lat,lng){
+  if(!lat||!lng)return null;
+  try{
+    const r=await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,{headers:{'Accept-Language':'es'}});
+    if(!r.ok)return null;
+    const j=await r.json();
+    const a=j.address||{};
+    const partes=[a.road,a.house_number,a.suburb||a.neighbourhood||a.quarter,a.city||a.town||a.village].filter(Boolean);
+    return partes.length?partes.join(', '):j.display_name||null;
+  }catch{return null;}
+}
+
+async function cargarGps(){
+  const[{data:ubics},{data:alertas},{data:dispositivos}]=await Promise.all([
+    sb.from('ubicaciones_activas').select('rut_tecnico,lat,lng,gps_activo,updated_at').order('updated_at',{ascending:false}),
+    sb.from('alertas_gps_apagado').select('*').gte('created_at',new Date(Date.now()-86400000).toISOString()).order('created_at',{ascending:false}).limit(50),
+    sb.from('dispositivos_autorizados').select('rut_tecnico,nombre_tecnico'),
+  ]);
+  const todos=ubics||[];
+  const apagados=todos.filter(u=>!u.gps_activo);
+  const activos=todos.filter(u=>u.gps_activo);
+  const hoy=new Date().toISOString().substring(0,10);
+  const alertasHoy=(alertas||[]).filter(a=>a.created_at.startsWith(hoy));
+
+  // Mapa rut → nombre
+  const nombreMap={};
+  (dispositivos||[]).forEach(d=>{if(d.rut_tecnico)nombreMap[d.rut_tecnico]=d.nombre_tecnico||d.rut_tecnico;});
+
+  document.getElementById('gApagados').textContent=apagados.length;
+  document.getElementById('gActivos').textContent=activos.length;
+  document.getElementById('gAlertasHoy').textContent=alertasHoy.length;
+  const ultima=(alertas||[])[0];
+  document.getElementById('gUltima').textContent=ultima
+    ?new Date(ultima.created_at).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})
+    :'—';
+
+  // Badge nav
+  const nb=document.getElementById('navGpsBadge');
+  nb.textContent=apagados.length;nb.style.display=apagados.length>0?'':'none';
+
+  // Lista técnicos con GPS apagado
+  const listEl=document.getElementById('gpsApagadoList');
+  if(!apagados.length){
+    listEl.innerHTML=`<div class="empty"><div class="empty-i">✅</div>Todos con GPS activo</div>`;
+  } else {
+    // Mostrar primero con placeholder, luego actualizar con dirección real
+    const renderItem=(u,direccion)=>{
+      const mins=Math.round((Date.now()-new Date(u.updated_at).getTime())/60000);
+      const tiempoStr=mins<60?`hace ${mins} min`:`hace ${Math.round(mins/60)}h`;
+      const nombre=nombreMap[u.rut_tecnico]||u.rut_tecnico;
+      const dirStr=direccion||'Obteniendo ubicación…';
+      return`<div class="er" style="padding:10px 16px" data-rut="${u.rut_tecnico}">
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0;margin-top:4px"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nombre}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${dirStr}">📍 ${dirStr}</div>
+          <div style="font-size:10px;color:var(--muted);font-family:var(--mono)">Apagado · ${tiempoStr}</div>
+        </div>
+        <span class="st s-block" style="padding:2px 8px;font-size:9px;flex-shrink:0"><span class="sd"></span>GPS OFF</span>
+      </div>`;
+    };
+
+    listEl.innerHTML=apagados.map(u=>renderItem(u,null)).join('');
+
+    // Geocodificación en paralelo (máx 1 req/seg para respetar Nominatim)
+    for(let i=0;i<apagados.length;i++){
+      const u=apagados[i];
+      if(i>0)await new Promise(r=>setTimeout(r,1100));
+      const dir=await geocodificarInverso(u.lat,u.lng);
+      const el=listEl.querySelector(`[data-rut="${u.rut_tecnico}"]`);
+      if(el&&dir){
+        const dirEl=el.querySelector('[title]');
+        if(dirEl){dirEl.textContent=`📍 ${dir}`;dirEl.title=dir;}
+      }
+    }
+  }
+
+  // Historial alertas
+  const histEl=document.getElementById('gpsAlertasList');
+  if(!(alertas||[]).length){
+    histEl.innerHTML=`<div class="empty"><div class="empty-i">📡</div>Sin alertas en las últimas 24h</div>`;
+  } else {
+    histEl.innerHTML=(alertas||[]).map(a=>{
+      const h=new Date(a.created_at).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+      return`<div class="er">
+        <span class="etag et-e">GPS OFF</span>
+        <span style="flex:1;color:var(--text);font-weight:600">${a.nombre_tecnico||a.rut_tecnico||'—'}</span>
+        <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">${h}</span>
+      </div>`;
+    }).join('');
+  }
+}
+
+// ── TÉCNICOS ──────────────────────────────────────────────────────────────────
+let tecnicosData=[], supervisoresData=[], filtroT='todos';
+
+async function cargarTecnicos(){
+  const[{data:tecs},{data:asigs},{data:sups}]=await Promise.all([
+    sb.from('nomina_tecnicos').select('*').order('paterno'),
+    sb.from('supervisor_tecnicos_crea').select('rut_tecnico,rut_supervisor'),
+    sb.from('supervisores_crea').select('rut,nombre').eq('activo',true).order('nombre'),
+  ]);
+  supervisoresData=sups||[];
+  const supMap={};
+  (asigs||[]).forEach(a=>{supMap[a.rut_tecnico]=a.rut_supervisor;});
+  tecnicosData=(tecs||[]).map(t=>({
+    ...t,
+    rut_supervisor:supMap[t.rut]||null,
+    nombre_supervisor:(supervisoresData.find(s=>s.rut===supMap[t.rut])?.nombre)||null,
+  }));
+  const vigentes=tecnicosData.filter(t=>esVigenteCom(t.estado_vigencia)).length;
+  const licencias=tecnicosData.filter(t=>esLicenciaMedicaCom(t.estado_vigencia)).length;
+  document.getElementById('tTotal').textContent=tecnicosData.length;
+  document.getElementById('tVigentes').textContent=vigentes;
+  document.getElementById('tNoVig').textContent=tecnicosData.length-vigentes-licencias;
+  document.getElementById('tSinSup').textContent=tecnicosData.filter(t=>!t.rut_supervisor).length;
+  renderTecnicos();
+}
+
+function setFT(f,btn){filtroT=f;document.querySelectorAll('#pane-tecnicos .chip').forEach(c=>c.classList.remove('on'));btn.classList.add('on');renderTecnicos();}
+
+function renderTecnicos(){
+  const q=(document.getElementById('srchT')?.value||'').toLowerCase();
+  const tb=document.getElementById('tbT');
+  const list=tecnicosData.filter(t=>{
+    const mq=!q||(t.rut||'').toLowerCase().includes(q)||(t.nombres||'').toLowerCase().includes(q)||(t.paterno||'').toLowerCase().includes(q)||(t.materno||'').toLowerCase().includes(q);
+    const fok=filtroT==='todos'
+      ||(filtroT==='vigente'&&esVigenteCom(t.estado_vigencia))
+      ||(filtroT==='licencia_medica'&&esLicenciaMedicaCom(t.estado_vigencia))
+      ||(filtroT==='no_vigente'&&!esVigenteCom(t.estado_vigencia)&&!esLicenciaMedicaCom(t.estado_vigencia))
+      ||(filtroT==='sin_supervisor'&&!t.rut_supervisor);
+    return mq&&fok;
+  });
+  if(!list.length){tb.innerHTML=`<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--muted)">Sin resultados</td></tr>`;return;}
+  tb.innerHTML=list.map(t=>{
+    const nombre=`${t.nombres||''} ${t.paterno||''} ${t.materno||''}`.trim()||'—';
+    const ini=nombre.split(' ').slice(0,2).map(p=>p[0]).join('').toUpperCase()||'?';
+    const vig=esVigenteCom(t.estado_vigencia);
+    const lic=esLicenciaMedicaCom(t.estado_vigencia);
+    const tipo=t.tipo_personal?`<span class="tp tp-${t.tipo_personal}">${t.tipo_personal}</span>`:'—';
+    const vigTag=vig
+      ?`<span class="st s-ok"><span class="sd"></span>Vigente</span>`
+      :lic
+      ?`<span class="st s-pend"><span class="sd"></span>Licencia médica</span>`
+      :`<span class="st s-block"><span class="sd"></span>No vigente</span>`;
+    const supTag=t.nombre_supervisor
+      ?`<span style="font-size:11px">${t.nombre_supervisor}</span>`
+      :`<span style="color:var(--yellow);font-size:10px">⚠️ Sin asignar</span>`;
+    const fec=t.fecha_ingreso?new Date(t.fecha_ingreso+'T12:00:00').toLocaleDateString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric'}):'—';
+    return`<tr>
+      <td><div style="display:flex;align-items:center;gap:9px">
+        <div style="width:30px;height:30px;border-radius:7px;flex-shrink:0;background:rgba(56,139,253,.15);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--blue)">${ini}</div>
+        <div style="font-size:12px;font-weight:600">${nombre}</div>
+      </div></td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${t.rut||'—'}</td>
+      <td>${tipo}</td>
+      <td>${vigTag}</td>
+      <td style="font-size:11px;color:var(--muted)">${t.cc||'—'}</td>
+      <td style="font-size:11px;color:var(--muted)">${fec}</td>
+      <td>${supTag}</td>
+    </tr>`;
+  }).join('');
+}
+
+function abrirAgregarTecnico(){
+  ['tRut','tNombres','tPaterno','tMaterno','tCc'].forEach(id=>{document.getElementById(id).value='';});
+  document.getElementById('tFecha').value='';
+  document.getElementById('tTipo').value='T';
+  document.getElementById('tVigencia').value='vigente';
+  // Poblar supervisores en el select
+  const sel=document.getElementById('tSupervisor');
+  sel.innerHTML='<option value="">— Sin supervisor —</option>';
+  supervisoresData.forEach(s=>{
+    const opt=document.createElement('option');
+    opt.value=s.rut;opt.textContent=s.nombre;
+    sel.appendChild(opt);
+  });
+  document.getElementById('mAgregarTecnico').classList.add('open');
+}
+
+async function confirmarAgregarTecnico(){
+  const rut=document.getElementById('tRut').value.trim();
+  const nombres=document.getElementById('tNombres').value.trim().toUpperCase();
+  const paterno=document.getElementById('tPaterno').value.trim().toUpperCase();
+  const materno=document.getElementById('tMaterno').value.trim().toUpperCase();
+  const tipo=document.getElementById('tTipo').value;
+  const vigencia=document.getElementById('tVigencia').value;
+  const cc=document.getElementById('tCc').value.trim()||null;
+  const fecha=document.getElementById('tFecha').value||null;
+  const rutSup=document.getElementById('tSupervisor').value||null;
+  if(!rut||!nombres||!paterno){toast('RUT, nombres y apellido paterno son requeridos','err');return;}
+  const{error:e1}=await sb.from('nomina_tecnicos').insert({
+    rut,nombres,paterno,materno:materno||null,
+    tipo_personal:tipo,estado_vigencia:vigencia,
+    cc,fecha_ingreso:fecha,
+  });
+  if(e1){toast(e1.code==='23505'?'RUT ya existe en nómina':e1.message,'err');return;}
+  if(rutSup){
+    const{error:e2}=await sb.from('supervisor_tecnicos_crea').insert({rut_tecnico:rut,rut_supervisor:rutSup});
+    if(e2){toast('Técnico guardado pero error al asignar supervisor: '+e2.message,'err');}
+    else{
+      const nomSup=supervisoresData.find(s=>s.rut===rutSup)?.nombre||null;
+      await sb.from('plantel_tecnicos').update({supervisor:nomSup}).eq('rut',rut);
+    }
+  }
+  toast('✅ Técnico agregado correctamente','ok');
+  cl('mAgregarTecnico');
+  await cargarTecnicos();
+  if(eqDatos) await cargarEquipos();
+}
+
+function toast(msg,type='ok'){
+  const w=document.getElementById('toasts');const t=document.createElement('div');
+  t.className=`toast ${type}`;t.innerHTML=`<span>${type==='ok'?'✅':'❌'}</span><span>${msg}</span>`;
+  w.appendChild(t);setTimeout(()=>t.remove(),3500);
+}
+
+// ── EQUIPOS (drag & drop + importar plantel) ─────────────────────────────────
+let eqDatos=null, eqPendiente=null, eqImportPendiente=[];
+
+function eqNormNombre(s){
+  return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+}
+function eqNormRut(v){
+  let s=String(v??'').trim().toUpperCase().replace(/\./g,'').replace(/\s/g,'');
+  if(!s) return '';
+  if(s.includes('-')) return s;
+  if(s.length>=2) return s.slice(0,-1)+'-'+s.slice(-1);
+  return s;
+}
+function eqIniciales(nombre){
+  const p=(nombre||'').trim().split(' ').filter(Boolean);
+  if(!p.length) return '?';
+  if(p.length===1) return p[0][0].toUpperCase();
+  return (p[0][0]+p[1][0]).toUpperCase();
+}
+function eqNombreCompleto(t){
+  return `${t.nombres||''} ${t.paterno||''} ${t.materno||''}`.trim()||t.rut||'—';
+}
+function eqMatchSupervisor(excelNombre, supervisores){
+  const n=eqNormNombre(excelNombre);
+  if(!n) return null;
+  if((n.includes('RAFAEL')&&n.includes('MARTINEZ'))||(n.includes('MARTINEZ')&&n.includes('RAFAEL'))){
+    return supervisores.find(s=>s.rut==='25626541-9')||null;
+  }
+  let m=supervisores.find(s=>eqNormNombre(s.nombre)===n);
+  if(m) return m;
+  const tokens=n.split(' ').filter(t=>t.length>2);
+  for(const s of supervisores){
+    const sn=eqNormNombre(s.nombre);
+    if(tokens.length>=2&&tokens.every(t=>sn.includes(t))) return s;
+  }
+  for(const s of supervisores){
+    const sn=eqNormNombre(s.nombre);
+    const sp=sn.split(' ');
+    if(sp.length>=2&&(n.includes(sp[0])&&n.includes(sp[sp.length-1]))) return s;
+  }
+  return null;
+}
+const EQ_ESTADOS_EXCEL_OK=new Set(['VIGENTE','VIGENTES','OPERATIVO','OPERATIVOS']);
+function eqEsOperativoExcel(estado){
+  const e=eqNormNombre(estado);
+  if(!e) return false;
+  return EQ_ESTADOS_EXCEL_OK.has(e);
+}
+
+async function cargarEquipos(){
+  const board=document.getElementById('eqBoard');
+  board.innerHTML='<div class="eq-loading"><div class="eq-spin"></div>Cargando equipos…</div>';
+  eqDatos=null;
+  try{
+    const[{data:tecs},{data:asigs},{data:sups}]=await Promise.all([
+      sb.from('nomina_tecnicos').select('rut,nombres,paterno,materno,estado_vigencia').order('paterno'),
+      sb.from('supervisor_tecnicos_crea').select('rut_tecnico,rut_supervisor'),
+      sb.from('supervisores_crea').select('rut,nombre').eq('activo',true).order('nombre'),
+    ]);
+    const supervisores=sups||[];
+    const supMap={};
+    (asigs||[]).forEach(a=>{supMap[a.rut_tecnico]=a.rut_supervisor;});
+    const supNombre=Object.fromEntries(supervisores.map(s=>[s.rut,s.nombre]));
+    const mapTec=t=>({
+      rut:t.rut,
+      nombre:eqNombreCompleto(t),
+      rut_supervisor:supMap[t.rut]||null,
+      nombre_supervisor:supMap[t.rut]?supNombre[supMap[t.rut]]||null:null,
+    });
+    const tecnicos=(tecs||[]).filter(t=>esVigenteCom(t.estado_vigencia)).map(mapTec);
+    const licencias=(tecs||[]).filter(t=>esLicenciaMedicaCom(t.estado_vigencia)).map(mapTec);
+    eqDatos={supervisores,tecnicos,licencias,supNombre};
+    document.getElementById('eqLastUpd').textContent='Act. '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
+    eqRenderBoard();
+  }catch(e){
+    board.innerHTML=`<div class="eq-loading" style="color:var(--red)">Error: ${e.message||e}</div>`;
+  }
+}
+
+function eqRenderBoard(){
+  const board=document.getElementById('eqBoard');
+  board.innerHTML='';
+  if(!eqDatos){board.innerHTML='<div class="eq-loading">Sin datos</div>';return;}
+  const {supervisores,tecnicos,licencias}=eqDatos;
+  const supTecs={};
+  supervisores.forEach(s=>{supTecs[s.rut]=[];});
+  const sinSup=[];
+  tecnicos.forEach(t=>{
+    const item={rut:t.rut,nombre:t.nombre};
+    if(t.rut_supervisor&&supTecs[t.rut_supervisor]!==undefined) supTecs[t.rut_supervisor].push(item);
+    else sinSup.push(item);
+  });
+  Object.keys(supTecs).forEach(r=>supTecs[r].sort((a,b)=>a.nombre.localeCompare(b.nombre,'es')));
+  sinSup.sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
+  const listaLic=(licencias||[]).map(t=>({rut:t.rut,nombre:t.nombre}));
+  listaLic.sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
+
+  board.appendChild(eqCrearColumna('__sin_sup__','Sin supervisor',sinSup,'sin'));
+  board.appendChild(eqCrearDivisor());
+
+  let totalAsig=0;
+  supervisores.forEach(sup=>{
+    const lista=supTecs[sup.rut]||[];
+    totalAsig+=lista.length;
+    board.appendChild(eqCrearColumna(sup.rut,sup.nombre,lista,'sup'));
+  });
+
+  board.appendChild(eqCrearDivisor());
+  board.appendChild(eqCrearColumna('__licencia__','Licencias médicas',listaLic,'lic'));
+
+  eqActualizarInfoBar(totalAsig,sinSup.length,listaLic.length);
+
+  if(typeof Sortable!=='undefined'){
+    document.querySelectorAll('#eqBoard .eq-list').forEach(lista=>{
+      Sortable.create(lista,{
+        group:'eq-tecnicos',animation:140,
+        ghostClass:'sortable-ghost',chosenClass:'sortable-chosen',
+        onAdd:eqOnMovido,
+        onStart:()=>document.querySelectorAll('#eqBoard .eq-list').forEach(l=>l.classList.add('eq-drag-over')),
+        onEnd:()=>document.querySelectorAll('#eqBoard .eq-list').forEach(l=>l.classList.remove('eq-drag-over')),
+      });
+    });
+  }
+  const q=document.getElementById('eqBuscar')?.value||'';
+  if(q) eqFiltrar(q);
+}
+
+function eqCrearDivisor(){
+  const div=document.createElement('div');
+  div.className='eq-div';
+  return div;
+}
+function eqActualizarInfoBar(totalAsig,sinSup,totalLic){
+  const s=sinSup??(eqDatos?.tecnicos||[]).filter(t=>!t.rut_supervisor).length;
+  const a=totalAsig??(eqDatos?.tecnicos||[]).filter(t=>t.rut_supervisor).length;
+  const l=totalLic??(eqDatos?.licencias||[]).length;
+  document.getElementById('eqInfo').textContent=
+    `${a} asignados · ${s} sin supervisor · ${l} licencias médicas · ${eqDatos?.supervisores?.length||0} supervisores`;
+}
+function eqCrearColumna(rutSup,nombre,lista,tipo){
+  const col=document.createElement('div');
+  col.className='eq-col'+(tipo==='sin'?' eq-sin':tipo==='lic'?' eq-lic':'');
+  col.dataset.rutSup=rutSup;
+  col.dataset.nombre=nombre;
+  const ini=tipo==='sin'?'?':tipo==='lic'?'🏥':eqIniciales(nombre);
+  col.innerHTML=`
+    <div class="eq-col-h">
+      <div class="eq-avatar">${ini}</div>
+      <div class="eq-col-name">${nombre}</div>
+      <span class="eq-col-cnt" id="eq-cnt-${rutSup}">${lista.length}</span>
+    </div>
+    <div class="eq-list" id="eq-list-${rutSup}">
+      ${lista.length?lista.map(eqRenderItem).join(''):'<div class="eq-empty">Vacío</div>'}
+    </div>`;
+  return col;
+}
+function eqRenderItem(t){
+  const ini=eqIniciales(t.nombre);
+  return `<div class="eq-item" data-rut="${t.rut}" data-nombre="${t.nombre.replace(/"/g,'&quot;')}">
+    <span class="eq-handle">⠿</span>
+    <div class="eq-ini">${ini}</div>
+    <span class="eq-nom" title="${t.nombre.replace(/"/g,'&quot;')}">${t.nombre}</span>
+  </div>`;
+}
+
+function eqOnMovido(evt){
+  const item=evt.item;
+  const rutTecnico=item.dataset.rut;
+  const nombreTecnico=item.dataset.nombre;
+  const colOrigen=evt.from.closest('.eq-col');
+  const colDestino=evt.to.closest('.eq-col');
+  const rutSupOrigen=colOrigen.dataset.rutSup;
+  const rutSupDestino=colDestino.dataset.rutSup;
+  if(rutSupOrigen===rutSupDestino) return;
+  evt.from.insertBefore(item,evt.from.children[evt.oldIndex]||null);
+  eqPendiente={rutTecnico,nombreTecnico,rutSupOrigen,nombreSupOrigen:colOrigen.dataset.nombre,rutSupDestino,nombreSupDestino:colDestino.dataset.nombre};
+  const msg=rutSupDestino==='__licencia__'
+    ?`¿Enviar a <strong style="color:var(--text)">${nombreTecnico}</strong> a <strong style="color:var(--text)">Licencias médicas</strong>? Mantiene su supervisor para cuando vuelva.`
+    :rutSupOrigen==='__licencia__'
+    ?`¿Reincorporar a <strong style="color:var(--text)">${nombreTecnico}</strong> desde licencia médica al equipo de <strong style="color:var(--text)">${colDestino.dataset.nombre}</strong>?`
+    :`¿Mover a <strong style="color:var(--text)">${nombreTecnico}</strong> desde <strong style="color:var(--text)">${colOrigen.dataset.nombre}</strong> al equipo de <strong style="color:var(--text)">${colDestino.dataset.nombre}</strong>?`;
+  document.getElementById('eqMoverMsg').innerHTML=msg;
+  document.getElementById('mEqMover').classList.add('open');
+}
+function eqCancelarMover(){
+  eqPendiente=null;
+  cl('mEqMover');
+}
+async function eqPersistirMovimiento(rutTecnico,rutOrigen,rutDestino){
+  if(rutDestino==='__licencia__'){
+    const{error}=await sb.from('nomina_tecnicos').update({estado_vigencia:'licencia_medica'}).eq('rut',rutTecnico);
+    if(error) throw error;
+    return;
+  }
+  const{error:errVig}=await sb.from('nomina_tecnicos').update({estado_vigencia:'vigente'}).eq('rut',rutTecnico);
+  if(errVig) throw errVig;
+  if(rutDestino==='__sin_sup__'){
+    const{error}=await sb.from('supervisor_tecnicos_crea').delete().eq('rut_tecnico',rutTecnico);
+    if(error) throw error;
+    await sb.from('plantel_tecnicos').update({supervisor:null}).eq('rut',rutTecnico);
+  }else if(rutDestino&&!rutDestino.startsWith('__')){
+    const{error:delErr}=await sb.from('supervisor_tecnicos_crea').delete().eq('rut_tecnico',rutTecnico);
+    if(delErr) throw delErr;
+    const{error:insErr}=await sb.from('supervisor_tecnicos_crea').insert({rut_tecnico:rutTecnico,rut_supervisor:rutDestino});
+    if(insErr) throw insErr;
+    const nomSup=eqDatos?.supNombre?.[rutDestino]||'';
+    await sb.from('plantel_tecnicos').update({supervisor:nomSup}).eq('rut',rutTecnico);
+  }
+}
+async function eqConfirmarMover(){
+  if(!eqPendiente) return;
+  const btn=document.getElementById('eqBtnConfirm');
+  btn.disabled=true;btn.textContent='Guardando…';
+  const{rutTecnico,nombreTecnico,rutSupOrigen,rutSupDestino,nombreSupDestino}=eqPendiente;
+  try{
+    await eqPersistirMovimiento(rutTecnico,rutSupOrigen,rutSupDestino);
+    eqSincronizarMemoria(rutTecnico,rutSupOrigen,rutSupDestino);
+    eqMoverDom(rutTecnico,rutSupOrigen,rutSupDestino,{rut:rutTecnico,nombre:nombreTecnico});
+    toast(`✓ ${nombreTecnico} → ${nombreSupDestino}`,'ok');
+  }catch(err){
+    toast('Error: '+(err.message||err),'err');
+    await cargarEquipos();
+  }
+  eqPendiente=null;
+  btn.disabled=false;btn.textContent='Confirmar';
+  cl('mEqMover');
+}
+function eqSincronizarMemoria(rutTec,rutOrigen,rutDestino){
+  if(!eqDatos) return;
+  let persona=null;
+  const li=eqDatos.licencias.findIndex(t=>t.rut===rutTec);
+  const ti=eqDatos.tecnicos.findIndex(t=>t.rut===rutTec);
+  if(li>=0){persona={...eqDatos.licencias[li]};eqDatos.licencias.splice(li,1);}
+  else if(ti>=0){persona={...eqDatos.tecnicos[ti]};eqDatos.tecnicos.splice(ti,1);}
+  if(!persona) return;
+  if(rutDestino==='__licencia__'){
+    eqDatos.licencias.push(persona);
+    return;
+  }
+  persona.rut_supervisor=rutDestino==='__sin_sup__'?null:rutDestino;
+  persona.nombre_supervisor=rutDestino==='__sin_sup__'?null:(eqDatos.supNombre[rutDestino]||'');
+  eqDatos.tecnicos.push(persona);
+}
+function eqMoverDom(rutTec,rutOrigen,rutDestino,tecnico){
+  const listaOrigen=document.getElementById('eq-list-'+rutOrigen);
+  const listaDestino=document.getElementById('eq-list-'+rutDestino);
+  if(!listaOrigen||!listaDestino){cargarEquipos();return;}
+  const existente=listaOrigen.querySelector(`[data-rut="${rutTec}"]`);
+  if(existente) existente.remove();
+  if(!listaOrigen.querySelectorAll('.eq-item').length) listaOrigen.innerHTML='<div class="eq-empty">Vacío</div>';
+  const vacio=listaDestino.querySelector('.eq-empty');
+  if(vacio) vacio.remove();
+  const tmp=document.createElement('div');
+  tmp.innerHTML=eqRenderItem(tecnico);
+  listaDestino.appendChild(tmp.firstElementChild);
+  [rutOrigen,rutDestino].forEach(rut=>{
+    const cnt=document.getElementById('eq-cnt-'+rut);
+    const lst=document.getElementById('eq-list-'+rut);
+    if(cnt&&lst) cnt.textContent=lst.querySelectorAll('.eq-item').length;
+  });
+  eqActualizarInfoBar();
+}
+function eqFiltrar(query){
+  const q=query.toLowerCase().trim();
+  document.querySelectorAll('#eqBoard .eq-col').forEach(col=>{
+    let vis=0;
+    col.querySelectorAll('.eq-item').forEach(item=>{
+      const nombre=(item.dataset.nombre||'').toLowerCase();
+      const rut=(item.dataset.rut||'').toLowerCase();
+      const ok=!q||nombre.includes(q)||rut.includes(q);
+      item.style.display=ok?'':'none';
+      if(ok) vis++;
+    });
+    const cnt=col.querySelector('.eq-col-cnt');
+    if(cnt) cnt.textContent=q?`${vis}/${col.querySelectorAll('.eq-item').length}`:col.querySelectorAll('.eq-item').length;
+  });
+}
+
+function eqAbrirImport(){
+  document.getElementById('eqFileInput').value='';
+  document.getElementById('eqFileInput').click();
+}
+function eqColIdx(headers, variants){
+  const H=headers.map(h=>eqNormNombre(h));
+  for(const v of variants){
+    const i=H.findIndex(h=>h===eqNormNombre(v)||h.includes(eqNormNombre(v)));
+    if(i>=0) return i;
+  }
+  return -1;
+}
+function eqParseNombreExcel(raw){
+  const parts=String(raw||'').trim().toUpperCase().split(/\s+/).filter(Boolean);
+  if(!parts.length) return{nombres:'SIN',paterno:'DATO',materno:null,nombreCompleto:'SIN DATO'};
+  if(parts.length===1) return{nombres:parts[0],paterno:parts[0],materno:null,nombreCompleto:parts[0]};
+  if(parts.length===2) return{nombres:parts[0],paterno:parts[1],materno:null,nombreCompleto:parts.join(' ')};
+  if(parts.length===3) return{nombres:parts[0],paterno:parts[1],materno:parts[2],nombreCompleto:parts.join(' ')};
+  const materno=parts[parts.length-1];
+  const paterno=parts[parts.length-2];
+  const nombres=parts.slice(0,-2).join(' ');
+  return{nombres,paterno,materno,nombreCompleto:parts.join(' ')};
+}
+function eqNombreDesdeNomina(row){
+  return `${row.nombres||''} ${row.paterno||''} ${row.materno||''}`.trim();
+}
+async function eqProcesarExcel(input){
+  const file=input.files?.[0];
+  if(!file) return;
+  if(!eqDatos) await cargarEquipos();
+  try{
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(buf,{type:'array'});
+    const sheet=wb.Sheets['MAESTRO']||wb.Sheets[wb.SheetNames[0]];
+    if(!sheet) throw new Error('No se encontró hoja MAESTRO');
+    const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+    if(rows.length<2) throw new Error('Excel vacío o sin encabezados');
+    const headers=rows[0].map(c=>String(c));
+    const iRun=eqColIdx(headers,['RUN','RUT']);
+    const iNom=eqColIdx(headers,['NOMBRE TRABAJADOR','NOMBRE TOA','NOMBRE']);
+    const iEst=eqColIdx(headers,['ESTADO']);
+    const iSup=eqColIdx(headers,['SUPERVISOR']);
+    if(iRun<0||iSup<0) throw new Error('Faltan columnas RUN y/o Supervisor');
+    const[{data:todoNomina},{data:todoAsigs}]=await Promise.all([
+      sb.from('nomina_tecnicos').select('rut,nombres,paterno,materno,estado_vigencia'),
+      sb.from('supervisor_tecnicos_crea').select('rut_tecnico,rut_supervisor'),
+    ]);
+    const nominaMap={};
+    (todoNomina||[]).forEach(t=>{nominaMap[t.rut]=t;});
+    const supMapImport={};
+    (todoAsigs||[]).forEach(a=>{supMapImport[a.rut_tecnico]=a.rut_supervisor;});
+    const cambios=[], sinMatch=[], sinNombre=[];
+    for(let r=1;r<rows.length;r++){
+      const row=rows[r];
+      const rut=eqNormRut(row[iRun]);
+      if(!rut) continue;
+      const estado=iEst>=0?String(row[iEst]):'';
+      if(!eqEsOperativoExcel(estado)) continue;
+      const supExcel=String(row[iSup]||'').trim();
+      const sup=supExcel?eqMatchSupervisor(supExcel,eqDatos.supervisores):null;
+      const rutSupDest=sup?.rut||'__sin_sup__';
+      if(supExcel&&!sup){sinMatch.push({rut,supExcel});continue;}
+      const enNomina=nominaMap[rut];
+      if(!enNomina){
+        const nomRaw=iNom>=0?String(row[iNom]).trim():'';
+        if(!nomRaw){sinNombre.push(rut);continue;}
+        const parsed=eqParseNombreExcel(nomRaw);
+        cambios.push({
+          rut,esNuevo:true,
+          nombres:parsed.nombres,paterno:parsed.paterno,materno:parsed.materno,
+          nombre:parsed.nombreCompleto,
+          supExcel:supExcel||'(vacío)',rutSupDest,nomSupDest:sup?.nombre||'Sin supervisor',
+        });
+        continue;
+      }
+      const actual=eqDatos.tecnicos.find(t=>t.rut===rut)||eqDatos.licencias.find(t=>t.rut===rut);
+      const supActual=actual?.rut_supervisor??supMapImport[rut]??null;
+      const rutSupActualNorm=supActual||'__sin_sup__';
+      const reactivar=!esVigenteCom(enNomina.estado_vigencia)&&!esLicenciaMedicaCom(enNomina.estado_vigencia);
+      const desdeLicencia=esLicenciaMedicaCom(enNomina.estado_vigencia);
+      if(rutSupActualNorm===rutSupDest&&!reactivar&&!desdeLicencia) continue;
+      const nombre=actual?.nombre||eqNombreDesdeNomina(enNomina)||rut;
+      cambios.push({
+        rut,esNuevo:false,reactivar,desdeLicencia,nombre,
+        supExcel:supExcel||'(vacío)',rutSupDest,nomSupDest:sup?.nombre||'Sin supervisor',
+      });
+    }
+    eqImportPendiente=cambios;
+    const nuevos=cambios.filter(c=>c.esNuevo).length;
+    const actualizados=cambios.length-nuevos;
+    const resumen=`${cambios.length} cambios (${nuevos} nuevos en nómina, ${actualizados} actualizaciones) · ${sinMatch.length} supervisores sin match · ${sinNombre.length} sin nombre`;
+    document.getElementById('eqImportResumen').textContent=resumen;
+    let html='';
+    if(cambios.length){
+      html+=cambios.slice(0,80).map(c=>{
+        const tag=c.esNuevo?'🆕':'✓';
+        const extra=c.reactivar?' (reactivar)':c.desdeLicencia?' (desde licencia)':'';
+        return`<div class="ok">${tag} ${c.nombre} → ${c.nomSupDest}${extra}</div>`;
+      }).join('');
+      if(cambios.length>80) html+=`<div class="warn">… y ${cambios.length-80} más</div>`;
+    }else html+='<div class="warn">No hay cambios que aplicar</div>';
+    if(sinMatch.length){
+      html+='<div style="margin-top:8px;font-weight:700;color:var(--yellow)">Supervisores no reconocidos:</div>';
+      html+=sinMatch.slice(0,15).map(s=>`<div class="warn">${s.rut}: "${s.supExcel}"</div>`).join('');
+    }
+    document.getElementById('eqImportDetalle').innerHTML=html;
+    document.getElementById('eqBtnImport').disabled=!cambios.length;
+    document.getElementById('mEqImport').classList.add('open');
+  }catch(e){
+    toast('Error leyendo Excel: '+(e.message||e),'err');
+  }
+  input.value='';
+}
+async function eqInsertarNominaDesdeExcel(c){
+  const{error}=await sb.from('nomina_tecnicos').insert({
+    rut:c.rut,
+    nombres:c.nombres,
+    paterno:c.paterno,
+    materno:c.materno||null,
+    tipo_personal:'T',
+    estado_vigencia:'vigente',
+  });
+  if(error) throw error;
+}
+async function eqEjecutarImport(){
+  if(!eqImportPendiente.length) return;
+  const btn=document.getElementById('eqBtnImport');
+  btn.disabled=true;btn.textContent='Aplicando…';
+  let ok=0,err=0,nuevos=0;
+  for(const c of eqImportPendiente){
+    try{
+      if(c.esNuevo){
+        await eqInsertarNominaDesdeExcel(c);
+        nuevos++;
+      }
+      await eqPersistirMovimiento(c.rut,c.desdeLicencia?'__licencia__':'__import__',c.rutSupDest);
+      if(!c.esNuevo){
+        if(eqDatos?.licencias?.some(t=>t.rut===c.rut)){
+          const lic=eqDatos.licencias.find(t=>t.rut===c.rut);
+          eqDatos.licencias=eqDatos.licencias.filter(t=>t.rut!==c.rut);
+          if(lic) eqDatos.tecnicos.push({
+            ...lic,
+            rut_supervisor:c.rutSupDest==='__sin_sup__'?null:c.rutSupDest,
+            nombre_supervisor:c.nomSupDest==='Sin supervisor'?null:c.nomSupDest,
+          });
+        }else if(eqDatos?.tecnicos?.some(t=>t.rut===c.rut)){
+          eqSincronizarMemoria(c.rut,c.desdeLicencia?'__licencia__':'__import__',c.rutSupDest);
+        }
+      }
+      ok++;
+    }catch(e){err++;}
+  }
+  cl('mEqImport');
+  btn.disabled=false;btn.textContent='Aplicar cambios';
+  eqImportPendiente=[];
+  const det=nuevos?`, ${nuevos} nuevos`:'';
+  toast(`Importación: ${ok} procesados${det}${err?`, ${err} errores`:''}`,err?'err':'ok');
+  await cargarEquipos();
+  await cargarTecnicos();
+}
+</script>
+</body>
+</html>
