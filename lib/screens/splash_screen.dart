@@ -28,7 +28,7 @@ class _SplashScreenState extends State<SplashScreen>
   static const Color _bgTop = Color(0xFF0A0A0A);
   static const Color _bgMid = Color(0xFF0A0A12);
   static const Color _track = Color(0xFF1E293B);
-  String get _versionLabel => AppVersionService.versionLabel;
+  String get _versionLabel => AppVersionService.versionDisplayLabel;
   static const String _leyendaConexion = 'Conectando......';
 
   bool _verificandoActualizacion = false;

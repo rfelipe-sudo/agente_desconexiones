@@ -150,7 +150,7 @@ class _ConfiguracionScreenState extends State<ConfiguracionScreen> {
                     child: ListTile(
                       leading: const Icon(Icons.system_update, color: Colors.indigo),
                       title: const Text('Versión CREABOX'),
-                      subtitle: Text(AppVersionService.versionLabel),
+                      subtitle: Text(AppVersionService.versionDisplayLabel),
                     ),
                   ),
                 ],

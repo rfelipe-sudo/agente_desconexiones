@@ -90,7 +90,7 @@ class PerfilTecnicoSheet {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'CREABOX ${AppVersionService.versionLabel}',
+                            'CREABOX ${AppVersionService.versionDisplayLabel}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w600,

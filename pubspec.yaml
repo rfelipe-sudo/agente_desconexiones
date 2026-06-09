@@ -1,7 +1,7 @@
 name: agente_desconexiones
 description: "CREABOX — Plataforma operativa y alertas de fibra óptica"
 publish_to: 'none'
-version: 1.5.7+12
+version: 1.5.7+13
 
 environment:
   sdk: ^3.9.2

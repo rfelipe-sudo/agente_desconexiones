@@ -26,11 +26,11 @@ const String kKeplerApiToken           = '5de53e7b5f89b6b547c5c93d635f162ae25947
 // Plataforma única por ahora
 const String kFcmPlatform = 'android';
 
-/// Versión visible — leída de `pubspec.yaml` tras [AppVersionService.init].
-String get kAppVersion => AppVersionService.version;
+/// Versión reportada al panel (incluye build para distinguir OTA).
+String get kAppVersion => AppVersionService.versionWithBuild;
 
-/// Texto distintivo del build actual (cambiar en cada release de prueba OTA).
-const String kBuildDistintivo = '🔧 Build 11 · CTO orden actual';
+/// Texto distintivo del build — derivado del APK instalado.
+String get kBuildDistintivo => AppVersionService.buildDistintivo;
 
 /// Repositorio GitHub para releases OTA (fallback si Supabase no tiene config).
 const String kGitHubRepoOwner = 'rfelipe-sudo';
