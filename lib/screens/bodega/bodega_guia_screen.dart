@@ -32,6 +32,19 @@ class _BodegaGuiaScreenState extends State<BodegaGuiaScreen> {
   static const _textDim = Color(0xFF8FA8C8);
 
   bool _generandoPdf = false;
+  late Map<String, dynamic> _guia;
+
+  @override
+  void initState() {
+    super.initState();
+    _guia = widget.guia;
+    _resolverNombres();
+  }
+
+  Future<void> _resolverNombres() async {
+    final enriched = await GuiaPdfService.enriquecerNombres(widget.guia);
+    if (mounted) setState(() => _guia = enriched);
+  }
 
   String get _folio =>
       widget.folioKepler ?? widget.guia['folio_kepler'] as String? ?? '';
@@ -87,13 +100,13 @@ class _BodegaGuiaScreenState extends State<BodegaGuiaScreen> {
   }
 
   Future<Uint8List> _buildPdf() =>
-      GuiaPdfService.generar(guia: widget.guia, folio: _folio);
+      GuiaPdfService.generar(guia: _guia, folio: _folio);
 
   // ── UI ──────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final g              = widget.guia;
+    final g              = _guia;
     final detalle        = g['detalle_material'] as String? ?? '';
     final cantidad       = g['cantidad']?.toString() ?? '';
     final entregador     = g['nombre_entregador']  as String? ?? '';

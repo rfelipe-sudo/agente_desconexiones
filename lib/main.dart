@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -20,8 +21,10 @@ import 'package:agente_desconexiones/services/alerta_contexto_service.dart';
 import 'package:agente_desconexiones/services/churn_service.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
 import 'package:agente_desconexiones/services/sesion_dispositivo_service.dart';
+import 'package:agente_desconexiones/services/comunicado_service.dart';
 import 'package:agente_desconexiones/services/supabase_service.dart';
 import 'package:agente_desconexiones/services/alarm_audio_service.dart';
+import 'package:agente_desconexiones/services/app_version_service.dart';
 import 'package:agente_desconexiones/screens/splash_screen.dart';
 import 'package:agente_desconexiones/screens/dispositivo_bloqueado_screen.dart';
 import 'package:agente_desconexiones/screens/registro_rut_screen.dart';
@@ -40,10 +43,12 @@ import 'package:agente_desconexiones/screens/fiber_microscope_screen.dart';
 import 'package:agente_desconexiones/screens/mis_actividades_screen.dart';
 import 'package:agente_desconexiones/screens/finalizar_orden_screen.dart';
 import 'package:agente_desconexiones/screens/solicitud_material_screen.dart';
-import 'package:agente_desconexiones/screens/supervisor/mi_equipo_screen.dart';
+import 'package:agente_desconexiones/screens/supervisor/mi_equipo_nyquist_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/solicitudes_ayuda_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_actividad_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/asistente_supervisor_screen.dart';
+import 'package:agente_desconexiones/screens/supervisor/solicitudes_material_supervisor_screen.dart';
+import 'package:agente_desconexiones/screens/ito/informe_auditoria_calidad_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/auditoria_prl_screen.dart';
 import 'package:agente_desconexiones/screens/ast_workflow_screen.dart';
 import 'package:agente_desconexiones/screens/ast_login_screen.dart';
@@ -66,6 +71,8 @@ final supabaseService = SupabaseService();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await AppVersionService.init();
 
   // LATEST renderer: soporta el parámetro style: en GoogleMap widget.
   // LEGACY fue descartado porque el Maps SDK 18.2+ (bundled en google_maps_flutter ^2.9)
@@ -103,6 +110,7 @@ void main() async {
       anonKey: SupabaseConfig.supabaseAnonKey,
     );
     print('✅ Supabase inicializado');
+    unawaited(ComunicadoService.instance.iniciarMonitor());
   } catch (e) {
     print('❌ [Main] Error inicializando Supabase: $e');
     // Continuar aunque falle Supabase
@@ -523,9 +531,13 @@ class AgenteDesconexionesApp extends StatelessWidget {
           '/mis-actividades': (context) => const MisActividadesScreen(),
           '/finalizar-orden': (context) => const FinalizarOrdenScreen(),
           '/solicitud-material': (context) => const SolicitudMaterialScreen(),
-          '/supervisor-equipo': (context) => const MiEquipoScreen(),
+          '/supervisor-equipo': (context) => const MiEquipoNyquistScreen(),
           '/asistente-supervisor': (context) => const AsistenteSupervisorScreen(),
+          '/solicitudes-material-supervisor': (context) =>
+              const SolicitudesMaterialSupervisorScreen(),
           '/auditoria-prl': (context) => const AuditoriaPrlScreen(),
+          '/informe-auditoria-calidad': (context) =>
+              const InformeAuditoriaCalidadScreen(),
           '/solicitudes-ayuda': (context) => const SolicitudesAyudaScreen(),
           '/mi-actividad': (context) => const MiActividadScreen(),
           '/ast':    (context) => const AstLoginScreen(),
@@ -567,6 +579,8 @@ class _CreaboxSesionLifecycleGuardState extends State<_CreaboxSesionLifecycleGua
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       SesionDispositivoService.verificarSiCorresponde();
+      unawaited(FcmService.instance.onAppResumed());
+      unawaited(ComunicadoService.instance.processPendingComunicado());
     }
   }
 
@@ -619,9 +633,22 @@ class _AppHomeByRolState extends State<_AppHomeByRol> {
         final rol = snapshot.data ?? 'tecnico';
 
         if (rol == 'bodeguero') {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            unawaited(FcmService.instance.syncFcmTokenDispositivo());
+            unawaited(FcmService.instance.initBodegaGuiaMonitor());
+            unawaited(FcmService.instance.initBodegaTraspasoMonitor());
+          });
           return const BodegueroMenuScreen();
         }
         if (rol == 'supervisor') {
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            unawaited(FcmService.instance.syncFcmTokenDispositivo());
+            unawaited(FcmService.instance.initSupervisorAyudaMonitor());
+            final rut = await AyudaService.resolverRutSupervisorSesion();
+            if (rut.isNotEmpty) {
+              unawaited(AyudaService().iniciarMonitoreoGlobalSupervisor(rut));
+            }
+          });
           return const AsistenteSupervisorScreen(esRaiz: true);
         }
         return const HomeScreen();

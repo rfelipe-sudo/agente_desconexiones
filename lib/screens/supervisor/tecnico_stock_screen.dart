@@ -17,7 +17,6 @@ class TecnicoStockScreen extends StatelessWidget {
   static const _orange  = Color(0xFFF59E0B);
   static const _red     = Color(0xFFEF4444);
 
-  // Orden canónico de categorías — mismo orden que kMateriales
   static final List<MaterialItem> _categorias = kMateriales;
 
   @override
@@ -65,7 +64,6 @@ class TecnicoStockScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // ── No seriados ──────────────────────────────────────
           _seccion('MATERIALES NO SERIADOS', _accent),
           const SizedBox(height: 8),
           Container(
@@ -81,11 +79,13 @@ class TecnicoStockScreen extends StatelessWidget {
                   .toList(),
             ),
           ),
-
           const SizedBox(height: 20),
-
-          // ── Seriados ─────────────────────────────────────────
           _seccion('EQUIPOS SERIADOS', _accent),
+          const SizedBox(height: 4),
+          Text(
+            'Toca una categoría con stock para ver los números de serie.',
+            style: TextStyle(color: _textDim.withValues(alpha: 0.85), fontSize: 11),
+          ),
           const SizedBox(height: 8),
           Container(
             decoration: BoxDecoration(
@@ -100,7 +100,6 @@ class TecnicoStockScreen extends StatelessWidget {
                   .toList(),
             ),
           ),
-
           const SizedBox(height: 24),
         ],
       ),
@@ -135,15 +134,38 @@ class TecnicoStockScreen extends StatelessWidget {
         .nombre ==
         categoria;
 
-    return Column(
-      children: [
-        Padding(
+    final series = esSeriado && !sinStock
+        ? tecnico.seriadosPorCategoria(categoria)
+        : const <ItemStock>[];
+
+    final badge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: sinStock ? 0.06 : 0.15),
+        borderRadius: BorderRadius.circular(8),
+        border: sinStock
+            ? Border.all(color: _border.withValues(alpha: 0.5), width: 0.5)
+            : null,
+      ),
+      child: Text(
+        sinStock
+            ? '0'
+            : (cantidad == cantidad.truncate()
+                ? '${cantidad.toInt()}'
+                : cantidad.toStringAsFixed(1)),
+        style: TextStyle(
+          color: sinStock ? _textDim.withValues(alpha: 0.4) : color,
+          fontWeight: sinStock ? FontWeight.normal : FontWeight.bold,
+          fontSize: 13,
+        ),
+      ),
+    );
+
+    Widget filaPrincipal({VoidCallback? onTap}) => Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
           child: Row(children: [
             Icon(
-              esSeriado
-                  ? Icons.memory_outlined
-                  : Icons.cable_outlined,
+              esSeriado ? Icons.memory_outlined : Icons.cable_outlined,
               color: sinStock ? _textDim.withValues(alpha: 0.4) : _textDim,
               size: 15,
             ),
@@ -152,40 +174,75 @@ class TecnicoStockScreen extends StatelessWidget {
               child: Text(
                 categoria,
                 style: TextStyle(
-                  color: sinStock ? _textDim.withValues(alpha: 0.5) : Colors.white,
+                  color:
+                      sinStock ? _textDim.withValues(alpha: 0.5) : Colors.white,
                   fontSize: 13,
                 ),
               ),
             ),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: sinStock ? 0.06 : 0.15),
-                borderRadius: BorderRadius.circular(8),
-                border: sinStock
-                    ? Border.all(
-                        color: _border.withValues(alpha: 0.5), width: 0.5)
-                    : null,
-              ),
-              child: Text(
-                sinStock
-                    ? '0'
-                    : (cantidad == cantidad.truncate()
-                        ? '${cantidad.toInt()}'
-                        : cantidad.toStringAsFixed(1)),
-                style: TextStyle(
-                  color: sinStock ? _textDim.withValues(alpha: 0.4) : color,
-                  fontWeight:
-                      sinStock ? FontWeight.normal : FontWeight.bold,
-                  fontSize: 13,
-                ),
-              ),
-            ),
+            if (esSeriado && !sinStock) ...[
+              badge,
+              const SizedBox(width: 6),
+              Icon(Icons.expand_more,
+                  color: _textDim.withValues(alpha: 0.7), size: 18),
+            ] else
+              badge,
           ]),
-        ),
-        if (!isLast)
-          const Divider(height: 1, indent: 41, color: _border),
+        );
+
+    return Column(
+      children: [
+        if (esSeriado && !sinStock)
+          Theme(
+            data: ThemeData(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding:
+                  const EdgeInsets.only(left: 41, right: 16, bottom: 10),
+              title: filaPrincipal(),
+              iconColor: _textDim,
+              collapsedIconColor: _textDim,
+              children: series
+                  .map((item) => Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.qr_code_2,
+                                color: _accent, size: 14),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.serie ?? '',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontFamily: 'monospace',
+                                    ),
+                                  ),
+                                  if (item.nombre.isNotEmpty)
+                                    Text(
+                                      item.nombre,
+                                      style: TextStyle(
+                                        color: _textDim.withValues(alpha: 0.8),
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ))
+                  .toList(),
+            ),
+          )
+        else
+          filaPrincipal(),
+        if (!isLast) const Divider(height: 1, indent: 41, color: _border),
       ],
     );
   }

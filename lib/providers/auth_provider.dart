@@ -62,7 +62,7 @@ class AuthProvider extends ChangeNotifier {
           nombre: nombreCrea.isNotEmpty ? nombreCrea : rutCrea,
           telefono: rutCrea,
           email: '$rutCrea@crea.cl',
-          rol: (rolStr == 'supervisor' || rolStr == 'ito')
+          rol: rolStr == 'supervisor'
               ? RolUsuario.supervisor
               : RolUsuario.tecnico,
           ultimaConexion: DateTime.now(),
@@ -242,7 +242,7 @@ class AuthProvider extends ChangeNotifier {
 
       final nombre = await SessionManager.getNombreTecnico();
       final rolStr = await SessionManager.getRol();
-      final rol = (rolStr == 'supervisor' || rolStr == 'ito')
+      final rol = rolStr == 'supervisor'
           ? RolUsuario.supervisor
           : RolUsuario.tecnico;
 

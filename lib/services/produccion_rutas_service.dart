@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/ford_ruta.dart';
+import 'combustible_material_ruta_service.dart';
 
 /// Reemplaza FordApiService: lee OTs desde produccion_creaciones (últimas 2 semanas)
 /// y calcula km con Haversine × factor de corrección 1.30.
@@ -60,8 +61,15 @@ class ProduccionRutasService {
       final rawOts = entry.value;
 
       final fordOts = rawOts.map(_buildOt).toList();
-      final traslados = _buildTraslados(fordOts);
+      var traslados = _buildTraslados(fordOts);
+      traslados = [
+        ...traslados,
+        ...await _trasladosMaterialDelDia(rutTecnico, fecha),
+      ];
       final km = _computeKm(fordOts);
+      final kmMaterial = traslados
+          .where((t) => t.tipoLeg.startsWith('material'))
+          .fold<double>(0, (s, t) => s + t.kmOsrm);
 
       // fechaToa: "dd/mm/yy" — formato que usa FordDiaRuta.fecha getter
       final parts = fecha.split('-');
@@ -78,10 +86,10 @@ class ProduccionRutasService {
         rut: rutTecnico,
         fechaToa: fechaToa,
         mes: fecha.length >= 7 ? fecha.substring(0, 7) : '',
-        kmTotal: km.total,
+        kmTotal: km.total + kmMaterial,
         kmBodegaIda: km.bodegaIda,
         kmBodegaVuelta: km.bodegaVuelta,
-        kmEntreOt: km.entreOt,
+        kmEntreOt: km.entreOt + kmMaterial,
         tiempoProductivoMin: duracionTotal,
         tiempoTrasladoMin: 0,
         ots: fordOts,
@@ -96,6 +104,92 @@ class ProduccionRutasService {
   }
 
   void limpiarCache() => _cache.clear();
+
+  Future<List<FordTraslado>> _trasladosMaterialDelDia(
+    String rut,
+    String fechaYmd,
+  ) async {
+    final rows =
+        await CombustibleMaterialRutaService.instance.tramosMaterialDelDia(
+      rut,
+      fechaYmd,
+    );
+    if (rows.isEmpty) return [];
+
+    final traslados = <FordTraslado>[];
+    var tramo = 1000;
+
+    for (final row in rows) {
+      final p1Lat = (row['p1_lat'] as num?)?.toDouble();
+      final p1Lng = (row['p1_lng'] as num?)?.toDouble();
+      final p2Lat = (row['p2_lat'] as num?)?.toDouble();
+      final p2Lng = (row['p2_lng'] as num?)?.toDouble();
+      final kmIda = (row['km_ida'] as num?)?.toDouble();
+      if (p1Lat == null ||
+          p1Lng == null ||
+          p2Lat == null ||
+          p2Lng == null ||
+          kmIda == null ||
+          kmIda < 0.05) {
+        continue;
+      }
+
+      final sid = (row['solicitud_id'] as String? ?? '').substring(0, 8);
+      traslados.add(FordTraslado(
+        tipoLeg: 'material_ida',
+        kmOsrm: kmIda,
+        tramo: tramo++,
+        desde: FordPunto(
+          orden: 'Partida',
+          direccion: 'GPS partida material',
+          ciudad: '',
+          zona: '',
+          inicio: '',
+          fin: '',
+          estado: '',
+        ),
+        hasta: FordPunto(
+          orden: 'MAT-$sid',
+          direccion: 'Entrega material',
+          ciudad: '',
+          zona: '',
+          inicio: '',
+          fin: '',
+          estado: '',
+        ),
+      ));
+
+      final incluyeVuelta = row['incluye_vuelta'] as bool? ?? false;
+      final kmVuelta = (row['km_vuelta'] as num?)?.toDouble() ?? 0;
+      final p4Ot = row['p4_orden_trabajo'] as String?;
+      if (incluyeVuelta && kmVuelta > 0.05 && p4Ot != null) {
+        traslados.add(FordTraslado(
+          tipoLeg: 'material_vuelta',
+          kmOsrm: kmVuelta,
+          tramo: tramo++,
+          desde: FordPunto(
+            orden: 'MAT-$sid',
+            direccion: 'Post entrega',
+            ciudad: '',
+            zona: '',
+            inicio: '',
+            fin: '',
+            estado: '',
+          ),
+          hasta: FordPunto(
+            orden: p4Ot,
+            direccion: 'OT iniciada',
+            ciudad: '',
+            zona: '',
+            inicio: '',
+            fin: '',
+            estado: 'iniciado',
+          ),
+        ));
+      }
+    }
+    return traslados;
+  }
 
   // ── Builders ──────────────────────────────────────────────────
 

@@ -3,6 +3,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:agente_desconexiones/config/constants.dart';
+import 'package:agente_desconexiones/services/logistica_service.dart';
+
 class UbicacionService {
   UbicacionService._();
   static final UbicacionService instance = UbicacionService._();
@@ -107,12 +110,40 @@ class UbicacionService {
     return Geolocator.distanceBetween(lat1, lng1, lat2, lng2) / 1000;
   }
 
+  /// `true` si la fila de [ubicaciones_activas] se actualizó recientemente.
+  static bool ubicacionVigente(
+    String? updatedAtIso, {
+    int maxMinutos = kMaterialGpsMaxAntiguedadMinutos,
+  }) {
+    if (updatedAtIso == null || updatedAtIso.isEmpty) return false;
+    final t = DateTime.tryParse(updatedAtIso);
+    if (t == null) return false;
+    final diff = DateTime.now().toUtc().difference(t.toUtc()).inMinutes;
+    return diff >= 0 && diff <= maxMinutos;
+  }
+
   // ── Obtener técnicos dentro del radio con GPS activo ─────────────────────
 
   static Future<List<Map<String, dynamic>>> obtenerTecnicosCercanos({
     required double latSolicitante,
     required double lngSolicitante,
-    double radioKm = 5.0,
+    double? radioKm = 5.0,
+    String? excluirRut,
+  }) {
+    return obtenerTecnicosOrdenadosPorDistancia(
+      latSolicitante: latSolicitante,
+      lngSolicitante: lngSolicitante,
+      radioKm: radioKm,
+      excluirRut: excluirRut,
+    );
+  }
+
+  /// Técnicos con GPS activo, ordenados por distancia al solicitante.
+  /// Si [radioKm] es `null`, no aplica límite de distancia (plantel completo).
+  static Future<List<Map<String, dynamic>>> obtenerTecnicosOrdenadosPorDistancia({
+    required double latSolicitante,
+    required double lngSolicitante,
+    double? radioKm = 5.0,
     String? excluirRut,
   }) async {
     try {
@@ -122,24 +153,28 @@ class UbicacionService {
           .select()
           .eq('gps_activo', true);
 
-      final List<Map<String, dynamic>> cercanos = [];
+      final List<Map<String, dynamic>> resultado = [];
       for (final row in rows as List) {
         final rut = row['rut_tecnico'] as String? ?? '';
-        if (excluirRut != null && rut == excluirRut) continue;
+        if (excluirRut != null &&
+            LogisticaService.sameRut(rut, excluirRut)) {
+          continue;
+        }
+
+        if (!ubicacionVigente(row['updated_at'] as String?)) continue;
 
         final lat = (row['lat'] as num?)?.toDouble() ?? 0;
         final lng = (row['lng'] as num?)?.toDouble() ?? 0;
-        if (lat == 0 && lng == 0) continue;
+        if (lat.abs() < 0.0001 && lng.abs() < 0.0001) continue;
 
         final dist = distanciaKm(latSolicitante, lngSolicitante, lat, lng);
-        if (dist <= radioKm) {
-          cercanos.add({...row, 'distancia_km': dist});
-        }
+        if (radioKm != null && dist > radioKm) continue;
+        resultado.add({...row, 'distancia_km': dist});
       }
 
-      cercanos.sort((a, b) =>
+      resultado.sort((a, b) =>
           (a['distancia_km'] as double).compareTo(b['distancia_km'] as double));
-      return cercanos;
+      return resultado;
     } catch (_) {
       return [];
     }

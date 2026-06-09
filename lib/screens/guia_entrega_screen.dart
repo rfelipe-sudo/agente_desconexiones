@@ -1,14 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:signature/signature.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -17,7 +15,11 @@ import 'package:agente_desconexiones/config/constants.dart';
 import 'package:agente_desconexiones/models/solicitud_material.dart';
 import 'package:agente_desconexiones/screens/pin_entry_screen.dart';
 import 'package:agente_desconexiones/services/alerta_sistema_service.dart';
+import 'package:agente_desconexiones/services/guia_pdf_service.dart';
 import 'package:agente_desconexiones/services/logistica_service.dart';
+import 'package:agente_desconexiones/services/combustible_material_ruta_service.dart';
+import 'package:agente_desconexiones/services/material_solicitud_service.dart';
+import 'package:agente_desconexiones/services/solicitud_estado_monitor.dart';
 
 /// Pantalla de guía de entrega — se abre SOLO en el dispositivo del entregador
 /// (receptor). Ambas firmas se capturan en el mismo dispositivo.
@@ -54,6 +56,8 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
   bool _paso2     = false;
   String? _guiaId;
   bool _completada = false;
+  bool _pinGenerado = false;
+  bool _firmaSolicitanteGuardada = false;
 
   // Firma del entregador guardada para incluir en el PDF
   String? _firmaEntregadorB64;
@@ -61,8 +65,7 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
   Uint8List? _pdfBytes;
 
   // Series ingresadas por el entregador
-  final List<String>      _series   = [];
-  final TextEditingController _serieCtrl = TextEditingController();
+  final List<String> _series = [];
 
   // id_material resuelto al escanear la primera serie válida (seriados)
   int? _idMaterialResuelto;
@@ -71,8 +74,11 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
   TecnicoStock? _stockCache;
   bool   _validandoSerie = false;
   String? _errorSerie;
+  bool   _falloEscaneo = false;
 
   final _db = Supabase.instance.client;
+  final SolicitudEstadoMonitor _estadoMonitor = SolicitudEstadoMonitor();
+  bool _transaccionCerrada = false;
 
   @override
   void initState() {
@@ -86,81 +92,228 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
     if (widget.solicitud.esSeriado && widget.solicitud.series.isNotEmpty) {
       _series.addAll(widget.solicitud.series);
     }
+
+    _estadoMonitor.start(
+      solicitudId: widget.solicitud.id,
+      onEstado: _onEstadoSolicitud,
+    );
+  }
+
+  void _onEstadoSolicitud(String estado) {
+    if (!mounted || _transaccionCerrada) return;
+    if (estado == 'cancelada') {
+      _transaccionCerrada = true;
+      _estadoMonitor.stop();
+      unawaited(_cerrarPorCancelacion());
+      return;
+    }
+    if (estado == 'completada' && !_guardando) {
+      _transaccionCerrada = true;
+      _estadoMonitor.stop();
+      unawaited(_cerrarPorCompletada());
+    }
+  }
+
+  Future<void> _cerrarPorCancelacion() async {
+    if (!mounted) return;
+    await MaterialTransaccionUi.mostrarCancelada(context);
+    if (!mounted) return;
+    MaterialTransaccionUi.cerrarFlujoEntregador(context);
+  }
+
+  Future<void> _cancelarGuia() async {
+    if (_transaccionCerrada || _guardando || !mounted) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _surface,
+        title: const Text('Cancelar entrega',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text(
+          '¿Cancelar la guía de ${widget.solicitud.tipoMaterial}?\n'
+          'Se notificará a ambas partes.',
+          style: const TextStyle(color: _textDim, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No', style: TextStyle(color: _textDim)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _red),
+            child: const Text('Sí, cancelar'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    try {
+      await MaterialSolicitudService().cancelarSolicitud(
+        solicitudId:   widget.solicitud.id,
+        rutCancelador: widget.rutPropio,
+      );
+      _transaccionCerrada = true;
+      _estadoMonitor.stop();
+      if (!mounted) return;
+      await MaterialTransaccionUi.mostrarCancelada(context);
+      if (!mounted) return;
+      MaterialTransaccionUi.cerrarFlujoEntregador(context);
+    } catch (e) {
+      if (!mounted) return;
+      _snack(e is StateError ? e.message : 'Error al cancelar: $e');
+    }
+  }
+
+  Future<void> _cerrarPorCompletada() async {
+    if (!mounted) return;
+    await MaterialTransaccionUi.mostrarCompletada(context);
+    if (!mounted) return;
+    MaterialTransaccionUi.cerrarFlujoEntregador(context);
   }
 
   @override
   void dispose() {
+    _estadoMonitor.stop();
     _firmaCtrl.dispose();
-    _serieCtrl.dispose();
     super.dispose();
   }
 
   // ── Series ───────────────────────────────────────────────────
 
-  Future<TecnicoStock?> _cargarStockTecnico() async {
-    if (_stockCache != null) return _stockCache;
-    final stock = await LogisticaService().fetchStock();
-    _stockCache = stock
-        .where((t) => t.rut == widget.rutPropio)
-        .firstOrNull;
+  Future<TecnicoStock?> _cargarStockTecnico({bool refrescar = false}) async {
+    if (!refrescar && _stockCache != null) return _stockCache;
+    _stockCache = await LogisticaService().fetchStockTecnico(
+      widget.rutPropio,
+      nombreDisplay: widget.nombrePropio,
+    );
     return _stockCache;
   }
 
-  Future<void> _agregarSerie(String serie) async {
-    final s = serie.trim();
+  void _registrarSerieValida(ItemStock item, String serieNormalizada) {
+    if (_series.contains(serieNormalizada)) return;
+    _idMaterialResuelto ??= item.idMaterial;
+    setState(() {
+      _series.add(serieNormalizada);
+      _errorSerie = null;
+      _falloEscaneo = false;
+      _validandoSerie = false;
+    });
+  }
+
+  Future<void> _agregarSerieDesdeLista(ItemStock item) async {
+    final serie = item.serie;
+    if (serie == null || serie.isEmpty) return;
+    final s = LogisticaService.normalizeSerie(serie);
+    if (s.isEmpty || _series.contains(s)) return;
+
+    final sol = widget.solicitud;
+    if (item.categoria != sol.tipoMaterial) {
+      setState(() {
+        _errorSerie =
+            'Ese equipo es ${item.categoria}.\nLa solicitud pide ${sol.tipoMaterial}.';
+      });
+      return;
+    }
+    _registrarSerieValida(item, s);
+  }
+
+  void _marcarErrorEscaneo(String mensaje) {
+    setState(() {
+      _validandoSerie = false;
+      _errorSerie = mensaje;
+      _falloEscaneo = true;
+    });
+  }
+
+  Future<void> _agregarSerie(String serie, {bool desdeEscaneo = false}) async {
+    final s = LogisticaService.normalizeSerie(serie);
     if (s.isEmpty || _series.contains(s)) return;
 
     final sol = widget.solicitud;
     if (!sol.esSeriado) {
-      // Material no seriado — agregar directo sin validar
-      setState(() { _series.add(s); _serieCtrl.clear(); _errorSerie = null; });
+      setState(() {
+        _series.add(s);
+        _errorSerie = null;
+        _falloEscaneo = false;
+      });
       return;
     }
 
-    setState(() { _validandoSerie = true; _errorSerie = null; });
+    setState(() {
+      _validandoSerie = true;
+      _errorSerie = null;
+      if (!desdeEscaneo) _falloEscaneo = false;
+    });
 
     try {
-      final tecnico = await _cargarStockTecnico();
+      final tecnico = await _cargarStockTecnico(refrescar: true);
 
-      // Check 1: ¿existe algún ítem con esta serie en el stock del técnico?
-      final itemPorSerie = tecnico?.items
-          .where((i) => i.serie?.toUpperCase() == s.toUpperCase())
-          .firstOrNull;
+      if (tecnico == null) {
+        if (desdeEscaneo) {
+          _marcarErrorEscaneo(
+              'No se pudo cargar tu saldo desde logística.\n'
+              'Verifica que tu RUT esté en nómina.');
+        } else {
+          setState(() {
+            _validandoSerie = false;
+            _errorSerie =
+                'No se pudo cargar tu saldo desde logística.\n'
+                'Verifica que tu RUT esté en nómina.';
+          });
+        }
+        return;
+      }
+
+      final itemPorSerie = tecnico.findSerie(serie);
 
       if (itemPorSerie == null) {
-        setState(() {
-          _validandoSerie = false;
-          _errorSerie = 'ESTA SERIE NO ESTÁ EN TU SALDO,\nFAVOR PRUEBA CON OTRO EQUIPO';
-        });
+        final disponibles =
+            tecnico.seriadosPorCategoria(sol.tipoMaterial).length;
+        final msg = disponibles > 0
+            ? 'No se reconoció el código escaneado.'
+            : 'No hay ${sol.tipoMaterial} con serie en tu saldo Kepler.';
+        if (desdeEscaneo) {
+          _marcarErrorEscaneo(msg);
+        } else {
+          setState(() {
+            _validandoSerie = false;
+            _errorSerie = msg;
+          });
+        }
         return;
       }
 
-      // Check 2: ¿el ítem corresponde al tipo de material solicitado?
       if (itemPorSerie.categoria != sol.tipoMaterial) {
-        setState(() {
-          _validandoSerie = false;
-          _errorSerie =
-              'ESTA SERIE NO ESTÁ EN TU SALDO,\nFAVOR PRUEBA CON OTRO EQUIPO';
-        });
+        final msg =
+            'Serie registrada como ${itemPorSerie.categoria},\n'
+            'pero la solicitud pide ${sol.tipoMaterial}.';
+        if (desdeEscaneo) {
+          _marcarErrorEscaneo(msg);
+        } else {
+          setState(() {
+            _validandoSerie = false;
+            _errorSerie = msg;
+          });
+        }
         return;
       }
 
-      // Ambos checks OK — capturar id_material para enviarlo a KRP
-      _idMaterialResuelto ??= itemPorSerie.idMaterial;
-      setState(() {
-        _series.add(s);
-        _serieCtrl.clear();
-        _validandoSerie = false;
-        _errorSerie = null;
-      });
+      final serieReg = itemPorSerie.serie != null
+          ? LogisticaService.normalizeSerie(itemPorSerie.serie!)
+          : s;
+      _registrarSerieValida(itemPorSerie, serieReg);
     } catch (_) {
-      // Si falla la carga del stock, dejamos pasar (best-effort)
-      setState(() {
-        _series.add(s);
-        _serieCtrl.clear();
-        _validandoSerie = false;
-        _errorSerie = null;
-      });
+      final msg =
+          'Error al validar serie.\nVerifica conexión e intenta de nuevo.';
+      if (desdeEscaneo) {
+        _marcarErrorEscaneo(msg);
+      } else {
+        setState(() {
+          _validandoSerie = false;
+          _errorSerie = msg;
+        });
+      }
     }
   }
 
@@ -178,9 +331,32 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
       builder: (_) => _BarcodeScannerSheet(
         tipoMaterial: sol.tipoMaterial,
         rutTecnico:   widget.rutPropio,
+        nombreTecnico: widget.nombrePropio,
+        soloCamara:   true,
       ),
     );
-    if (result != null && result.isNotEmpty) _agregarSerie(result);
+    if (result != null && result.isNotEmpty) {
+      await _agregarSerie(result, desdeEscaneo: true);
+    }
+  }
+
+  Future<void> _elegirDeLista() async {
+    final sol = widget.solicitud;
+    final result = await showModalBottomSheet<ItemStock>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _bg,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => _BarcodeScannerSheet(
+        tipoMaterial: sol.tipoMaterial,
+        rutTecnico:   widget.rutPropio,
+        nombreTecnico: widget.nombrePropio,
+        soloCamara:   false,
+        seriesYaUsadas: _series.toSet(),
+      ),
+    );
+    if (result != null) await _agregarSerieDesdeLista(result);
   }
 
   // ── Paso 1: Entregador firma ─────────────────────────────────
@@ -201,13 +377,23 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
       final b64 = await _toBase64(_firmaCtrl);
       _firmaEntregadorB64 = b64; // Guardar para PDF
 
+      final logistica = LogisticaService();
+      final nombreEnt = await logistica.nombrePorRut(
+        widget.rutPropio,
+        fallback: widget.nombrePropio,
+      );
+      final nombreSol = await logistica.nombrePorRut(
+        sol.rutSolicitante,
+        fallback: sol.nombreSolicitante,
+      );
+
       final now = DateTime.now();
       final guia = await _db.from('solicitudes_bodega').insert({
         'solicitud_id':       sol.id,
         'rut_solicitante':    sol.rutSolicitante,
-        'nombre_solicitante': sol.nombreSolicitante,
+        'nombre_solicitante': nombreSol,
         'rut_entregador':     widget.rutPropio,
-        'nombre_entregador':  widget.nombrePropio,
+        'nombre_entregador':  nombreEnt,
         'hora':
             '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:00',
         'fecha':              now.toIso8601String().substring(0, 10),
@@ -250,6 +436,8 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
       _snack('Dibuja tu firma primero');
       return;
     }
+    if (_guardando || _firmaSolicitanteGuardada) return;
+
     setState(() => _guardando = true);
     try {
       final b64    = await _toBase64(_firmaCtrl);
@@ -260,48 +448,27 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
         'estado':            'firmada',
       }).eq('id', guiaId!);
 
-      // Estado 'firmada': ambas firmas OK, falta confirmar PIN con Kepler.
       await _db.from('solicitudes_material').update({
         'estado': 'firmada',
       }).eq('id', widget.solicitud.id);
 
-      // Generar PIN en Supabase y enviar por FCM al solicitante.
-      try {
-        await _db.functions.invoke('generar-pin', body: {
-          'solicitud_id': widget.solicitud.id,
-        });
-      } catch (ePm) {
-        unawaited(AlertaSistemaService().registrarFallo(
-          modulo:        'generar_pin',
-          tipoError:     'edge_function_error',
-          mensaje:       ePm.toString(),
-          rutTecnico:    widget.rutPropio,
-          nombreTecnico: widget.nombrePropio,
-          solicitudId:   widget.solicitud.id,
-        ));
-        rethrow;
-      }
+      await _generarPinSiNecesario();
 
-      // Registro de combustible (fire-and-forget, no bloquea el PIN).
-      unawaited(_insertarCombustible());
+      unawaited(_registrarTramosCombustible());
 
-      // Generar PDF con ambas firmas
       if (_firmaEntregadorB64 != null) {
         try {
           _pdfBytes = await _generarPdf(
             firmaEntregadorB64:  _firmaEntregadorB64!,
             firmaSolicitanteB64: b64,
           );
-        } catch (_) {
-          // PDF no crítico — la guía igual queda firmada en Supabase
-        }
+        } catch (_) {}
       }
 
+      _firmaSolicitanteGuardada = true;
+      if (!mounted) return;
       setState(() => _guardando = false);
 
-      if (!mounted) return;
-      // Navegar a pantalla de ingreso de PIN (B ingresa el PIN que A recibió).
-      // Para seriados: propagar id_material y series capturadas en la guía.
       final solicitudConId = widget.solicitud.copyWith(
         idMaterial: _idMaterialResuelto,
         series: _series.isNotEmpty ? List<String>.from(_series) : null,
@@ -312,95 +479,79 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
         ),
       );
     } catch (e) {
-      setState(() => _guardando = false);
-      _snack('Error: $e');
+      if (mounted) setState(() => _guardando = false);
+      _snack(_mensajeErrorFirma(e));
     }
   }
 
-  // ── Insert combustible_materiales ─────────────────────────────
-
-  Future<void> _insertarCombustible() async {
-    final sol      = widget.solicitud;
-    final modalidad = sol.modalidad;
-    if (modalidad == null) return;
-
-    final guiaId    = _guiaId ?? sol.guiaId;
-    final meetLat   = widget.posicion?.latitude;
-    final meetLng   = widget.posicion?.longitude;
+  /// Genera PIN una sola vez. Si FCM falla pero el PIN quedó en BD, continúa.
+  Future<void> _generarPinSiNecesario() async {
+    if (_pinGenerado) return;
 
     try {
-      // Consulta en paralelo la última OT de entregador y solicitante
-      final results = await Future.wait([
-        _db
-            .from('produccion_creaciones')
-            .select('orden_trabajo, coord_x, coord_y')
-            .eq('rut_tecnico', sol.rutEntregador ?? widget.rutPropio)
-            .order('fecha_proceso', ascending: false)
-            .limit(1),
-        _db
-            .from('produccion_creaciones')
-            .select('orden_trabajo, coord_x, coord_y')
-            .eq('rut_tecnico', sol.rutSolicitante)
-            .order('fecha_proceso', ascending: false)
-            .limit(1),
-      ]);
-
-      final rowE = (results[0] as List).isNotEmpty
-          ? results[0][0] as Map<String, dynamic>
-          : null;
-      final rowS = (results[1] as List).isNotEmpty
-          ? results[1][0] as Map<String, dynamic>
-          : null;
-
-      // coord_x = longitud, coord_y = latitud (convención geográfica)
-      double? latE = double.tryParse(rowE?['coord_y']?.toString() ?? '');
-      double? lngE = double.tryParse(rowE?['coord_x']?.toString() ?? '');
-      double? latS = double.tryParse(rowS?['coord_y']?.toString() ?? '');
-      double? lngS = double.tryParse(rowS?['coord_x']?.toString() ?? '');
-
-      double? p1Lat, p1Lng, p4Lat, p4Lng;
-      String? p1Ot, p4Ot;
-
-      if (modalidad == 'yo_te_lo_llevo') {
-        // Entregador parte de su OT → llega donde el solicitante → solicitante retorna a su OT
-        p1Ot = rowE?['orden_trabajo'] as String?;
-        p1Lat = latE; p1Lng = lngE;
-        p4Ot = rowS?['orden_trabajo'] as String?;
-        p4Lat = latS; p4Lng = lngS;
-      } else {
-        // Solicitante parte de su OT → va a buscar donde el entregador → retorna a su OT
-        p1Ot = rowS?['orden_trabajo'] as String?;
-        p1Lat = latS; p1Lng = lngS;
-        p4Ot = p1Ot;
-        p4Lat = latS; p4Lng = lngS;
-      }
-
-      await _db.from('combustible_materiales').insert({
-        'solicitud_id':    sol.id,
-        'guia_id':         guiaId,
-        'modalidad':       modalidad,
-        'rut_entregador':  sol.rutEntregador ?? widget.rutPropio,
-        'rut_solicitante': sol.rutSolicitante,
-        // P1: OT origen
-        'p1_orden_trabajo': p1Ot,
-        'p1_lat':           p1Lat,
-        'p1_lng':           p1Lng,
-        // P2: punto de entrega (GPS entregador al firmar)
-        'p2_lat':           meetLat,
-        'p2_lng':           meetLng,
-        // P3: punto de recepción (coincide con el lugar de la guía)
-        'p3_lat':           meetLat,
-        'p3_lng':           meetLng,
-        // P4: OT destino / retorno
-        'p4_orden_trabajo': p4Ot,
-        'p4_lat':           p4Lat,
-        'p4_lng':           p4Lng,
+      await _db.functions.invoke('generar-pin', body: {
+        'solicitud_id': widget.solicitud.id,
       });
-
-      debugPrint('[Combustible] registro insertado para solicitud ${sol.id}');
-    } catch (e) {
-      debugPrint('[Combustible] error: $e');
+      _pinGenerado = true;
+      return;
+    } catch (ePm) {
+      final pinOk = await _pinVigenteEnBd();
+      if (pinOk) {
+        _pinGenerado = true;
+        debugPrint('[Guia] generar-pin FCM falló pero PIN vigente en BD');
+        return;
+      }
+      unawaited(AlertaSistemaService().registrarFallo(
+        modulo:        'generar_pin',
+        tipoError:     'edge_function_error',
+        mensaje:       ePm.toString(),
+        rutTecnico:    widget.rutPropio,
+        nombreTecnico: widget.nombrePropio,
+        solicitudId:   widget.solicitud.id,
+      ));
+      rethrow;
     }
+  }
+
+  Future<bool> _pinVigenteEnBd() async {
+    try {
+      final row = await _db
+          .from('solicitudes_material')
+          .select('pin_codigo, pin_expira_en')
+          .eq('id', widget.solicitud.id)
+          .maybeSingle();
+      if (row == null) return false;
+      final pin = row['pin_codigo'] as String?;
+      final expiraRaw = row['pin_expira_en'] as String?;
+      if (pin == null || pin.isEmpty) return false;
+      if (expiraRaw == null) return true;
+      return DateTime.parse(expiraRaw).isAfter(DateTime.now());
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String _mensajeErrorFirma(Object e) {
+    final raw = e.toString();
+    if (raw.contains('pin_intentos') || raw.contains('pin_expira_en')) {
+      return 'Falta configuración PIN en el servidor. '
+          'Contacta a soporte (migración solicitudes_material_pin).';
+    }
+    if (raw.contains('FunctionException')) {
+      return 'No se pudo generar el PIN de confirmación. Intenta de nuevo '
+          'o contacta a soporte si persiste.';
+    }
+    return 'Error: $e';
+  }
+
+  /// GPS del entregador al firmar = fin del tramo; partida viene de "Voy por el" o aceptación.
+  Future<void> _registrarTramosCombustible() async {
+    await CombustibleMaterialRutaService.instance.registrarTramosAlFirmar(
+      sol: widget.solicitud,
+      finLat: widget.posicion?.latitude,
+      finLng: widget.posicion?.longitude,
+      guiaId: _guiaId ?? widget.solicitud.guiaId,
+    );
   }
 
   // ── Generación de PDF ────────────────────────────────────────
@@ -409,156 +560,39 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
     required String firmaEntregadorB64,
     required String firmaSolicitanteB64,
   }) async {
-    final sol  = widget.solicitud;
-    final now  = DateTime.now();
-    final fecha = '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
-    final hora  = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-
-    final firmaE = pw.MemoryImage(base64Decode(firmaEntregadorB64));
-    final firmaS = pw.MemoryImage(base64Decode(firmaSolicitanteB64));
-
-    final doc = pw.Document();
-    doc.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(40),
-        build: (ctx) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            // Título
-            pw.Center(
-              child: pw.Text(
-                'GUÍA DE ENTREGA DE MATERIAL',
-                style: pw.TextStyle(
-                  fontSize: 16,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-            ),
-            pw.SizedBox(height: 4),
-            pw.Center(
-              child: pw.Text(
-                'CREABOX — Operaciones de fibra óptica',
-                style: pw.TextStyle(fontSize: 10, color: PdfColors.blueGrey600),
-              ),
-            ),
-            pw.SizedBox(height: 14),
-            pw.Divider(),
-            pw.SizedBox(height: 10),
-
-            // Fecha, hora, lugar
-            pw.Row(children: [
-              pw.Text('Fecha: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-              pw.Text(fecha, style: const pw.TextStyle(fontSize: 10)),
-              pw.SizedBox(width: 20),
-              pw.Text('Hora: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-              pw.Text(hora, style: const pw.TextStyle(fontSize: 10)),
-            ]),
-            pw.SizedBox(height: 4),
-            pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-              pw.Text('Lugar: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-              pw.Text(_lugarStr(), style: const pw.TextStyle(fontSize: 10)),
-            ]),
-            pw.SizedBox(height: 14),
-
-            // Partes
-            pw.Text('PARTES', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 11, color: PdfColors.blueGrey700)),
-            pw.Divider(height: 8, thickness: 0.5),
-            _pdfFila('Solicitante (recibe)', sol.nombreSolicitante),
-            _pdfFila('RUT solicitante', sol.rutSolicitante),
-            _pdfFila('Entregador (entrega)', sol.nombreEntregador ?? widget.nombrePropio),
-            _pdfFila('RUT entregador', sol.rutEntregador ?? widget.rutPropio),
-            pw.SizedBox(height: 14),
-
-            // Material
-            pw.Text('MATERIAL', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 11, color: PdfColors.blueGrey700)),
-            pw.Divider(height: 8, thickness: 0.5),
-            _pdfFila('Descripción', '${sol.cantidad}× ${sol.tipoMaterial}'),
-            if (_series.isNotEmpty)
-              _pdfFila('N° de serie(s)', _series.join(', ')),
-            pw.SizedBox(height: 20),
-
-            // Firmas lado a lado
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Expanded(
-                  child: pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.center,
-                    children: [
-                      pw.Text('Firma del entregador',
-                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                      pw.SizedBox(height: 2),
-                      pw.Text(sol.nombreEntregador ?? widget.nombrePropio,
-                          style: const pw.TextStyle(fontSize: 9)),
-                      pw.SizedBox(height: 6),
-                      pw.Container(
-                        width: 180,
-                        height: 80,
-                        decoration: pw.BoxDecoration(
-                          border: pw.Border.all(color: PdfColors.blueGrey300),
-                        ),
-                        child: pw.Image(firmaE, fit: pw.BoxFit.contain),
-                      ),
-                    ],
-                  ),
-                ),
-                pw.SizedBox(width: 20),
-                pw.Expanded(
-                  child: pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.center,
-                    children: [
-                      pw.Text('Firma del solicitante',
-                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                      pw.SizedBox(height: 2),
-                      pw.Text(sol.nombreSolicitante,
-                          style: const pw.TextStyle(fontSize: 9)),
-                      pw.SizedBox(height: 6),
-                      pw.Container(
-                        width: 180,
-                        height: 80,
-                        decoration: pw.BoxDecoration(
-                          border: pw.Border.all(color: PdfColors.blueGrey300),
-                        ),
-                        child: pw.Image(firmaS, fit: pw.BoxFit.contain),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-
-            pw.Spacer(),
-            pw.Divider(),
-            pw.Text(
-              'Documento generado el $fecha a las $hora — CREABOX',
-              style: pw.TextStyle(fontSize: 8, color: PdfColors.blueGrey400),
-            ),
-          ],
-        ),
-      ),
+    final sol = widget.solicitud;
+    final logistica = LogisticaService();
+    final rutEnt = sol.rutEntregador ?? widget.rutPropio;
+    final rutSol = sol.rutSolicitante;
+    final nombreEnt = await logistica.nombrePorRut(
+      rutEnt,
+      fallback: widget.nombrePropio,
+    );
+    final nombreSol = await logistica.nombrePorRut(
+      rutSol,
+      fallback: sol.nombreSolicitante,
     );
 
-    return doc.save();
+    final now = DateTime.now();
+    return GuiaPdfService.generar(guia: {
+      'id': _guiaId,
+      'solicitud_id': sol.id,
+      'rut_solicitante': rutSol,
+      'nombre_solicitante': nombreSol,
+      'rut_entregador': rutEnt,
+      'nombre_entregador': nombreEnt,
+      'fecha': now.toIso8601String().substring(0, 10),
+      'hora':
+          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:00',
+      'lugar': _lugarStr(),
+      'detalle_material': '${sol.cantidad}× ${sol.tipoMaterial}',
+      'cantidad': sol.cantidad,
+      'series': _series,
+      'firma_entregador': firmaEntregadorB64,
+      'firma_solicitante': firmaSolicitanteB64,
+      'estado': 'firmada',
+    });
   }
-
-  pw.Widget _pdfFila(String label, String value) => pw.Padding(
-        padding: const pw.EdgeInsets.only(bottom: 3),
-        child: pw.Row(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.SizedBox(
-              width: 130,
-              child: pw.Text('$label:',
-                  style: pw.TextStyle(fontSize: 9, color: PdfColors.blueGrey600)),
-            ),
-            pw.Expanded(
-              child: pw.Text(value,
-                  style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
-            ),
-          ],
-        ),
-      );
 
   // ── Helpers ──────────────────────────────────────────────────
 
@@ -596,6 +630,14 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
         ),
         title: const Text('Guía de Entrega',
             style: TextStyle(color: Colors.white, fontSize: 15)),
+        actions: [
+          if (!_completada)
+            TextButton(
+              onPressed: _guardando ? null : _cancelarGuia,
+              child: const Text('Cancelar',
+                  style: TextStyle(color: _red, fontSize: 13)),
+            ),
+        ],
       ),
       body: _completada ? _buildConfirmacion() : _buildGuia(),
     );
@@ -804,7 +846,7 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: _guardando
+                onPressed: _guardando || _firmaSolicitanteGuardada
                     ? null
                     : (_paso2
                         ? _firmarSolicitante
@@ -890,80 +932,32 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
         ]),
         const SizedBox(height: 12),
 
-        // Escáner + campo manual
-        Row(children: [
-          Expanded(
-            child: TextField(
-              controller: _serieCtrl,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              decoration: InputDecoration(
-                hintText: 'Número de serie',
-                hintStyle:
-                    TextStyle(color: _textDim.withValues(alpha: 0.5)),
-                filled: true,
-                fillColor: const Color(0xFF0A1628),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: Color(0xFF1E3A5F)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: Color(0xFF1E3A5F)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide:
-                      const BorderSide(color: Color(0xFF00D9FF)),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 10),
-                isDense: true,
-              ),
-              inputFormatters: [
-                FilteringTextInputFormatter.deny(RegExp(r'\s')),
-              ],
-              onSubmitted: (s) { _agregarSerie(s); },
-            ),
+        FilledButton.icon(
+          onPressed: _validandoSerie ? null : _escanearCodigo,
+          icon: _validandoSerie
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      color: Colors.black, strokeWidth: 2))
+              : const Icon(Icons.qr_code_scanner, size: 18),
+          label: Text(
+            _validandoSerie ? 'Validando…' : 'Escanear código',
+            style: const TextStyle(fontWeight: FontWeight.bold),
           ),
-          const SizedBox(width: 8),
-          InkWell(
-            onTap: _validandoSerie ? null : () { _agregarSerie(_serieCtrl.text); },
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                  color: _accent.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: _accent.withValues(alpha: 0.4))),
-              child: _validandoSerie
-                  ? const SizedBox(
-                      width: 18, height: 18,
-                      child: CircularProgressIndicator(
-                          color: _accent, strokeWidth: 2))
-                  : const Icon(Icons.add, color: _accent, size: 20),
-            ),
+          style: FilledButton.styleFrom(
+            backgroundColor: _green,
+            foregroundColor: Colors.black,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            minimumSize: const Size(double.infinity, 44),
           ),
-          const SizedBox(width: 6),
-          InkWell(
-            onTap: _validandoSerie ? null : _escanearCodigo,
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                  color: _green.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: _green.withValues(alpha: 0.4))),
-              child: const Icon(Icons.qr_code_scanner,
-                  color: _green, size: 20),
-            ),
-          ),
-        ]),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Escanea el código de barra del equipo.',
+          style: TextStyle(color: _textDim.withValues(alpha: 0.85), fontSize: 11),
+        ),
 
-        // Error de validación de serie
         if (_errorSerie != null) ...[
           const SizedBox(height: 10),
           Container(
@@ -974,21 +968,38 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: _red.withValues(alpha: 0.5)),
             ),
-            child: Row(children: [
-              const Icon(Icons.warning_amber_rounded,
-                  color: _red, size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  _errorSerie!,
-                  style: const TextStyle(
-                      color: _red,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                      height: 1.4),
-                ),
-              ),
-            ]),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.warning_amber_rounded,
+                      color: _red, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _errorSerie!,
+                      style: const TextStyle(
+                          color: _red,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          height: 1.4),
+                    ),
+                  ),
+                ]),
+                if (widget.solicitud.esSeriado && _falloEscaneo) ...[
+                  const SizedBox(height: 10),
+                  TextButton.icon(
+                    onPressed: _validandoSerie ? null : _elegirDeLista,
+                    icon: const Icon(Icons.list_alt, size: 16),
+                    label: const Text('Elegir de mi saldo'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _accent,
+                      padding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ],
 
@@ -1061,10 +1072,17 @@ class _GuiaEntregaScreenState extends State<GuiaEntregaScreen> {
 class _BarcodeScannerSheet extends StatefulWidget {
   final String tipoMaterial;
   final String rutTecnico;
+  final String? nombreTecnico;
+  /// Solo cámara (escaneo). Si false, abre directamente la lista del saldo.
+  final bool soloCamara;
+  final Set<String> seriesYaUsadas;
 
   const _BarcodeScannerSheet({
     required this.tipoMaterial,
     required this.rutTecnico,
+    this.nombreTecnico,
+    this.soloCamara = true,
+    this.seriesYaUsadas = const {},
   });
 
   @override
@@ -1095,6 +1113,9 @@ class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet>
       duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
     _lineAnim = CurvedAnimation(parent: _lineCtrl, curve: Curves.easeInOut);
+    if (!widget.soloCamara) {
+      _cargarSeries();
+    }
   }
 
   @override
@@ -1104,12 +1125,24 @@ class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet>
     super.dispose();
   }
 
+  List<ItemStock> _filtrarDisponibles(List<ItemStock> items) {
+    return items.where((item) {
+      final serie = item.serie;
+      if (serie == null || serie.isEmpty) return false;
+      final norm = LogisticaService.normalizeSerie(serie);
+      return !widget.seriesYaUsadas.contains(norm);
+    }).toList();
+  }
+
   Future<void> _cargarSeries() async {
     setState(() => _cargando = true);
     try {
-      final stock = await LogisticaService().fetchStock();
-      final tecnico = stock.where((t) => t.rut == widget.rutTecnico).firstOrNull;
-      final items = tecnico?.seriadosPorCategoria(widget.tipoMaterial) ?? [];
+      final tecnico = await LogisticaService().fetchStockTecnico(
+        widget.rutTecnico,
+        nombreDisplay: widget.nombreTecnico,
+      );
+      final items = _filtrarDisponibles(
+          tecnico?.seriadosPorCategoria(widget.tipoMaterial) ?? []);
       setState(() {
         _seriesDisponibles = items;
         _mostrandoLista    = true;
@@ -1137,42 +1170,42 @@ class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet>
         ),
         const SizedBox(height: 12),
 
-        // ── Encabezado con toggle ─────────────────────────────
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(children: [
             Expanded(
               child: Text(
                 _mostrandoLista
-                    ? 'Series disponibles · ${widget.tipoMaterial}'
+                    ? 'Mi saldo · ${widget.tipoMaterial}'
                     : 'Escanear código de barra',
                 style: const TextStyle(color: Colors.white,
                     fontWeight: FontWeight.bold, fontSize: 14),
               ),
             ),
-            TextButton.icon(
-              onPressed: _cargando
-                  ? null
-                  : () {
-                      if (_mostrandoLista) {
-                        setState(() => _mostrandoLista = false);
-                      } else {
-                        _cargarSeries();
-                      }
-                    },
-              icon: Icon(
-                _mostrandoLista
-                    ? Icons.qr_code_scanner
-                    : Icons.list_alt_outlined,
-                size: 16,
-                color: _accent,
+            if (widget.soloCamara)
+              TextButton.icon(
+                onPressed: _cargando
+                    ? null
+                    : () {
+                        if (_mostrandoLista) {
+                          setState(() => _mostrandoLista = false);
+                        } else {
+                          _cargarSeries();
+                        }
+                      },
+                icon: Icon(
+                  _mostrandoLista
+                      ? Icons.qr_code_scanner
+                      : Icons.list_alt_outlined,
+                  size: 16,
+                  color: _accent,
+                ),
+                label: Text(
+                  _mostrandoLista ? 'Cámara' : 'Ver mis series',
+                  style: const TextStyle(color: _accent, fontSize: 12),
+                ),
+                style: TextButton.styleFrom(padding: EdgeInsets.zero),
               ),
-              label: Text(
-                _mostrandoLista ? 'Cámara' : 'Ver mis series',
-                style: const TextStyle(color: _accent, fontSize: 12),
-              ),
-              style: TextButton.styleFrom(padding: EdgeInsets.zero),
-            ),
           ]),
         ),
 
@@ -1314,7 +1347,7 @@ class _BarcodeScannerSheetState extends State<_BarcodeScannerSheet>
       itemBuilder: (_, i) {
         final item = _seriesDisponibles[i];
         return InkWell(
-          onTap: () => Navigator.pop(context, item.serie),
+          onTap: () => Navigator.pop(context, item),
           borderRadius: BorderRadius.circular(10),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

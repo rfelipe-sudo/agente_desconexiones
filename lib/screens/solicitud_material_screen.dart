@@ -5,7 +5,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -15,16 +14,31 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import 'package:agente_desconexiones/config/tips_calidad_material.dart';
 import 'package:agente_desconexiones/constants/map_styles.dart';
 import 'package:agente_desconexiones/models/solicitud_material.dart';
 import 'package:agente_desconexiones/screens/entrega_en_camino_screen.dart';
+import 'package:agente_desconexiones/screens/pin_entry_screen.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart';
+import 'package:agente_desconexiones/services/guia_pdf_service.dart';
+import 'package:agente_desconexiones/services/material_alerta_estado.dart';
+import 'package:agente_desconexiones/services/combustible_material_ruta_service.dart';
 import 'package:agente_desconexiones/services/material_solicitud_service.dart';
+import 'package:agente_desconexiones/services/logistica_service.dart';
+import 'package:agente_desconexiones/services/solicitud_estado_monitor.dart';
 import 'package:agente_desconexiones/services/supabase_service.dart';
+import 'package:agente_desconexiones/utils/session_manager.dart';
+import 'package:agente_desconexiones/screens/supervisor/tecnico_stock_screen.dart';
 import 'package:agente_desconexiones/screens/tecnicos_cercanos_mapa_screen.dart';
+
+enum _FaseEsperaMaterial {
+  revisandoStock,
+  buscandoTecnicos,
+  enviandoSolicitud,
+  completado,
+}
 
 class SolicitudMaterialScreen extends StatefulWidget {
   const SolicitudMaterialScreen({super.key});
@@ -34,7 +48,8 @@ class SolicitudMaterialScreen extends StatefulWidget {
       _SolicitudMaterialScreenState();
 }
 
-class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
+class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen>
+    with WidgetsBindingObserver {
   static const Color _bg      = Color(0xFF0A1628);
   static const Color _surface = Color(0xFF0D1B2A);
   static const Color _accent  = Color(0xFF00D9FF);
@@ -49,6 +64,9 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   String? _nombre;
   Position? _posicion;
 
+  bool   _initListo     = false;
+  String? _bloqueoAcceso;
+
   // ── Formulario ───────────────────────────────────────────────
   MaterialItem? _materialSeleccionado;
   int _cantidad = 1;
@@ -56,6 +74,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
 
   // ── Estado solicitud propia ──────────────────────────────────
   SolicitudMaterial? _miSolicitud;
+  SolicitudMaterial? _pinPendienteEntregador;
   bool _enviando = false;
 
   // ── Solicitudes cercanas (rol entregador) ────────────────────
@@ -80,6 +99,35 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   // IDs aceptadas por este técnico (evita mostrar "atendida por otro" para propias)
   final Set<String> _aceptadasPorMi = {};
 
+  // ── Tips de calidad (overlay envío solicitud) ────────────────
+  Timer? _tipCalidadTimer;
+  int _tipCalidadIdx = 0;
+  final math.Random _tipRng = math.Random();
+
+  // ── Barra de progreso al enviar solicitud ────────────────────
+  static const _estadosGuiaHistorial = ['firmada', 'confirmada_bodega', 'emitida'];
+
+  /// Más reciente primero: created_at, luego fecha+hora.
+  static int _cmpGuiaReciente(Map<String, dynamic> a, Map<String, dynamic> b) {
+    final ca = a['created_at'] as String?;
+    final cb = b['created_at'] as String?;
+    if (ca != null && cb != null) return cb.compareTo(ca);
+    final fa = '${a['fecha'] ?? ''}T${a['hora'] ?? '00:00:00'}';
+    final fb = '${b['fecha'] ?? ''}T${b['hora'] ?? '00:00:00'}';
+    return fb.compareTo(fa);
+  }
+
+  static List<Map<String, dynamic>> _ordenarGuiasRecientes(
+    List<Map<String, dynamic>> guias,
+  ) {
+    final copia = List<Map<String, dynamic>>.from(guias);
+    copia.sort(_cmpGuiaReciente);
+    return copia;
+  }
+
+  _FaseEsperaMaterial _faseEspera = _FaseEsperaMaterial.revisandoStock;
+  bool _overlayProgresoVisible = false;
+
   // ── Timer de 10 minutos ──────────────────────────────────────
   Timer? _timer10min;
 
@@ -96,6 +144,15 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   // Evita mostrar el banner de modalidad más de una vez por solicitud
   bool _bannerModalidadMostrado = false;
   bool _llegadaMostrada         = false;
+  bool _cargandoSaldo           = false;
+  String? _aceptandoId;
+  bool _marcandoLlegada         = false;
+  bool _transaccionCerrada      = false;
+  // Evita procesar eventos realtime obsoletos si llegan en ráfaga.
+  int _cercanasGen = 0;
+
+  /// Evita repetir el snack de PIN pendiente al reentrar a la pantalla.
+  static final Set<String> _pinSnackMostrados = {};
 
   final _db      = Supabase.instance.client;
   final _service = MaterialSolicitudService();
@@ -103,19 +160,149 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _crearIconos();
     _init();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refrescarSesion());
+    }
+  }
+
+  Future<void> _refrescarSesion() async {
+    final id = await SessionManager.identidadSesionMaterial();
+    if (!mounted || id.rut.isEmpty) return;
+    if (id.rut != _rut || id.nombre != _nombre) {
+      debugPrint(
+          '🔁 [SolicitudMat] sesión actualizada: ${id.rut} → ${id.nombre}');
+      setState(() {
+        _rut = id.rut;
+        _nombre = id.nombre;
+      });
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(FcmService.stopAlerta());
     _subPropia?.cancel();
     _subDestinatarios?.cancel();
     _timer10min?.cancel();
     _timerGpsAceptada?.cancel();
     _pollingEntregador?.cancel();
+    _tipCalidadTimer?.cancel();
     _mapController?.dispose();
     super.dispose();
+  }
+
+  bool _pinEntregadorVigente(Map<String, dynamic> row) {
+    final pin = row['pin_codigo'] as String?;
+    if (pin == null || pin.isEmpty) return false;
+    final expiraRaw = row['pin_expira_en'] as String?;
+    if (expiraRaw == null) return true;
+    try {
+      return DateTime.parse(expiraRaw).isAfter(DateTime.now());
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<void> _cargarPinPendienteEntregador({bool mostrarSnack = true}) async {
+    if (_rut == null) return;
+    try {
+      final rows = await _db
+          .from('solicitudes_material')
+          .select()
+          .eq('rut_entregador', _rut!)
+          .eq('estado', 'firmada')
+          .not('pin_codigo', 'is', null)
+          .order('created_at', ascending: false)
+          .limit(3);
+      if (!mounted) return;
+      Map<String, dynamic>? rowPendiente;
+      for (final row in rows as List) {
+        final m = row as Map<String, dynamic>;
+        if (_pinEntregadorVigente(m)) {
+          rowPendiente = m;
+          break;
+        }
+      }
+      if (rowPendiente == null) {
+        setState(() => _pinPendienteEntregador = null);
+        return;
+      }
+      final sol = SolicitudMaterial.fromMap(rowPendiente);
+      final mismoId = _pinPendienteEntregador?.id == sol.id;
+      debugPrint('🟠 [SolicitudMat] PIN pendiente entregador → ${sol.id}');
+      setState(() => _pinPendienteEntregador = sol);
+      if (!mostrarSnack || mismoId || _pinSnackMostrados.contains(sol.id)) {
+        return;
+      }
+      _pinSnackMostrados.add(sol.id);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _pinPendienteEntregador?.id != sol.id) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: _orange,
+            duration: const Duration(seconds: 8),
+            action: SnackBarAction(
+              label: 'Ingresar PIN',
+              textColor: Colors.white,
+              onPressed: _abrirPinPendienteEntregador,
+            ),
+            content: Text(
+              'Tienes un traspaso sin confirmar (${sol.tipoMaterial}). '
+              'Pide el PIN a ${sol.nombreSolicitante}.',
+            ),
+          ),
+        );
+      });
+    } catch (e) {
+      debugPrint('🔴 [SolicitudMat] error PIN pendiente: $e');
+    }
+  }
+
+  void _abrirPinPendienteEntregador() {
+    final sol = _pinPendienteEntregador;
+    if (sol == null) return;
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => PinEntryScreen(solicitud: sol),
+      ),
+    ).then((_) {
+      _pinSnackMostrados.remove(sol.id);
+      return _cargarPinPendienteEntregador(mostrarSnack: false);
+    });
+  }
+
+  Widget _bannerPinPendienteEntregador() {
+    final sol = _pinPendienteEntregador;
+    if (sol == null) return const SizedBox.shrink();
+    return Material(
+      color: _orange,
+      child: InkWell(
+        onTap: _abrirPinPendienteEntregador,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(children: [
+            const Icon(Icons.pin_outlined, color: Colors.white, size: 22),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Traspaso pendiente: ingresa el PIN de ${sol.nombreSolicitante}',
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Colors.white),
+          ]),
+        ),
+      ),
+    );
   }
 
   // ── Iconos canvas para marcadores ────────────────────────────
@@ -157,20 +344,313 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
     return BitmapDescriptor.fromBytes(bytes!.buffer.asUint8List());
   }
 
+  String get _tituloFaseEspera => switch (_faseEspera) {
+        _FaseEsperaMaterial.revisandoStock => 'Revisando stock',
+        _FaseEsperaMaterial.buscandoTecnicos => 'Buscando técnicos',
+        _FaseEsperaMaterial.enviandoSolicitud => 'Esperando que acepten',
+        _FaseEsperaMaterial.completado => '¡Listo!',
+      };
+
+  String get _textoFaseEspera => _faseEspera == _FaseEsperaMaterial.completado
+      ? _tituloFaseEspera
+      : '$_tituloFaseEspera…';
+
+  void _detenerProgresoEnvio() {
+    _overlayProgresoVisible = false;
+    _tipCalidadTimer?.cancel();
+    _tipCalidadTimer = null;
+  }
+
+  void _iniciarProgresoEnvio() {
+    _faseEspera = _FaseEsperaMaterial.revisandoStock;
+    _overlayProgresoVisible = true;
+    if (mounted) setState(() {});
+    _syncTipsCalidad();
+  }
+
+  void _avanzarFaseEspera(_FaseEsperaMaterial fase) {
+    if (!mounted) return;
+    setState(() => _faseEspera = fase);
+  }
+
+  Future<void> _completarProgresoEnvio() async {
+    if (!mounted) return;
+    setState(() {
+      _faseEspera = _FaseEsperaMaterial.completado;
+      _enviando = false;
+    });
+    await Future.delayed(const Duration(milliseconds: 900));
+    if (!mounted) return;
+    setState(() => _overlayProgresoVisible = false);
+    _tipCalidadTimer?.cancel();
+    _tipCalidadTimer = null;
+  }
+
+  void _syncTipsCalidad() {
+    if (!_overlayProgresoVisible) {
+      _tipCalidadTimer?.cancel();
+      _tipCalidadTimer = null;
+      return;
+    }
+
+    _tipCalidadTimer ??= Timer.periodic(const Duration(seconds: 9), (_) {
+      if (!mounted || !_overlayProgresoVisible) return;
+      var next = _tipRng.nextInt(kTipsCalidadMaterial.length);
+      while (next == _tipCalidadIdx && kTipsCalidadMaterial.length > 1) {
+        next = _tipRng.nextInt(kTipsCalidadMaterial.length);
+      }
+      setState(() => _tipCalidadIdx = next);
+    });
+
+    if (_tipCalidadIdx == 0 && kTipsCalidadMaterial.isNotEmpty) {
+      _tipCalidadIdx = _tipRng.nextInt(kTipsCalidadMaterial.length);
+    }
+  }
+
+  Widget _buildBarraFasesEspera() {
+    const fases = _FaseEsperaMaterial.values;
+    const etiquetas = ['Stock', 'Técnicos', 'Espera', 'OK'];
+    final activa = _faseEspera.index;
+    final terminado = _faseEspera == _FaseEsperaMaterial.completado;
+
+    return Column(
+      children: [
+        Row(
+          children: List.generate(fases.length * 2 - 1, (i) {
+            if (i.isOdd) {
+              final paso = i ~/ 2;
+              final avanzado = terminado || paso < activa;
+              return Expanded(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 350),
+                  height: 3,
+                  color: avanzado
+                      ? _green
+                      : Colors.white.withValues(alpha: 0.15),
+                ),
+              );
+            }
+            final paso = i ~/ 2;
+            final hecho = terminado || paso < activa;
+            final actual = !terminado && paso == activa;
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 350),
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: hecho
+                    ? _green
+                    : actual
+                        ? _accent
+                        : Colors.white.withValues(alpha: 0.12),
+                border: Border.all(
+                  color: actual ? _accent : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+              child: hecho
+                  ? const Icon(Icons.check, size: 13, color: Colors.white)
+                  : actual
+                      ? const SizedBox(
+                          width: 10,
+                          height: 10,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.black87,
+                          ),
+                        )
+                      : null,
+            );
+          }),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: List.generate(fases.length, (paso) {
+            final activo = terminado || paso <= activa;
+            return Expanded(
+              child: Text(
+                etiquetas[paso],
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: activo ? Colors.white : _textDim,
+                  fontWeight: activo ? FontWeight.bold : FontWeight.normal,
+                  fontSize: 9,
+                ),
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _textoFaseEspera,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: terminado ? _green : Colors.white,
+            fontWeight: FontWeight.w700,
+            fontSize: 16,
+            letterSpacing: 0.2,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCapaBuscandoTecnico({double bottomReserva = 0}) {
+    final tip = kTipsCalidadMaterial.isNotEmpty
+        ? kTipsCalidadMaterial[_tipCalidadIdx]
+        : '';
+    return Positioned.fill(
+      bottom: bottomReserva,
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.45),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              children: [
+                const SizedBox(height: 8),
+                _buildBarraFasesEspera(),
+                Expanded(
+                  child: Center(
+                    child: tip.isEmpty
+                        ? const SizedBox.shrink()
+                        : Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 420),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 20,
+                                      vertical: 12,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFC62828),
+                                      borderRadius: const BorderRadius.vertical(
+                                        top: Radius.circular(14),
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black
+                                              .withValues(alpha: 0.2),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: const Text(
+                                      'A TENER EN CUENTA..',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 17,
+                                        letterSpacing: 0.6,
+                                      ),
+                                    ),
+                                  ),
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 22,
+                                      vertical: 20,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _green,
+                                      borderRadius: const BorderRadius.vertical(
+                                        bottom: Radius.circular(14),
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: _green.withValues(alpha: 0.35),
+                                          blurRadius: 12,
+                                          offset: const Offset(0, 4),
+                                        ),
+                                      ],
+                                    ),
+                                    child: AnimatedSwitcher(
+                                      duration:
+                                          const Duration(milliseconds: 450),
+                                      child: Text(
+                                        tip,
+                                        key: ValueKey<int>(_tipCalidadIdx),
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 18,
+                                          height: 1.45,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   // ── Init ─────────────────────────────────────────────────────
 
   Future<void> _init() async {
-    _cancelarNotificacionMaterial(); // descarta notificación 42 del sistema al entrar
-    final prefs = await SharedPreferences.getInstance();
-    _rut    = prefs.getString('rut_tecnico');
-    _nombre = prefs.getString('nombre_tecnico') ?? 'Técnico';
+    await FcmService.cancelMaterialNotificacion();
+    _notificadas.addAll(await MaterialAlertaEstado.load());
+    final id = await SessionManager.identidadSesionMaterial();
+    _rut = id.rut.isEmpty ? null : id.rut;
+    _nombre = id.nombre.isEmpty ? null : id.nombre;
     _posicion = await _obtenerPosicion();
 
-    debugPrint('🔵 [SolicitudMat] init → rut=$_rut pos=${_posicion?.latitude},${_posicion?.longitude}');
+    debugPrint(
+        '🔵 [SolicitudMat] init → rut=$_rut nombre=$_nombre '
+        'pos=${_posicion?.latitude},${_posicion?.longitude}');
 
     if (_rut == null) {
       debugPrint('🔴 [SolicitudMat] sin RUT, abortando init');
+      if (mounted) setState(() => _initListo = true);
       return;
+    }
+
+    final bloqueo =
+        await LogisticaService().mensajeBloqueoSolicitudMaterial(_rut!);
+    if (bloqueo != null) {
+      debugPrint('🔴 [SolicitudMat] acceso bloqueado: $bloqueo');
+      if (mounted) {
+        setState(() {
+          _bloqueoAcceso = bloqueo;
+          _initListo     = true;
+        });
+      }
+      return;
+    }
+
+    if (_nombre == null || _nombre!.isEmpty) {
+      try {
+        _nombre = await LogisticaService().nombreDesdeNomina(_rut!);
+      } catch (e) {
+        debugPrint('🔴 [SolicitudMat] nombre nómina: $e');
+        if (mounted) {
+          setState(() {
+            _bloqueoAcceso = e is StateError
+                ? e.message
+                : 'No se pudo validar tu RUT en nómina.';
+            _initListo = true;
+          });
+        }
+        return;
+      }
     }
 
     // Registrar ubicación para que notificarDestinatarios() encuentre este técnico.
@@ -187,30 +667,84 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         .from('solicitudes_material')
         .select()
         .eq('rut_solicitante', _rut!)
-        .inFilter('estado', ['pendiente', 'aceptada', 'en_guia'])
+        .inFilter('estado', ['pendiente', 'aceptada', 'en_guia', 'firmada'])
         .order('created_at', ascending: false)
         .limit(1);
 
     debugPrint('🔵 [SolicitudMat] solicitud propia activa: ${rows.length}');
 
+    await _cargarPinPendienteEntregador();
+
     if (rows.isNotEmpty && mounted) {
-      setState(() =>
-          _miSolicitud = SolicitudMaterial.fromMap(rows.first as Map<String, dynamic>));
+      setState(() {
+        _miSolicitud = SolicitudMaterial.fromMap(rows.first as Map<String, dynamic>);
+        _overlayProgresoVisible = false;
+      });
       _suscribirSolicitudPropia();
       // Activar monitor de PIN: A verá su PIN en un dialog global cuando B confirme.
       if (_rut != null && _miSolicitud != null) {
         unawaited(FcmService.instance.initPinMonitor(_rut!, _miSolicitud!.id));
       }
+      if (_miSolicitud?.pinCodigo != null &&
+          _miSolicitud!.pinCodigo!.isNotEmpty &&
+          mounted) {
+        unawaited(FcmService.showPinDialogIfNeeded(
+          context,
+          _miSolicitud!.pinCodigo!,
+          solicitudId: _miSolicitud!.id,
+        ));
+      }
+      unawaited(FcmService.instance.processPendingPin(context));
     }
 
     _suscribirCercanas();
     _cargarGuiasMes();
     if (mounted) {
-      setState(() {});
+      setState(() => _initListo = true);
+      _syncTipsCalidad();
       // Reanima la cámara cuando el mapa esté listo con la posición correcta
       Future.delayed(const Duration(milliseconds: 400), () {
         if (mounted) _actualizarMarkers();
       });
+    }
+  }
+
+  Future<void> _verMiSaldo() async {
+    await _refrescarSesion();
+    if (_rut == null || _cargandoSaldo) return;
+    setState(() => _cargandoSaldo = true);
+    try {
+      final stock = await LogisticaService().fetchStockTecnico(
+        _rut!,
+        nombreDisplay: _nombre,
+      );
+      if (!mounted) return;
+      if (stock == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se encontró tu saldo en logística.\n'
+              'Verifica que tu RUT esté en nómina.',
+            ),
+          ),
+        );
+        return;
+      }
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => TecnicoStockScreen(tecnico: stock),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error al cargar saldo. Revisa conexión e intenta de nuevo.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _cargandoSaldo = false);
     }
   }
 
@@ -222,7 +756,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         .toIso8601String()
         .substring(0, 10);
     // Seleccionamos solo metadatos; las firmas (base64 grandes) se cargan al abrir el PDF
-    const cols = 'id, solicitud_id, fecha, hora, lugar, '
+    const cols = 'id, solicitud_id, fecha, hora, created_at, lugar, '
         'detalle_material, cantidad, series, estado, '
         'nombre_solicitante, rut_solicitante, nombre_entregador, rut_entregador';
     try {
@@ -231,23 +765,52 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
             .from('solicitudes_bodega')
             .select(cols)
             .eq('rut_entregador', _rut!)
+            .inFilter('estado', _estadosGuiaHistorial)
             .gte('fecha', inicio)
             .lte('fecha', fin)
-            .order('fecha', ascending: false),
+            .order('created_at', ascending: false),
         _db
             .from('solicitudes_bodega')
             .select(cols)
             .eq('rut_solicitante', _rut!)
+            .inFilter('estado', _estadosGuiaHistorial)
             .gte('fecha', inicio)
             .lte('fecha', fin)
-            .order('fecha', ascending: false),
+            .order('created_at', ascending: false),
       ]);
       if (!mounted) return;
+      final logistica = LogisticaService();
+      Future<Map<String, dynamic>> enriquecer(Map<String, dynamic> g) async {
+        final rutEnt = g['rut_entregador'] as String? ?? '';
+        final rutSol = g['rut_solicitante'] as String? ?? '';
+        return {
+          ...g,
+          'nombre_entregador': await logistica.nombrePorRut(
+            rutEnt,
+            fallback: g['nombre_entregador'] as String?,
+          ),
+          'nombre_solicitante': await logistica.nombrePorRut(
+            rutSol,
+            fallback: g['nombre_solicitante'] as String?,
+          ),
+        };
+      }
+
+      final entregadas = await Future.wait(
+        (results[0] as List)
+            .cast<Map<String, dynamic>>()
+            .map(enriquecer),
+      );
+      final recibidas = await Future.wait(
+        (results[1] as List)
+            .cast<Map<String, dynamic>>()
+            .map(enriquecer),
+      );
+
+      if (!mounted) return;
       setState(() {
-        _guiasEntregadas =
-            (results[0] as List).cast<Map<String, dynamic>>();
-        _guiasRecibidas  =
-            (results[1] as List).cast<Map<String, dynamic>>();
+        _guiasEntregadas = _ordenarGuiasRecientes(entregadas);
+        _guiasRecibidas  = _ordenarGuiasRecientes(recibidas);
       });
     } catch (_) {}
   }
@@ -273,9 +836,156 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
     }
   }
 
+  void _limpiarRecursosSeguimiento() {
+    _timerGpsAceptada?.cancel();
+    _timerGpsAceptada = null;
+    _pollingEntregador?.cancel();
+    _pollingEntregador = null;
+    _timer10min?.cancel();
+    _tipCalidadTimer?.cancel();
+    _tipCalidadTimer = null;
+    _mapController?.dispose();
+    _mapController = null;
+    _markers.clear();
+  }
+
+  Future<void> _finalizarCancelada({
+    String? mensaje,
+    bool cancelacionLocal = false,
+  }) async {
+    if (_transaccionCerrada || !mounted) return;
+    _transaccionCerrada = true;
+    _limpiarRecursosSeguimiento();
+    _subPropia?.cancel();
+    _bannerModalidadMostrado = false;
+    _llegadaMostrada         = false;
+    unawaited(FcmService.instance.detenerPinMonitor());
+    unawaited(FcmService.cancelMaterialNotificacion());
+    setState(() => _miSolicitud = null);
+    if (!mounted) return;
+    await MaterialTransaccionUi.mostrarCancelada(
+      context,
+      detalle: mensaje ??
+          (cancelacionLocal
+              ? 'Cancelaste la solicitud. El entregador fue notificado.'
+              : 'La solicitud de material fue cancelada.'),
+    );
+  }
+
+  Future<void> _finalizarCompletada() async {
+    if (_transaccionCerrada || !mounted) return;
+    _transaccionCerrada = true;
+    _limpiarRecursosSeguimiento();
+    _subPropia?.cancel();
+    _bannerModalidadMostrado = false;
+    _llegadaMostrada         = false;
+    unawaited(FcmService.instance.detenerPinMonitor());
+    setState(() => _miSolicitud = null);
+    _cargarGuiasMes();
+    if (!mounted) return;
+    await MaterialTransaccionUi.mostrarCompletada(context);
+  }
+
+  void _procesarEstadoSolicitud(SolicitudMaterial updated) {
+    if (updated.id != _miSolicitud?.id) return;
+
+    if (updated.estado == 'cancelada') {
+      _detenerProgresoEnvio();
+      unawaited(_finalizarCancelada());
+      return;
+    }
+    if (updated.estado == 'completada') {
+      _detenerProgresoEnvio();
+      unawaited(_finalizarCompletada());
+      return;
+    }
+
+    if (updated.estado == 'aceptada' && _overlayProgresoVisible) {
+      unawaited(_alAceptarSolicitud(updated));
+      return;
+    }
+
+    _aplicarEstadoSolicitud(updated);
+  }
+
+  Future<void> _alAceptarSolicitud(SolicitudMaterial updated) async {
+    await _completarProgresoEnvio();
+    if (!mounted) return;
+    _aplicarEstadoSolicitud(updated);
+  }
+
+  void _aplicarEstadoSolicitud(SolicitudMaterial updated) {
+    setState(() => _miSolicitud = updated);
+    _syncTipsCalidad();
+
+    if (updated.estado != 'pendiente') {
+      _timer10min?.cancel();
+      _tipCalidadTimer?.cancel();
+      _tipCalidadTimer = null;
+    }
+
+    if (updated.estado == 'aceptada') {
+      if (updated.modalidad != null && !_bannerModalidadMostrado) {
+        _bannerModalidadMostrado = true;
+        _mostrarBannerModalidad(
+            updated.modalidad!, updated.nombreEntregador ?? 'Tu colega');
+      }
+
+      _obtenerPosicion().then((pos) {
+        if (pos != null && mounted) setState(() => _posicion = pos);
+      });
+      _timerGpsAceptada ??= Timer.periodic(const Duration(seconds: 30), (_) async {
+        final pos = await _obtenerPosicion();
+        if (pos != null && mounted) setState(() => _posicion = pos);
+      });
+      _pollingEntregador ??= Timer.periodic(const Duration(seconds: 5), (_) async {
+        if (!mounted || _miSolicitud == null) return;
+        try {
+          final row = await _db
+              .from('solicitudes_material')
+              .select()
+              .eq('id', _miSolicitud!.id)
+              .single();
+          if (!mounted) return;
+          final fresh =
+              SolicitudMaterial.fromMap(row as Map<String, dynamic>);
+          if (fresh.estado != 'aceptada') {
+            _pollingEntregador?.cancel();
+            _pollingEntregador = null;
+            _procesarEstadoSolicitud(fresh);
+            return;
+          }
+          setState(() => _miSolicitud = fresh);
+          _actualizarMarkers();
+        } catch (_) {}
+      });
+      _actualizarMarkers();
+    }
+
+    if (updated.estado == 'en_guia') {
+      _limpiarRecursosSeguimiento();
+      if (!_llegadaMostrada) {
+        _llegadaMostrada = true;
+        _mostrarLlegadaEntregador(updated);
+      }
+    }
+
+    if (updated.estado == 'firmada') {
+      _limpiarRecursosSeguimiento();
+      if (updated.pinCodigo != null && updated.pinCodigo!.isNotEmpty) {
+        unawaited(FcmService.showPinDialogIfNeeded(
+          context,
+          updated.pinCodigo!,
+          solicitudId: updated.id,
+        ));
+      }
+    }
+  }
+
   void _suscribirSolicitudPropia() {
     if (_miSolicitud == null) return;
     _subPropia?.cancel();
+    _transaccionCerrada = false;
     final solicitudIdEsperado = _miSolicitud!.id;
     _subPropia = _db
         .from('solicitudes_material')
@@ -285,89 +995,8 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
       if (rows.isEmpty || !mounted) return;
       final updated =
           SolicitudMaterial.fromMap(rows.first as Map<String, dynamic>);
-      // Ignorar si este evento pertenece a una suscripción anterior
-      if (updated.id != _miSolicitud?.id) return;
-      setState(() => _miSolicitud = updated);
-
-      if (updated.estado == 'cancelada') {
-        _timer10min?.cancel();
-        _timerGpsAceptada?.cancel();
-        _timerGpsAceptada = null;
-        _pollingEntregador?.cancel();
-        _pollingEntregador = null;
-        _subPropia?.cancel();
-        _bannerModalidadMostrado = false;
-        _llegadaMostrada         = false;
-        unawaited(FcmService.instance.detenerPinMonitor());
-        setState(() => _miSolicitud = null);
-        return;
-      }
-
-      if (updated.estado != 'pendiente') {
-        _timer10min?.cancel();
-      }
-      if (updated.estado == 'aceptada') {
-        // Banner de modalidad al solicitante (solo la primera vez)
-        if (updated.modalidad != null && !_bannerModalidadMostrado) {
-          _bannerModalidadMostrado = true;
-          _mostrarBannerModalidad(updated.modalidad!, updated.nombreEntregador ?? 'Tu colega');
-        }
-
-        // GPS propio inmediato (para calcular distancia al entregador)
-        _obtenerPosicion().then((pos) {
-          if (pos != null && mounted) setState(() => _posicion = pos);
-        });
-        // Timer GPS propio cada 30 s (solo arranca una vez)
-        _timerGpsAceptada ??= Timer.periodic(const Duration(seconds: 30), (_) async {
-          final pos = await _obtenerPosicion();
-          if (pos != null && mounted) setState(() => _posicion = pos);
-        });
-        // Polling posición del entregador cada 5 s (como ayuda_tracking_screen)
-        _pollingEntregador ??= Timer.periodic(const Duration(seconds: 5), (_) async {
-          if (!mounted || _miSolicitud == null) return;
-          try {
-            final row = await _db
-                .from('solicitudes_material')
-                .select()
-                .eq('id', _miSolicitud!.id)
-                .single();
-            if (!mounted) return;
-            final fresh = SolicitudMaterial.fromMap(row as Map<String, dynamic>);
-            if (fresh.estado != 'aceptada') {
-              _pollingEntregador?.cancel();
-              _pollingEntregador = null;
-              return;
-            }
-            setState(() => _miSolicitud = fresh);
-            _actualizarMarkers();
-          } catch (_) {}
-        });
-        _actualizarMarkers();
-      }
-      if (updated.estado == 'en_guia') {
-        _timerGpsAceptada?.cancel();
-        _timerGpsAceptada = null;
-        _pollingEntregador?.cancel();
-        _pollingEntregador = null;
-        // Guard: el stream puede dispararse varias veces con estado 'en_guia'
-        // (ej. cuando _firmarEntregador actualiza guia_id). Solo mostrar una vez.
-        if (!_llegadaMostrada) {
-          _llegadaMostrada = true;
-          _mostrarLlegadaEntregador(updated);
-        }
-      }
-      if (updated.estado == 'completada') {
-        _timerGpsAceptada?.cancel();
-        _timerGpsAceptada = null;
-        _pollingEntregador?.cancel();
-        _pollingEntregador = null;
-        _subPropia?.cancel();
-        _bannerModalidadMostrado = false;
-        _llegadaMostrada         = false;
-        unawaited(FcmService.instance.detenerPinMonitor());
-        setState(() => _miSolicitud = null);
-        _cargarGuiasMes();
-      }
+      if (updated.id != solicitudIdEsperado) return;
+      _procesarEstadoSolicitud(updated);
     });
   }
 
@@ -388,17 +1017,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   }
 
   Future<void> _cancelarNotificacionMaterial() async {
-    try {
-      await _soundChannel.invokeMethod<void>('stopAlerta');
-    } catch (_) {}
-    try {
-      final flnp = FlutterLocalNotificationsPlugin();
-      const initSettings = InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-      );
-      await flnp.initialize(initSettings);
-      await flnp.cancel(42);
-    } catch (_) {}
+    await FcmService.cancelMaterialNotificacion();
   }
 
   void _mostrarBannerSolicitud(SolicitudMaterial sol) {
@@ -484,7 +1103,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Solicitud de ${sol.tipoMaterial} fue atendida por otro técnico',
+              'La solicitud de ${sol.tipoMaterial} ya fue atendida',
               style: const TextStyle(color: Colors.white, fontSize: 13),
             ),
           ),
@@ -504,19 +1123,22 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         .stream(primaryKey: ['id'])
         .eq('rut_tecnico', _rut!)
         .listen((destRows) async {
-      debugPrint('🟢 [SolicitudMat] stream destinatarios → ${destRows.length} filas');
+      final gen = ++_cercanasGen;
+      final pendientesRows = destRows
+          .where((r) => r['estado'] == 'pendiente')
+          .toList();
+      debugPrint('🟢 [SolicitudMat] stream destinatarios → ${pendientesRows.length} pendientes (${destRows.length} total)');
       if (!mounted) return;
 
       // Solo las filas con estado 'pendiente' dan acceso a la solicitud
-      final pendientesIds = destRows
-          .where((r) => r['estado'] == 'pendiente')
+      final pendientesIds = pendientesRows
           .map((r) => r['solicitud_id'] as String)
           .toList();
 
       if (pendientesIds.isEmpty) {
         if (_cercanas.isNotEmpty && _streamInicializado) {
           ScaffoldMessenger.of(context).clearSnackBars();
-          _cancelarNotificacionMaterial();
+          unawaited(_cancelarNotificacionMaterial());
         }
         _streamInicializado = true;
         setState(() => _cercanas = []);
@@ -531,6 +1153,8 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
           .inFilter('id', pendientesIds)
           .eq('estado', 'pendiente');
 
+      if (gen != _cercanasGen || !mounted) return;
+
       final filtradas = (solicRows as List)
           .map((r) => SolicitudMaterial.fromMap(r as Map<String, dynamic>))
           .where((s) => s.rutSolicitante != _rut)
@@ -538,16 +1162,28 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
 
       debugPrint('🟢 [SolicitudMat] solicitudes visibles (rol + 5km validados): ${filtradas.length}');
 
-      // Notificar por cada solicitud que no hayamos alertado antes
+      // Primera carga: mostrar lista sin alertar (solicitudes ya existían)
+      if (!_streamInicializado) {
+        for (final sol in filtradas) {
+          _notificadas.add(sol.id);
+        }
+        await MaterialAlertaEstado.markAllSeen(filtradas.map((s) => s.id));
+        _streamInicializado = true;
+        setState(() => _cercanas = filtradas);
+        _actualizarMarkers();
+        return;
+      }
+
+      // Solo alertar solicitudes realmente nuevas tras la carga inicial
       for (final sol in filtradas) {
         debugPrint('🟡 [SolicitudMat] evaluando sol id=${sol.id} notificada=${_notificadas.contains(sol.id)}');
         if (!_notificadas.contains(sol.id)) {
           _notificadas.add(sol.id);
-          final esReciente = DateTime.now().difference(sol.createdAt).inSeconds < 60;
-          debugPrint('🟡 [SolicitudMat] NUEVA solicitud esReciente=$esReciente inicializado=$_streamInicializado');
-          if (esReciente) _tocarAlertaUnica();
+          await MaterialAlertaEstado.markSeen(sol.id);
+          debugPrint('🟡 [SolicitudMat] NUEVA solicitud → alerta');
+          await _tocarAlertaUnica();
           _mostrarBannerSolicitud(sol);
-          break; // Una alerta por ciclo
+          break;
         }
       }
 
@@ -555,20 +1191,28 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
       final nuevosIds = filtradas.map((s) => s.id).toSet();
       for (final sol in _cercanas) {
         if (!nuevosIds.contains(sol.id) && _notificadas.contains(sol.id)) {
-          _cancelarNotificacionMaterial();
+          unawaited(_cancelarNotificacionMaterial());
           if (!_aceptadasPorMi.contains(sol.id)) {
-            ScaffoldMessenger.of(context).clearSnackBars();
-            _mostrarAtendida(sol);
+            final opened = await MaterialAlertaEstado.wasOpened(sol.id);
+            if (gen != _cercanasGen || !mounted) return;
+            await MaterialAlertaEstado.clearOpened(sol.id);
+            await MaterialAlertaEstado.unmarkSeen(sol.id);
+            _notificadas.remove(sol.id);
+            if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
+            if (opened && mounted) {
+              _mostrarAtendida(sol);
+            }
           }
         }
       }
 
+      if (gen != _cercanasGen || !mounted) return;
+
       if (filtradas.isEmpty) {
         ScaffoldMessenger.of(context).clearSnackBars();
-        _cancelarNotificacionMaterial();
+        unawaited(_cancelarNotificacionMaterial());
       }
 
-      _streamInicializado = true;
       setState(() => _cercanas = filtradas);
       _actualizarMarkers();
     });
@@ -670,16 +1314,27 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   // ── Enviar solicitud ─────────────────────────────────────────
 
   Future<void> _enviarSolicitud() async {
+    await _refrescarSesion();
     if (_materialSeleccionado == null || _rut == null) return;
 
-    // GPS fresco antes de enviar
-    _posicion = await _obtenerPosicion() ?? _posicion;
-    debugPrint('🔵 [SolicitudMat] enviando solicitud: ${_materialSeleccionado!.nombre} ×$_cantidad pos=${_posicion?.latitude},${_posicion?.longitude}');
     setState(() => _enviando = true);
+    _iniciarProgresoEnvio();
+    _syncTipsCalidad();
+
+    // Refrescar GPS en paralelo — no bloquear la transición al mapa.
+    unawaited(_obtenerPosicion().then((p) {
+      if (p != null && mounted) setState(() => _posicion = p);
+    }));
+
+    debugPrint('🔵 [SolicitudMat] enviando solicitud: ${_materialSeleccionado!.nombre} ×$_cantidad');
     try {
+      final nombreSol = await LogisticaService().nombrePorRut(
+        _rut!,
+        fallback: _nombre,
+      );
       final row = await _db.from('solicitudes_material').insert({
         'rut_solicitante':       _rut,
-        'nombre_solicitante':    _nombre,
+        'nombre_solicitante':    nombreSol,
         'lat_solicitante':       _posicion?.latitude,
         'lng_solicitante':       _posicion?.longitude,
         'tipo_material':         _materialSeleccionado!.nombre,
@@ -696,36 +1351,69 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
 
       final sol = SolicitudMaterial.fromMap(row as Map<String, dynamic>);
       debugPrint('🟢 [SolicitudMat] solicitud creada id=${sol.id}');
+      _avanzarFaseEspera(_FaseEsperaMaterial.buscandoTecnicos);
       setState(() {
         _miSolicitud = sol;
-        _enviando    = false;
         _adicionales.clear();
       });
       _suscribirSolicitudPropia();
       if (_rut != null) unawaited(FcmService.instance.initPinMonitor(_rut!, sol.id));
-
-      // Notificar técnicos cercanos con stock (background) — ANTES de operaciones de mapa
-      debugPrint('🔵 [SolicitudMat] lanzando notificarDestinatarios en background...');
-      _service.notificarDestinatarios(
-        solicitudId:       sol.id,
-        tipoMaterial:      sol.tipoMaterial,
-        latSolicitante:    sol.latSolicitante,
-        lngSolicitante:    sol.lngSolicitante,
-        rutSolicitante:    _rut!,
-        nombreSolicitante: _nombre ?? '',
-      );
 
       // Alerta de stock al bodeguero si material seriado y supera umbrales
       if (sol.esSeriado) {
         unawaited(_service.verificarAlertaStock(
           solicitudId:       sol.id,
           rutSolicitante:    _rut!,
-          nombreSolicitante: _nombre ?? '',
+          nombreSolicitante: nombreSol,
           tipoMaterial:      sol.tipoMaterial,
         ));
       }
 
-      // Alerta de 10 minutos si nadie responde
+      debugPrint('🔵 [SolicitudMat] notificarDestinatarios (5 km)…');
+      final resultadoRadio = await _service.notificarDestinatarios(
+        solicitudId:       sol.id,
+        tipoMaterial:      sol.tipoMaterial,
+        latSolicitante:    sol.latSolicitante,
+        lngSolicitante:    sol.lngSolicitante,
+        rutSolicitante:    _rut!,
+        nombreSolicitante: nombreSol,
+        soloRadio5Km:      true,
+      );
+
+      if (!mounted) return;
+
+      if (resultadoRadio.sinDestinatarios && resultadoRadio.keplerDisponible) {
+        final ampliar = await _ofrecerAmpliarBusquedaMaterial(sol);
+        if (!mounted) return;
+        if (ampliar) {
+          debugPrint('🔵 [SolicitudMat] notificarDestinatarios (plantel)…');
+          final resultadoPlantel = await _service.notificarDestinatarios(
+            solicitudId:       sol.id,
+            tipoMaterial:      sol.tipoMaterial,
+            latSolicitante:    sol.latSolicitante,
+            lngSolicitante:    sol.lngSolicitante,
+            rutSolicitante:    _rut!,
+            nombreSolicitante: nombreSol,
+            soloRadio5Km:      false,
+          );
+          if (!mounted) return;
+          if (resultadoPlantel.cantidad > 0) {
+            await _mostrarMapaPlantelConStock(sol);
+            if (mounted) {
+              _snack(
+                'Solicitud enviada a ${resultadoPlantel.cantidad} '
+                'técnico${resultadoPlantel.cantidad == 1 ? '' : 's'} del plantel',
+              );
+            }
+          } else {
+            _snack('No hay técnicos con stock disponible en el plantel');
+          }
+        }
+      }
+
+      _avanzarFaseEspera(_FaseEsperaMaterial.enviandoSolicitud);
+
+      // Aviso local a los 10 min (el servidor también escala al supervisor vía cron).
       _timer10min?.cancel();
       _timer10min = Timer(const Duration(minutes: 10), () {
         _mostrarAlertaSinRespuesta(sol);
@@ -739,20 +1427,111 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
       }
     } catch (e) {
       debugPrint('🔴 [SolicitudMat] error al enviar: $e');
+      _detenerProgresoEnvio();
       setState(() => _enviando = false);
-      _snack('Error al enviar: $e');
+      _syncTipsCalidad();
+      _snack(e is StateError ? e.message : 'Error al enviar: $e');
     }
+  }
+
+  Future<bool> _ofrecerAmpliarBusquedaMaterial(SolicitudMaterial sol) async {
+    final ampliar = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: _border),
+        ),
+        title: Row(children: [
+          Icon(Icons.search_off_rounded, color: _orange, size: 22),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Sin técnicos cercanos',
+              style: TextStyle(color: Colors.white, fontSize: 16),
+            ),
+          ),
+        ]),
+        content: const Text(
+          'NO ENCONTRAMOS TÉCNICOS CON STOCK DISPONIBLE EN 5 KILÓMETROS '
+          'A LA REDONDA.\n\n¿AMPLIAR LA BÚSQUEDA?',
+          style: TextStyle(color: Colors.white70, height: 1.45, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No, esperar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: _accent,
+              foregroundColor: Colors.black,
+            ),
+            child: const Text(
+              'Ampliar búsqueda',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+    return ampliar == true;
+  }
+
+  Future<void> _mostrarMapaPlantelConStock(SolicitudMaterial sol) async {
+    var pos = _posicion;
+    if (pos == null &&
+        sol.latSolicitante != null &&
+        sol.lngSolicitante != null) {
+      pos = Position(
+        latitude: sol.latSolicitante!,
+        longitude: sol.lngSolicitante!,
+        timestamp: DateTime.now(),
+        accuracy: 0,
+        altitude: 0,
+        altitudeAccuracy: 0,
+        heading: 0,
+        headingAccuracy: 0,
+        speed: 0,
+        speedAccuracy: 0,
+      );
+    }
+    pos ??= await _obtenerPosicion();
+    if (pos == null || !mounted) return;
+
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TecnicosCercanosMapaScreen(
+          tipoMaterial: sol.tipoMaterial,
+          posicionSolicitante: pos!,
+          rutSolicitante: _rut ?? sol.rutSolicitante,
+          radioKm: null,
+        ),
+      ),
+    );
   }
 
   Future<void> _mostrarAlertaSinRespuesta(SolicitudMaterial sol) async {
     if (!mounted || _miSolicitud?.estado != 'pendiente') return;
+
+    // Respaldo cliente (idempotente con alerta_supervisor_sin_respuesta_at en BD).
+    unawaited(_service.notificarSupervisorSinRespuesta(
+      solicitudId:    sol.id,
+      rutSolicitante: sol.rutSolicitante,
+      tipoMaterial:   sol.tipoMaterial,
+    ));
 
     final pendientes =
         await _service.destinatariosPendientes(sol.id);
     if (!mounted) return;
 
     if (pendientes.isEmpty) {
-      _snack('Nadie tiene stock cercano — sin respuesta en 10 min');
+      _snack(
+          'Sin respuesta en 10 min — tu supervisor fue notificado');
       return;
     }
 
@@ -829,64 +1608,162 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   // ── Aceptar solicitud (rol entregador) ───────────────────────
 
   Future<void> _aceptarSolicitud(SolicitudMaterial sol) async {
-    if (_rut == null) return;
+    if (_rut == null || _aceptandoId != null) return;
 
-    // Pedir al entregador cómo va a entregar antes de aceptar
     final modalidad = await _elegirModalidadEntrega(sol);
-    if (modalidad == null) return; // canceló el modal
+    if (modalidad == null) return;
+    if (!mounted) return;
 
+    setState(() => _aceptandoId = sol.id);
     try {
-      _posicion = await _obtenerPosicion() ?? _posicion;
+      final updated = await _completarAceptacion(sol, modalidad);
+      if (!mounted) return;
 
-      // Resolver id_material desde el stock logístico del entregador (B).
-      // Solo aplica a no seriados; seriados resuelven la serie en la guía de entrega.
-      int? idMaterial;
-      if (!sol.esSeriado) {
-        idMaterial = await _service.resolverIdMaterial(
-          rutEntregador: _rut!,
-          tipoMaterial:  sol.tipoMaterial,
-          esSeriado:     false,
-          cantidad:      sol.cantidad,
-        );
-        debugPrint('🔵 [Aceptar] id_material resuelto: $idMaterial para ${sol.tipoMaterial}');
-      }
+      _aceptadasPorMi.add(sol.id);
+      unawaited(FcmService.cancelMaterialNotificacion());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).clearSnackBars();
 
-      await _service.aceptar(
-        solicitudId:     sol.id,
-        rutAceptador:    _rut!,
-        nombreAceptador: _nombre ?? '',
-        lat:             _posicion?.latitude,
-        lng:             _posicion?.longitude,
-        modalidad:       modalidad,
-        idMaterial:      idMaterial,
-      );
-
-      final updated = SolicitudMaterial.fromMap(
-        (await _db
-                .from('solicitudes_material')
-                .select()
-                .eq('id', sol.id)
-                .single())
-            as Map<String, dynamic>,
-      );
-      if (mounted) {
-        _aceptadasPorMi.add(sol.id);
-        _cancelarNotificacionMaterial();
-        ScaffoldMessenger.of(context).clearSnackBars();
-        Navigator.push<void>(
-          context,
-          MaterialPageRoute<void>(
-            builder: (_) => EntregaEnCaminoScreen(
-              solicitud:        updated,
-              rutPropio:        _rut!,
-              nombrePropio:     _nombre ?? '',
-              posicionInicial:  _posicion,
-            ),
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => EntregaEnCaminoScreen(
+            solicitud:       updated,
+            rutPropio:       _rut!,
+            nombrePropio:    _nombre ?? '',
+            posicionInicial: _posicion,
           ),
-        );
+        ),
+      );
+    } catch (e) {
+      _aceptadasPorMi.remove(sol.id);
+      final msg = e is StateError
+          ? e.message
+          : 'Error al aceptar: $e';
+      _snack(msg);
+    } finally {
+      if (mounted) setState(() => _aceptandoId = null);
+    }
+  }
+
+  Future<SolicitudMaterial> _completarAceptacion(
+    SolicitudMaterial sol,
+    String modalidad,
+  ) async {
+    final lat = _posicion?.latitude;
+    final lng = _posicion?.longitude;
+
+    // GPS en background — no bloquear la navegación al mapa.
+    unawaited(_obtenerPosicion().then((p) async {
+      if (p == null) return;
+      _posicion = p;
+      try {
+        await _db.from('solicitudes_material').update({
+          'lat_entregador': p.latitude,
+          'lng_entregador': p.longitude,
+        }).eq('id', sol.id);
+      } catch (_) {}
+    }));
+
+    await _refrescarSesion();
+    await _service.aceptar(
+      solicitudId:  sol.id,
+      rutAceptador: _rut!,
+      lat:          lat,
+      lng:          lng,
+      modalidad:    modalidad,
+      nombreAceptadorSesion: _nombre,
+    );
+
+    // id_material Kepler en background (puede tardar varios segundos).
+    if (!sol.esSeriado) {
+      unawaited(() async {
+        try {
+          final idMat = await _service.resolverIdMaterial(
+            rutEntregador: _rut!,
+            tipoMaterial:  sol.tipoMaterial,
+            esSeriado:     false,
+            cantidad:      sol.cantidad,
+          );
+          if (idMat != null) {
+            await _db.from('solicitudes_material').update({
+              'id_material': idMat,
+            }).eq('id', sol.id);
+          }
+        } catch (_) {}
+      }());
+    }
+
+    return sol.copyWith(
+      estado:           'aceptada',
+      modalidad:        modalidad,
+      rutEntregador:    _rut,
+      nombreEntregador: _nombre,
+      latEntregador:    lat,
+      lngEntregador:    lng,
+    );
+  }
+
+  /// ven_por_el: el solicitante inicia el viaje — GPS = partida del tramo.
+  Future<void> _iniciarViajeMaterial() async {
+    if (_miSolicitud == null || _rut == null) return;
+    final sol = _miSolicitud!;
+    if (sol.modalidad != 'ven_por_el' || sol.estado != 'aceptada') return;
+    if (sol.partidaAt != null) return;
+
+    setState(() => _marcandoLlegada = true);
+    try {
+      var pos = _posicion ?? await _obtenerPosicion();
+      if (pos == null) {
+        if (mounted) {
+          _snack('Activa el GPS para registrar tu punto de partida');
+        }
+        return;
+      }
+      final ok = await CombustibleMaterialRutaService.instance
+          .registrarPartidaSolicitud(
+        solicitudId: sol.id,
+        rutViajero: _rut!,
+        lat: pos.latitude,
+        lng: pos.longitude,
+      );
+      if (!ok) {
+        if (mounted) _snack('No se pudo registrar la partida');
+        return;
+      }
+      if (mounted) {
+        setState(() {
+          _miSolicitud = sol.copyWith(
+            latPartida: pos.latitude,
+            lngPartida: pos.longitude,
+            partidaAt: DateTime.now(),
+          );
+        });
+        _snack('Viaje iniciado — tu ubicación es el punto de partida');
       }
     } catch (e) {
-      _snack('Error al aceptar: $e');
+      if (mounted) _snack('Error al iniciar viaje: $e');
+    } finally {
+      if (mounted) setState(() => _marcandoLlegada = false);
+    }
+  }
+
+  /// Solicitante con modalidad "ven a buscar": avisa llegada si falla la geocerca.
+  Future<void> _marcarLlegadaSolicitante() async {
+    if (_miSolicitud == null || _marcandoLlegada) return;
+    final sol = _miSolicitud!;
+    if (sol.modalidad != 'ven_por_el' || sol.estado != 'aceptada') return;
+
+    setState(() => _marcandoLlegada = true);
+    try {
+      await _db
+          .from('solicitudes_material')
+          .update({'estado': 'en_guia'})
+          .eq('id', sol.id);
+    } catch (e) {
+      if (mounted) _snack('Error al marcar llegada: $e');
+    } finally {
+      if (mounted) setState(() => _marcandoLlegada = false);
     }
   }
 
@@ -1061,22 +1938,49 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   }
 
   Future<void> _cancelar() async {
-    if (_miSolicitud == null) return;
-    _timer10min?.cancel();
-    if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
+    if (_miSolicitud == null || _rut == null) return;
     final sol = _miSolicitud!;
-    await _db
-        .from('solicitudes_material')
-        .update({'estado': 'cancelada'}).eq('id', sol.id);
-    // Notificar a TODOS los destinatarios (pendientes o aceptados) para que
-    // eliminen el banner de solicitud de sus bandejas de notificaciones.
-    unawaited(_service.notificarCancelacion(
-      solicitudId:  sol.id,
-      tipoMaterial: sol.tipoMaterial,
-    ));
-    _subPropia?.cancel();
-    unawaited(FcmService.instance.detenerPinMonitor());
-    setState(() => _miSolicitud = null);
+    if (sol.estado == 'completada' || sol.estado == 'cancelada') {
+      _snack('Esta solicitud ya no se puede cancelar.');
+      return;
+    }
+
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _surface,
+        title: const Text('Cancelar solicitud',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text(
+          '¿Cancelar la solicitud de ${sol.tipoMaterial}?\n'
+          'Se notificará al entregador.',
+          style: const TextStyle(color: _textDim, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No', style: TextStyle(color: _textDim)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _red),
+            child: const Text('Sí, cancelar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true || !mounted) return;
+
+    if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
+    try {
+      await _service.cancelarSolicitud(
+        solicitudId:    sol.id,
+        rutCancelador:  _rut!,
+      );
+      await _finalizarCancelada(cancelacionLocal: true);
+    } catch (e) {
+      _snack(e is StateError ? e.message : 'Error al cancelar: $e');
+    }
   }
 
   void _snack(String msg) {
@@ -1089,15 +1993,91 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   // Build
   // ─────────────────────────────────────────────────────────────
 
+  Widget _buildBloqueoAcceso(String mensaje) {
+    return Scaffold(
+      backgroundColor: _bg,
+      appBar: AppBar(
+        backgroundColor: _surface,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Solicitud de Material',
+            style: TextStyle(color: Colors.white, fontSize: 15)),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.block_rounded,
+                  color: _red.withValues(alpha: 0.9), size: 48),
+              const SizedBox(height: 16),
+              Text(
+                mensaje,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    height: 1.45),
+                textAlign: TextAlign.center,
+              ),
+              if (_rut != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'RUT: $_rut',
+                  style: const TextStyle(color: _textDim, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Si hay solicitudes cercanas pendientes de aceptar, mostrar siempre
-    // la vista de lista para que sean visibles aunque el usuario tenga
-    // su propia solicitud activa en mapa.
+    if (!_initListo) {
+      return Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          backgroundColor: _surface,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: () => Navigator.pop(context),
+          ),
+          title: const Text('Solicitud de Material',
+              style: TextStyle(color: Colors.white, fontSize: 15)),
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(color: _accent),
+        ),
+      );
+    }
+
+    if (_bloqueoAcceso != null) {
+      return _buildBloqueoAcceso(_bloqueoAcceso!);
+    }
+
+    if (_aceptandoId != null) {
+      return _buildTransicionMapa(
+        titulo: 'Confirmando entrega…',
+        subtitulo: 'Aceptando solicitud de material',
+      );
+    }
+
+    // Transición al mapa mientras avanza la barra de progreso
+    if (_overlayProgresoVisible && _miSolicitud == null && _cercanas.isEmpty) {
+      return _buildTransicionMapa(buscandoTecnico: true);
+    }
+
+    // Prioridad: si espera que acepten su solicitud, mostrar mapa + overlay.
+    if (_miSolicitud != null && _miSolicitud!.estado == 'pendiente') {
+      return _buildMapaView();
+    }
+
     if (_cercanas.isEmpty) {
-      if (_miSolicitud != null && _miSolicitud!.estado == 'pendiente') {
-        return _buildMapaView();
-      }
       if (_miSolicitud != null && _miSolicitud!.estado == 'aceptada') {
         return _buildAceptadaView();
       }
@@ -1113,10 +2093,33 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         ),
         title: const Text('Solicitud de Material',
             style: TextStyle(color: Colors.white, fontSize: 16)),
+        actions: [
+          if (_rut != null)
+            TextButton.icon(
+              onPressed: _cargandoSaldo ? null : _verMiSaldo,
+              icon: _cargandoSaldo
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _accent,
+                      ),
+                    )
+                  : const Icon(Icons.inventory_2_outlined,
+                      color: _accent, size: 18),
+              label: const Text('Mi saldo',
+                  style: TextStyle(color: _accent, fontSize: 12)),
+            ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (_pinPendienteEntregador != null) ...[
+            _bannerPinPendienteEntregador(),
+            const SizedBox(height: 12),
+          ],
           // ── Solicitudes cercanas (rol entregador) ──
           if (_cercanas.isNotEmpty) ...[
             _seccion('SOLICITUDES CERCANAS', Icons.people_alt_outlined, _accent),
@@ -1221,6 +2224,12 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   Widget _buildAceptadaView() {
     final sol = _miSolicitud!;
     final pos = _posicion;
+    final esVenPorEl = sol.modalidad == 'ven_por_el';
+    final viajeIniciado = sol.partidaAt != null;
+    final puedeIniciarViaje =
+        esVenPorEl && sol.estado == 'aceptada' && !viajeIniciado && !_marcandoLlegada;
+    final puedeMarcarLlegada =
+        esVenPorEl && sol.estado == 'aceptada' && viajeIniciado && !_marcandoLlegada;
 
     double? distM;
     if (pos != null &&
@@ -1315,11 +2324,18 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
                         ],
                       ),
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.directions_walk,
-                            color: Colors.white, size: 14),
+                        Icon(
+                          esVenPorEl
+                              ? Icons.directions_car_outlined
+                              : Icons.directions_walk,
+                          color: Colors.white,
+                          size: 14,
+                        ),
                         const SizedBox(width: 6),
                         Text(
-                          'En camino · ${sol.nombreEntregador ?? "Técnico"}',
+                          esVenPorEl
+                              ? 'Ve a buscar · ${sol.nombreEntregador ?? "Técnico"}'
+                              : 'En camino · ${sol.nombreEntregador ?? "Técnico"}',
                           style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -1375,6 +2391,48 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
                       ),
                     ]),
                     const SizedBox(height: 10),
+
+                    if (sol.pinCodigo != null && sol.pinCodigo!.isNotEmpty) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 12, horizontal: 14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00D4AA).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                              color: const Color(0xFF00D4AA)
+                                  .withValues(alpha: 0.45)),
+                        ),
+                        child: Column(
+                          children: [
+                            const Text(
+                              'Tu PIN de confirmación',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 12),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              sol.pinCodigo!,
+                              style: const TextStyle(
+                                color: Color(0xFF00D4AA),
+                                fontSize: 36,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 8,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Díselo al entregador para cerrar el traspaso',
+                              style: TextStyle(
+                                  color: Colors.white54, fontSize: 11),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
 
                     // Distancia + ETA grandes
                     if (distLabel != null)
@@ -1447,7 +2505,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
                     ),
                     const SizedBox(height: 12),
 
-                    // Estado de espera — la guía se firma en el dispositivo del entregador
+                    // Estado de espera
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 10),
@@ -1458,13 +2516,20 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
                             color: _green.withValues(alpha: 0.3)),
                       ),
                       child: Row(children: [
-                        const Icon(Icons.phone_android,
-                            color: _green, size: 16),
+                        Icon(
+                          esVenPorEl
+                              ? Icons.store_outlined
+                              : Icons.phone_android,
+                          color: _green,
+                          size: 16,
+                        ),
                         const SizedBox(width: 10),
-                        const Expanded(
+                        Expanded(
                           child: Text(
-                            'Cuando llegue tu colega, firma la guía en su dispositivo',
-                            style: TextStyle(
+                            esVenPorEl
+                                ? 'Ve donde está ${sol.nombreEntregador ?? "tu colega"} y avisa cuando llegues'
+                                : 'Cuando llegue tu colega, firma la guía en su dispositivo',
+                            style: const TextStyle(
                                 color: _green,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500),
@@ -1472,6 +2537,77 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
                         ),
                       ]),
                     ),
+                    if (puedeIniciarViaje) ...[
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _marcandoLlegada
+                              ? null
+                              : _iniciarViajeMaterial,
+                          icon: _marcandoLlegada
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.black,
+                                  ),
+                                )
+                              : const Icon(Icons.directions_car_filled_outlined,
+                                  size: 18),
+                          label: Text(
+                            _marcandoLlegada
+                                ? 'Registrando partida…'
+                                : 'Voy por el material',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _accent,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (puedeMarcarLlegada) ...[
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _marcandoLlegada
+                              ? null
+                              : _marcarLlegadaSolicitante,
+                          icon: _marcandoLlegada
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.black,
+                                  ),
+                                )
+                              : const Icon(Icons.place_outlined, size: 18),
+                          label: Text(
+                            _marcandoLlegada
+                                ? 'Marcando llegada…'
+                                : 'Ya llegué — avisar al entregador',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _green,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
 
                     // Botón abrir en mapas
@@ -1525,6 +2661,113 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
 
   // ── Vista mapa (estado pendiente) ────────────────────────────
 
+  /// Pantalla de carga con mapa mientras se procesa la solicitud o la aceptación.
+  Widget _buildTransicionMapa({
+    bool buscandoTecnico = false,
+    String? titulo,
+    String? subtitulo,
+  }) {
+    final pos = _posicion;
+    return Scaffold(
+      backgroundColor: _bg,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: GoogleMap(
+              initialCameraPosition: CameraPosition(
+                target: pos != null
+                    ? LatLng(pos.latitude, pos.longitude)
+                    : const LatLng(-33.45, -70.66),
+                zoom: 14,
+              ),
+              myLocationEnabled: false,
+              zoomControlsEnabled: false,
+              mapToolbarEnabled: false,
+              compassEnabled: false,
+              mapType: MapType.normal,
+              style: MapStyles.estiloMapaUberDark,
+            ),
+          ),
+          if (buscandoTecnico)
+            _buildCapaBuscandoTecnico()
+          else
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.35),
+                child: Center(
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 32),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28, vertical: 24),
+                    decoration: BoxDecoration(
+                      color: _surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: _border),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 3,
+                            color: _accent,
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        Text(
+                          titulo ?? 'Cargando…',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        if (subtitulo != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            subtitulo,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                                color: _textDim, fontSize: 13),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: GestureDetector(
+                  onTap: () {
+                    if (_overlayProgresoVisible) return;
+                    Navigator.maybePop(context);
+                  },
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.arrow_back,
+                        color: Colors.black87, size: 20),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMapaView() {
     final sol = _miSolicitud!;
     final pos = _posicion;
@@ -1559,115 +2802,33 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
             ),
           ),
 
-          // ── Banner superior ───────────────────────────────────
+          if (_overlayProgresoVisible)
+            _buildCapaBuscandoTecnico(bottomReserva: 210),
+
           SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
-                  child: Row(
-                    children: [
-                      // Botón volver
-                      GestureDetector(
-                        onTap: () => Navigator.maybePop(context),
-                        child: Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.18),
-                                  blurRadius: 8)
-                            ],
-                          ),
-                          child: const Icon(Icons.arrow_back,
-                              color: Colors.black87, size: 20),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      // Chip de estado
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: _orange.withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                                color: _orange.withValues(alpha: 0.3),
-                                blurRadius: 8)
-                          ],
-                        ),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          const SizedBox(
-                            width: 8,
-                            height: 8,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                  Colors.white),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          const Text('Buscando…',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12)),
-                        ]),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 10),
-
-                // Barra de búsqueda animada
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: GestureDetector(
+                  onTap: () => Navigator.maybePop(context),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 13),
+                    width: 44,
+                    height: 44,
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
+                      shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.12),
-                            blurRadius: 10,
-                            spreadRadius: 2)
+                            color: Colors.black.withValues(alpha: 0.18),
+                            blurRadius: 8)
                       ],
                     ),
-                    child: Row(
-                      children: [
-                        // Icono en movimiento
-                        const Icon(Icons.directions_walk,
-                                color: Color(0xFF00D9FF), size: 22)
-                            .animate(onPlay: (c) => c.repeat())
-                            .shimmer(
-                                duration: 1400.ms,
-                                color: Colors.white.withValues(alpha: 0.7))
-                            .then()
-                            .shake(hz: 2, duration: 600.ms),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Text(
-                            'Revisando stock de materiales\nen móviles cercanos…',
-                            style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black87,
-                                height: 1.35),
-                          ),
-                        ),
-                      ],
-                    ),
+                    child: const Icon(Icons.arrow_back,
+                        color: Colors.black87, size: 20),
                   ),
                 ),
-              ],
+              ),
             ),
           ),
 
@@ -1870,7 +3031,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
         SizedBox(
           width: double.infinity,
           child: FilledButton(
-            onPressed: () => _aceptarSolicitud(sol),
+            onPressed: _aceptandoId != null ? null : () => _aceptarSolicitud(sol),
             style: FilledButton.styleFrom(
               backgroundColor: _green,
               padding: const EdgeInsets.symmetric(vertical: 10),
@@ -1900,6 +3061,11 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
           'Listo para firmar guía',
           _accent,
           Icons.draw_outlined
+        ),
+      'firmada' => (
+          'Confirma el traspaso con PIN',
+          _orange,
+          Icons.lock_outline
         ),
       _ => ('Estado: ${sol.estado}', _textDim, Icons.info_outline),
     };
@@ -1949,6 +3115,55 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
               ),
             ]),
           ),
+        if (sol.estado == 'firmada' &&
+            sol.pinCodigo != null &&
+            sol.pinCodigo!.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+              color: _orange.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _orange.withValues(alpha: 0.35)),
+            ),
+            child: Column(children: [
+              const Text('Tu PIN de confirmación',
+                  style: TextStyle(color: _orange, fontSize: 11)),
+              const SizedBox(height: 6),
+              Text(
+                sol.pinCodigo!,
+                style: const TextStyle(
+                  color: Color(0xFF00D4AA),
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 6,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Díselo al entregador para cerrar el traspaso',
+                style: TextStyle(color: Colors.white54, fontSize: 11),
+                textAlign: TextAlign.center,
+              ),
+            ]),
+          ),
+        ],
+        if (sol.estado != 'completada' && sol.estado != 'cancelada') ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: _cancelar,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _red,
+                side: BorderSide(color: _red.withValues(alpha: 0.5)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+              child: const Text('Cancelar solicitud'),
+            ),
+          ),
+        ],
       ]),
     );
   }
@@ -1958,7 +3173,8 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
     final fecha        = guia['fecha'] as String? ?? '';
     final horaRaw      = guia['hora'] as String? ?? '';
     final hora         = horaRaw.length >= 5 ? horaRaw.substring(0, 5) : horaRaw;
-    final firmada      = (guia['estado'] as String?) == 'firmada';
+    final estadoGuia   = guia['estado'] as String? ?? '';
+    final puedePdf     = _estadosGuiaHistorial.contains(estadoGuia);
     final esEntregador = guia['rut_entregador'] == _rut;
     final contraparte  = esEntregador
         ? (guia['nombre_solicitante'] as String? ?? 'Solicitante')
@@ -2006,7 +3222,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
             Text(fecha, style: TextStyle(color: _textDim, fontSize: 10)),
             Text(hora,  style: TextStyle(color: _textDim, fontSize: 10)),
             const SizedBox(height: 4),
-            if (firmada)
+            if (puedePdf)
               Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.picture_as_pdf, color: _accent, size: 11),
                 const SizedBox(width: 2),
@@ -2023,11 +3239,11 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
   /// Toca una card: busca la guía completa (con firmas) y abre el PDF en la app.
   Future<void> _abrirPdfGuia(Map<String, dynamic> guiaMeta) async {
     final id      = guiaMeta['id'] as String?;
-    final firmada = (guiaMeta['estado'] as String?) == 'firmada';
+    final estadoGuia = guiaMeta['estado'] as String? ?? '';
     if (id == null) return;
 
-    if (!firmada) {
-      _snack('La guía aún no está firmada por ambas partes.');
+    if (!_estadosGuiaHistorial.contains(estadoGuia)) {
+      _snack('La guía aún no está disponible.');
       return;
     }
 
@@ -2041,7 +3257,9 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
 
     try {
       final row   = await _db.from('solicitudes_bodega').select().eq('id', id).single();
-      final bytes = await _buildPdfGuia(row as Map<String, dynamic>);
+      final bytes = await GuiaPdfService.generar(
+        guia: row as Map<String, dynamic>,
+      );
       messenger.hideCurrentSnackBar();
       if (!mounted) return;
       Navigator.push<void>(
@@ -2086,142 +3304,6 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen> {
       _snack('Error al generar PDF: $e');
     }
   }
-
-  /// Construye el PDF a partir de la fila completa de `solicitudes_bodega`.
-  Future<Uint8List> _buildPdfGuia(Map<String, dynamic> g) async {
-    final firmaEb64 = g['firma_entregador']  as String?;
-    final firmaSb64 = g['firma_solicitante'] as String?;
-    final fecha     = g['fecha'] as String? ?? '';
-    final horaRaw   = g['hora']  as String? ?? '';
-    final hora      = horaRaw.length >= 5 ? horaRaw.substring(0, 5) : horaRaw;
-
-    final imgE = (firmaEb64 != null && firmaEb64.isNotEmpty)
-        ? pw.MemoryImage(base64Decode(firmaEb64))
-        : null;
-    final imgS = (firmaSb64 != null && firmaSb64.isNotEmpty)
-        ? pw.MemoryImage(base64Decode(firmaSb64))
-        : null;
-
-    final doc = pw.Document();
-    doc.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(40),
-        build: (ctx) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Center(
-              child: pw.Text('GUÍA DE ENTREGA DE MATERIAL',
-                  style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-            ),
-            pw.SizedBox(height: 4),
-            pw.Center(
-              child: pw.Text('CREABOX — Operaciones de fibra óptica',
-                  style: pw.TextStyle(fontSize: 10, color: PdfColors.blueGrey600)),
-            ),
-            pw.SizedBox(height: 14),
-            pw.Divider(),
-            pw.SizedBox(height: 10),
-
-            pw.Row(children: [
-              pw.Text('Fecha: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-              pw.Text(fecha, style: const pw.TextStyle(fontSize: 10)),
-              pw.SizedBox(width: 20),
-              pw.Text('Hora: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-              pw.Text(hora, style: const pw.TextStyle(fontSize: 10)),
-            ]),
-            pw.SizedBox(height: 4),
-            pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-              pw.Text('Lugar: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-              pw.Text(g['lugar'] as String? ?? 'Sin GPS', style: const pw.TextStyle(fontSize: 10)),
-            ]),
-            pw.SizedBox(height: 14),
-
-            pw.Text('PARTES',
-                style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 11, color: PdfColors.blueGrey700)),
-            pw.Divider(height: 8, thickness: 0.5),
-            _pdfFila('Solicitante (recibe)', g['nombre_solicitante'] as String? ?? ''),
-            _pdfFila('RUT solicitante',      g['rut_solicitante']   as String? ?? ''),
-            _pdfFila('Entregador',           g['nombre_entregador'] as String? ?? ''),
-            _pdfFila('RUT entregador',       g['rut_entregador']    as String? ?? ''),
-            pw.SizedBox(height: 14),
-
-            pw.Text('MATERIAL',
-                style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 11, color: PdfColors.blueGrey700)),
-            pw.Divider(height: 8, thickness: 0.5),
-            _pdfFila('Descripción', g['detalle_material'] as String? ?? ''),
-            if ((g['series'] as List?)?.isNotEmpty == true)
-              _pdfFila('Series', (g['series'] as List).join(', ')),
-            pw.SizedBox(height: 20),
-
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Expanded(
-                  child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
-                    pw.Text('Firma del entregador',
-                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                    pw.SizedBox(height: 2),
-                    pw.Text(g['nombre_entregador'] as String? ?? '',
-                        style: const pw.TextStyle(fontSize: 9)),
-                    pw.SizedBox(height: 6),
-                    pw.Container(
-                      width: 180, height: 80,
-                      decoration: pw.BoxDecoration(
-                          border: pw.Border.all(color: PdfColors.blueGrey300)),
-                      child: imgE != null
-                          ? pw.Image(imgE, fit: pw.BoxFit.contain)
-                          : pw.SizedBox(),
-                    ),
-                  ]),
-                ),
-                pw.SizedBox(width: 20),
-                pw.Expanded(
-                  child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
-                    pw.Text('Firma del solicitante',
-                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                    pw.SizedBox(height: 2),
-                    pw.Text(g['nombre_solicitante'] as String? ?? '',
-                        style: const pw.TextStyle(fontSize: 9)),
-                    pw.SizedBox(height: 6),
-                    pw.Container(
-                      width: 180, height: 80,
-                      decoration: pw.BoxDecoration(
-                          border: pw.Border.all(color: PdfColors.blueGrey300)),
-                      child: imgS != null
-                          ? pw.Image(imgS, fit: pw.BoxFit.contain)
-                          : pw.SizedBox(),
-                    ),
-                  ]),
-                ),
-              ],
-            ),
-
-            pw.Spacer(),
-            pw.Divider(),
-            pw.Text('CREABOX — Documento generado automáticamente',
-                style: pw.TextStyle(fontSize: 8, color: PdfColors.blueGrey400)),
-          ],
-        ),
-      ),
-    );
-    return doc.save();
-  }
-
-  pw.Widget _pdfFila(String label, String value) => pw.Padding(
-        padding: const pw.EdgeInsets.only(bottom: 3),
-        child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-          pw.SizedBox(
-            width: 130,
-            child: pw.Text('$label:',
-                style: pw.TextStyle(fontSize: 9, color: PdfColors.blueGrey600)),
-          ),
-          pw.Expanded(
-            child: pw.Text(value,
-                style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
-          ),
-        ]),
-      );
 
   Widget _fila(String label, String value) => Padding(
         padding: const EdgeInsets.only(bottom: 4),

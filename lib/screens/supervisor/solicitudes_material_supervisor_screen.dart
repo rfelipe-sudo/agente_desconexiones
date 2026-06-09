@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:agente_desconexiones/models/solicitud_material.dart';
+import 'package:agente_desconexiones/screens/tecnicos_cercanos_mapa_screen.dart';
 import 'package:agente_desconexiones/services/logistica_service.dart';
 import 'package:agente_desconexiones/screens/supervisor/tecnico_stock_screen.dart';
 
@@ -101,10 +103,10 @@ class _SolicitudesMaterialSupervisorScreenState
 
   // ── Helpers ────────────────────────────────────────────────────
 
-  /// Solicitudes pendientes sin atención pasados 5 minutos
+  /// Solicitudes pendientes sin atención pasados 10 minutos
   List<SolicitudMaterial> get _vencidas => _activas.where((s) {
         if (s.estado != 'pendiente') return false;
-        return DateTime.now().difference(s.createdAt).inMinutes >= 5;
+        return DateTime.now().difference(s.createdAt).inMinutes >= 10;
       }).toList();
 
   int get _badgeCount => _vencidas.length;
@@ -312,7 +314,7 @@ class _SolicitudesMaterialSupervisorScreenState
 
   Widget _buildCard(SolicitudMaterial sol) {
     final vencida = sol.estado == 'pendiente' &&
-        DateTime.now().difference(sol.createdAt).inMinutes >= 5;
+        DateTime.now().difference(sol.createdAt).inMinutes >= 10;
     final borderColor = vencida ? _red : _colorEstado(sol.estado);
 
     return Container(
@@ -404,6 +406,30 @@ class _SolicitudesMaterialSupervisorScreenState
           ]),
         ],
 
+        // ── Técnicos cercanos con stock (solo sin atender) ──
+        if (sol.estado == 'pendiente') ...[
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _verTecnicosCercanos(sol),
+              icon: const Icon(Icons.near_me_outlined, size: 16),
+              label: const Text(
+                'Ver técnicos cercanos con stock',
+                style: TextStyle(fontSize: 12),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _accent,
+                side: BorderSide(color: _accent.withValues(alpha: 0.6)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+        ],
+
         // ── Botón ver guía ──────────────────────────────
         if (sol.guiaId != null) ...[
           const SizedBox(height: 10),
@@ -425,6 +451,89 @@ class _SolicitudesMaterialSupervisorScreenState
           ),
         ],
       ]),
+    );
+  }
+
+  Future<Position?> _posicionSolicitante(SolicitudMaterial sol) async {
+    final lat = sol.latSolicitante;
+    final lng = sol.lngSolicitante;
+    if (lat != null &&
+        lng != null &&
+        lat.abs() > 0.0001 &&
+        lng.abs() > 0.0001) {
+      return Position(
+        latitude: lat,
+        longitude: lng,
+        timestamp: DateTime.now(),
+        accuracy: 0,
+        altitude: 0,
+        heading: 0,
+        speed: 0,
+        speedAccuracy: 0,
+        altitudeAccuracy: 0,
+        headingAccuracy: 0,
+      );
+    }
+
+    try {
+      final row = await _db
+          .from('ubicaciones_activas')
+          .select('lat, lng')
+          .eq('rut_tecnico', sol.rutSolicitante)
+          .eq('gps_activo', true)
+          .maybeSingle();
+      if (row != null) {
+        final latAct = (row['lat'] as num?)?.toDouble();
+        final lngAct = (row['lng'] as num?)?.toDouble();
+        if (latAct != null &&
+            lngAct != null &&
+            latAct.abs() > 0.0001 &&
+            lngAct.abs() > 0.0001) {
+          return Position(
+            latitude: latAct,
+            longitude: lngAct,
+            timestamp: DateTime.now(),
+            accuracy: 0,
+            altitude: 0,
+            heading: 0,
+            speed: 0,
+            speedAccuracy: 0,
+            altitudeAccuracy: 0,
+            headingAccuracy: 0,
+          );
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _verTecnicosCercanos(SolicitudMaterial sol) async {
+    final pos = await _posicionSolicitante(sol);
+    if (!mounted) return;
+    if (pos == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No hay ubicación GPS del solicitante. '
+            'Pide que active el GPS en CREABOX.',
+          ),
+          backgroundColor: _red,
+        ),
+      );
+      return;
+    }
+
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TecnicosCercanosMapaScreen(
+          tipoMaterial: sol.tipoMaterial,
+          posicionSolicitante: pos,
+          rutSolicitante: sol.rutSolicitante,
+          modoSupervisor: true,
+          etiquetaSolicitante: sol.nombreSolicitante,
+        ),
+      ),
     );
   }
 

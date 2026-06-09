@@ -19,6 +19,7 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
   Map<String, dynamic> _resumenMes = {};
   List<Map<String, dynamic>> _detalleDiario = [];
   Map<String, dynamic> _rankingData = {};
+  Map<String, dynamic> _rankingProductividad = {};
   Map<String, dynamic> _metricasTiempo = {};
   bool _cargando = true;
   String? _tecnicoRut;
@@ -82,6 +83,13 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
         anno: _mesSeleccionado.year,
       );
       print('🏆 Ranking: $_rankingData');
+
+      _rankingProductividad = await _service.obtenerPosicionProductividad(
+        _tecnicoRut!,
+        mes: _mesSeleccionado.month,
+        anno: _mesSeleccionado.year,
+      );
+      print('🏆 Ranking productividad: $_rankingProductividad');
       
       // Obtener métricas de tiempo
       _metricasTiempo = await _service.obtenerMetricasTiempo(
@@ -492,26 +500,6 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
                     const SizedBox(height: 12),
                     Row(
                       children: [
-                        Expanded(child: _buildStatCard(
-                          icon: Icons.speed,
-                          color: Colors.purple,
-                          titulo: 'Km recorridos',
-                          valor: '${((_resumenMes['kmTotales'] ?? 0) as num).toDouble().toStringAsFixed(1)}',
-                          subtitulo: 'km',
-                        )),
-                        const SizedBox(width: 8),
-                        Expanded(child: _buildStatCard(
-                          icon: Icons.local_gas_station,
-                          color: Colors.red,
-                          titulo: 'Combustible',
-                          valor: '${((_resumenMes['combustibleTotal'] ?? 0) as num).toDouble().toStringAsFixed(1)}',
-                          subtitulo: 'litros',
-                        )),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
                         Expanded(
                           child: Card(
                             child: Padding(
@@ -907,6 +895,10 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
                     ),
                     
                     const SizedBox(height: 12),
+
+                    _buildRankingProductividadCard(),
+                    
+                    const SizedBox(height: 12),
                     
                     // Card de Métricas de Tiempo
                     Card(
@@ -1088,28 +1080,6 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
             const SizedBox(height: 8),
             Text(tiempo, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             Text(titulo, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatCard({
-    required IconData icon,
-    required Color color,
-    required String titulo,
-    required String valor,
-    required String subtitulo,
-  }) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 24),
-            const SizedBox(height: 6),
-            Text(valor, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            Text(titulo, style: const TextStyle(fontSize: 10, color: Colors.grey)),
           ],
         ),
       ),
@@ -1427,7 +1397,9 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
             fechaFormateada = '${dias[dt.weekday - 1]} ${partesFecha[0]}/${partesFecha[1]}';
           }
           
-          final horaEsperada = esSabado ? '10:00' : '9:45';
+          final usaJornadaJunio = _mesSeleccionado.year > 2026 ||
+              (_mesSeleccionado.year == 2026 && _mesSeleccionado.month >= 6);
+          final horaEsperada = usaJornadaJunio ? '9:45' : (esSabado ? '10:00' : '9:45');
           
           return Card(
             margin: const EdgeInsets.only(bottom: 8),
@@ -1483,6 +1455,134 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
     );
   }
 
+  Widget _buildRankingProductividadCard() {
+    final posicion = (_rankingProductividad['posicion'] as num?)?.toInt() ?? 0;
+    final total = (_rankingProductividad['totalTecnicos'] as num?)?.toInt() ?? 0;
+    final prod = ((_rankingProductividad['productividad'] as num?)?.toDouble() ?? 0.0);
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Colors.grey[900],
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.all(16),
+        childrenPadding: const EdgeInsets.only(bottom: 16),
+        title: Row(
+          children: [
+            Icon(Icons.insights, color: _getColorProductividad(prod), size: 28),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Ranking de productividad',
+                    style: TextStyle(fontSize: 14, color: Colors.white70),
+                  ),
+                  Text(
+                    posicion > 0 ? '#$posicion de $total' : 'Sin posición',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: _getColorProductividad(prod),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${prod.toStringAsFixed(1)}%',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const Text('productividad', style: TextStyle(fontSize: 12, color: Colors.white70)),
+              ],
+            ),
+          ],
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Divider(height: 24, color: Colors.white24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Ranking completo',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                    Text(
+                      '$total técnicos',
+                      style: const TextStyle(fontSize: 12, color: Colors.white70),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ...(_rankingProductividad['top10'] as List? ?? []).map((tecnico) {
+                  final t = tecnico as Map<String, dynamic>;
+                  final esYo = t['rut'] == _tecnicoRut;
+                  final pct = (t['productividad'] as num?)?.toDouble() ?? 0.0;
+                  return Container(
+                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                    margin: const EdgeInsets.only(bottom: 4),
+                    decoration: BoxDecoration(
+                      color: esYo ? _colorPrincipal.withOpacity(0.3) : Colors.grey[850],
+                      borderRadius: BorderRadius.circular(8),
+                      border: esYo ? Border.all(color: _colorPrincipal, width: 2) : null,
+                    ),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 36,
+                          child: Text(
+                            '#${t['posicion']}',
+                            style: TextStyle(
+                              color: esYo ? _colorPrincipal : Colors.white70,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            t['nombre']?.toString() ?? '',
+                            style: TextStyle(
+                              color: esYo ? Colors.white : Colors.white70,
+                              fontWeight: esYo ? FontWeight.bold : FontWeight.normal,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          '${pct.toStringAsFixed(1)}%',
+                          style: TextStyle(
+                            color: _getColorProductividad(pct),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHorasExtrasCard() {
     final total = (_metricasTiempo['horasExtrasTotal'] as num?)?.toInt() ?? 0;
 
@@ -1529,8 +1629,11 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
     final detalle = (_metricasTiempo['detalleHorasExtras'] as List?) ?? [];
     final total = (_metricasTiempo['horasExtrasTotal'] as num?)?.toInt() ?? 0;
 
-    // El detalle ya viene agrupado por semana desde el servicio
-    List<Map<String, dynamic>> semanas = detalle
+    final bodegaItems = detalle
+        .where((item) => (item as Map<String, dynamic>)['tipo'] == 'bodega')
+        .cast<Map<String, dynamic>>()
+        .toList();
+    final semanas = detalle
         .where((item) => (item as Map<String, dynamic>)['tipo'] == 'semana')
         .cast<Map<String, dynamic>>()
         .toList();
@@ -1591,18 +1694,79 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
                   ),
                   const SizedBox(height: 12),
                   Expanded(
-                    child: semanas.isEmpty
+                    child: semanas.isEmpty && bodegaItems.isEmpty
                         ? const Center(
                             child: Text(
                               'No hay horas extras registradas',
                               style: TextStyle(color: Colors.white70),
                             ),
                           )
-                        : ListView.separated(
-                            itemCount: semanas.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: 8),
-                            itemBuilder: (context, index) {
-                              final semana = semanas[index] as Map<String, dynamic>;
+                        : ListView(
+                            children: [
+                              if (bodegaItems.isNotEmpty) ...[
+                                const Text(
+                                  'Hora extra bodega',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                ...bodegaItems.map((item) {
+                                  final label = item['label']?.toString() ??
+                                      'Hora extra bodega semana ${item['semanaAnio']} del año';
+                                  final minutos = (item['totalMinutos'] as num?)?.toInt() ?? 60;
+                                  final horario = item['horario']?.toString() ?? '08:45 – 09:45';
+                                  return Container(
+                                    margin: const EdgeInsets.only(bottom: 10),
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey[800],
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: Colors.amber.withOpacity(0.4)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.warehouse_outlined,
+                                            color: Colors.amber, size: 20),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                label,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                              Text(
+                                                horario,
+                                                style: TextStyle(
+                                                  color: Colors.grey[400],
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Text(
+                                          _formatearMinutos(minutos),
+                                          style: const TextStyle(
+                                            color: Colors.amber,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                                if (semanas.isNotEmpty) const SizedBox(height: 16),
+                              ],
+                              ...List.generate(semanas.length, (index) {
+                              final semana = semanas[index];
                               final inicioSemana = semana['inicioSemana'] as int? ?? 1;
                               final finSemana = semana['finSemana'] as int? ?? 7;
                               final mes = semana['mes'] as int? ?? DateTime.now().month;
@@ -1820,7 +1984,8 @@ class _ProduccionScreenState extends State<ProduccionScreen> {
                                   ],
                                 ),
                               );
-                            },
+                            }),
+                            ],
                           ),
                   ),
                   const SizedBox(height: 16),

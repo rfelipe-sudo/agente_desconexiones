@@ -82,6 +82,38 @@ class NotificationService {
     );
   }
 
+  Future<void> alertaSupervisorCancelacion({
+    required String tecnicoNombre,
+    required String tipoAyuda,
+  }) async {
+    await _ensureInit();
+    _vibrar();
+
+    await _plugin.cancel(1001);
+    await _plugin.cancel(48);
+
+    await _plugin.show(
+      1004,
+      'Solicitud de ayuda cancelada',
+      '$tecnicoNombre canceló su solicitud de $tipoAyuda',
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelId,
+          _channelName,
+          channelDescription: _channelDesc,
+          importance: Importance.max,
+          priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
+          vibrationPattern: _vibracion,
+          ticker: 'TrazaBox — Ayuda cancelada',
+          icon: '@mipmap/ic_launcher',
+          color: const Color(0xFFEF4444),
+        ),
+      ),
+    );
+  }
+
   // ─────────────────────────────────────────────────────────────
   // Notificación para el TÉCNICO — supervisor respondió
   // ─────────────────────────────────────────────────────────────

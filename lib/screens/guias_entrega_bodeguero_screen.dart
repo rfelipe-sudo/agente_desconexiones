@@ -40,8 +40,7 @@ class _GuiasEntregaBodegueroScreenState
           .from('solicitudes_bodega')
           .select()
           .eq('estado', 'firmada')
-          .order('fecha', ascending: false)
-          .order('hora', ascending: false);
+          .order('created_at', ascending: false);
       setState(() => _guias = (rows as List).cast<Map<String, dynamic>>());
     } catch (_) {
     } finally {

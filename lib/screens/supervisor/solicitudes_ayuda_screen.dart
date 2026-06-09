@@ -10,9 +10,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 import 'package:agente_desconexiones/models/solicitud_ayuda.dart';
+import 'package:agente_desconexiones/services/ayuda_alerta_estado.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
 import 'package:agente_desconexiones/services/estado_supervisor_service.dart';
-import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/screens/supervisor/supervisor_tracking_screen.dart';
 
 class SolicitudesAyudaScreen extends StatefulWidget {
@@ -27,10 +27,14 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
   final _ayudaService = AyudaService();
 
   List<SolicitudAyuda> _solicitudes = [];
+  final List<SolicitudAyuda> _canceladasRecientes = [];
+  final Map<String, EstadoSolicitud> _estadoAnteriorPorTicket = {};
   bool _cargando = false;
   String? _rutSupervisor;
   bool _nuevaAlerta = false;
+  String? _mensajeCancelacion;
   String? _errorCarga;
+  Timer? _timerOcultarCancelacion;
 
   // GPS propio del supervisor (para calcular distancia)
   double? _miLat;
@@ -69,6 +73,9 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
   void dispose() {
     _timerTarjetas?.cancel();
     _timerGps?.cancel();
+    _timerOcultarCancelacion?.cancel();
+    _ayudaService.removeListener(_onAyudaActualizada);
+    _ayudaService.setOnSolicitudCancelada(null);
     _ayudaService.cancelarSuscripcionSupervisor();
     super.dispose();
   }
@@ -76,9 +83,7 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
   Future<void> _iniciar() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      _rutSupervisor = prefs.getString('rut_supervisor') ??
-          prefs.getString('rut_tecnico') ??
-          prefs.getString('user_rut') ?? '';
+      _rutSupervisor = await AyudaService.resolverRutSupervisorSesion();
       _nombreSupervisor = prefs.getString('nombre_supervisor') ??
           prefs.getString('user_nombre') ?? '';
 
@@ -107,18 +112,21 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
       });
 
       await _cargarSolicitudes();
+      await _ayudaService.iniciarMonitoreoGlobalSupervisor(_rutSupervisor!);
 
       // Suscribir a Realtime para nuevas solicitudes
       if (mounted) {
+        _ayudaService.addListener(_onAyudaActualizada);
+        _ayudaService.setOnSolicitudCancelada(_registrarCancelacion);
         _ayudaService.suscribirSolicitudesSupervisor(
           rutSupervisor: _rutSupervisor!,
           onNuevaSolicitud: () {
             if (mounted) {
               HapticFeedback.heavyImpact();
-              unawaited(FcmService.playAyuda());
               setState(() {
                 _nuevaAlerta = true;
                 _solicitudes = _ayudaService.solicitudesSupervisor;
+                _sincronizarEstadosAnteriores(_solicitudes);
               });
               _mostrarBannerNuevaSolicitud();
               Future.delayed(
@@ -200,7 +208,11 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
           );
           if (distMetros <= 100) {
             _ticketsLlegadaAutoMarcada.add(s.ticketId);
-            await EstadoSupervisorService().marcarLlegadaAyuda(_rutSupervisor!);
+            await EstadoSupervisorService().marcarLlegadaAyuda(
+              rutSupervisor: _rutSupervisor!,
+              ticketId: s.ticketId,
+              nombreTecnico: s.tecnicoNombre ?? 'Técnico',
+            );
             if (mounted) {
               setState(() {});
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -282,6 +294,8 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
     });
 
     try {
+      // Solo silenciar solicitudes que ya existían antes de abrir la pantalla.
+      final umbralCarga = DateTime.now();
       await _ayudaService
           .cargarSolicitudesSupervisor(_rutSupervisor!)
           .timeout(const Duration(seconds: 15));
@@ -292,12 +306,14 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
           _solicitudes = lista;
           _cargando = false;
         });
-        // Reproducir alerta si hay pendientes al cargar
-        final hayPendientes =
-            lista.any((s) => s.estado == EstadoSolicitud.pendiente);
-        if (hayPendientes) {
-          _ayudaService.reproducirAlerta().catchError((_) {});
-        }
+        _sincronizarEstadosAnteriores(lista);
+        final pendientesPrevias = lista.where((s) =>
+            s.estado == EstadoSolicitud.pendiente &&
+            !s.fechaCreacion.isAfter(umbralCarga));
+        await _ayudaService.detenerAlerta();
+        await AyudaAlertaEstado.markAllSeen(
+          pendientesPrevias.map((s) => s.ticketId),
+        );
         // Registrar tickets aceptados para tracking de GPS
         final estadoSvc = EstadoSupervisorService();
         for (final s in lista) {
@@ -322,6 +338,46 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
     }
   }
 
+  void _sincronizarEstadosAnteriores(List<SolicitudAyuda> lista) {
+    for (final s in lista) {
+      _estadoAnteriorPorTicket[s.ticketId] = s.estado;
+    }
+  }
+
+  void _onAyudaActualizada() {
+    if (!mounted) return;
+    final lista = _ayudaService.solicitudesSupervisor;
+    for (final s in lista) {
+      _estadoAnteriorPorTicket[s.ticketId] = s.estado;
+    }
+    setState(() => _solicitudes = lista);
+  }
+
+  void _registrarCancelacion(SolicitudAyuda s) {
+    if (!mounted) return;
+    final nombre = s.tecnicoNombre.trim().isNotEmpty
+        ? s.tecnicoNombre
+        : 'Técnico (${s.rutTecnico})';
+    _ticketsAceptadosTracking.remove(s.ticketId);
+    _ticketsLlegadaAutoMarcada.remove(s.ticketId);
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _solicitudes = _ayudaService.solicitudesSupervisor;
+      _canceladasRecientes.removeWhere((c) => c.ticketId == s.ticketId);
+      _canceladasRecientes.insert(0, s);
+      if (_canceladasRecientes.length > 5) {
+        _canceladasRecientes.removeRange(5, _canceladasRecientes.length);
+      }
+      _mensajeCancelacion =
+          '$nombre canceló la solicitud de ${s.tipo.displayName}';
+    });
+    _mostrarBannerCancelacion(s);
+    _timerOcultarCancelacion?.cancel();
+    _timerOcultarCancelacion = Timer(const Duration(seconds: 8), () {
+      if (mounted) setState(() => _mensajeCancelacion = null);
+    });
+  }
+
   void _mostrarBannerNuevaSolicitud() {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       backgroundColor: _colorNaranja,
@@ -335,6 +391,33 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
             style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    ));
+  }
+
+  void _mostrarBannerCancelacion(SolicitudAyuda s) {
+    final nombre = s.tecnicoNombre.trim().isNotEmpty
+        ? s.tecnicoNombre
+        : 'Técnico (${s.rutTecnico})';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      backgroundColor: _colorRojo,
+      duration: const Duration(seconds: 6),
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.all(12),
+      content: Row(
+        children: [
+          const Icon(Icons.cancel_outlined, color: Colors.white),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '$nombre canceló la solicitud de ${s.tipo.displayName}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -565,15 +648,21 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
         _solicitudes.where((s) => s.supervisorEnCamino).toList();
     final vigentes = [...pendientes, ...enCamino];
 
+    final canceladasVisibles = _canceladasRecientes
+        .where((s) => s.estado == EstadoSolicitud.cancelada)
+        .toList();
+
     return Column(
       children: [
+        if (_mensajeCancelacion != null)
+          _buildBannerCancelacionActiva(_mensajeCancelacion!),
         if (pendientes.isNotEmpty)
           _AlertaBanner(
             count: pendientes.length,
             onTap: _ayudaService.reproducirAlerta,
           ),
         Expanded(
-          child: vigentes.isEmpty
+          child: vigentes.isEmpty && canceladasVisibles.isEmpty
               ? _buildEmpty()
               : RefreshIndicator(
                   onRefresh: _cargarSolicitudes,
@@ -586,6 +675,14 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
                       24 + MediaQuery.of(context).padding.bottom + 40,
                     ),
                     children: [
+                      if (canceladasVisibles.isNotEmpty) ...[
+                        _buildSeccionLabel(
+                            'CANCELADAS (${canceladasVisibles.length})',
+                            _colorRojo),
+                        ...canceladasVisibles
+                            .map((s) => _buildTarjetaCancelada(s)),
+                        const SizedBox(height: 16),
+                      ],
                       if (pendientes.isNotEmpty) ...[
                         _buildSeccionLabel(
                             'PENDIENTES (${pendientes.length})',
@@ -604,6 +701,88 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _buildBannerCancelacionActiva(String mensaje) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: _colorRojo.withOpacity(0.92),
+      child: Row(
+        children: [
+          const Icon(Icons.cancel_outlined, color: Colors.white, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              mensaje,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTarjetaCancelada(SolicitudAyuda s) {
+    final nombre = s.tecnicoNombre.trim().isNotEmpty
+        ? s.tecnicoNombre
+        : 'Técnico (${s.rutTecnico})';
+    final hora = DateFormat('HH:mm').format(s.fechaCreacion.toLocal());
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1218),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _colorRojo.withOpacity(0.45)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: _colorRojo.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.cancel_outlined,
+                color: _colorRojo, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Ayuda cancelada por el técnico',
+                  style: TextStyle(
+                    color: _colorRojo.withOpacity(0.95),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '$nombre · ${s.tipo.displayName}',
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Solicitud enviada a las $hora',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.45),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1292,7 +1471,11 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
     if (_rutSupervisor == null || _rutSupervisor!.isEmpty) return;
     try {
       _ticketsLlegadaAutoMarcada.add(s.ticketId);
-      await EstadoSupervisorService().marcarLlegadaAyuda(_rutSupervisor!);
+      await EstadoSupervisorService().marcarLlegadaAyuda(
+        rutSupervisor: _rutSupervisor!,
+        ticketId: s.ticketId,
+        nombreTecnico: s.tecnicoNombre ?? 'Técnico',
+      );
       if (mounted) {
         setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -1335,6 +1518,9 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
   Future<void> _responder(
       SolicitudAyuda s, EstadoSolicitud estado,
       {int? tiempoExtra, String? mensaje}) async {
+    await _ayudaService.detenerAlerta();
+    await AyudaAlertaEstado.markSeen(s.ticketId);
+
     final esAceptacion = estado == EstadoSolicitud.aceptada ||
         estado == EstadoSolicitud.aceptadaConTiempo;
     // Si acepta y no tenemos GPS, obtenerlo antes para que el técnico vea distancia/ETA
@@ -1410,6 +1596,9 @@ class _SolicitudesAyudaScreenState extends State<SolicitudesAyudaScreen> {
   }
 
   Future<void> _preguntarAbrirEnMapa(SolicitudAyuda s) async {
+    await _ayudaService.detenerAlerta();
+    await AyudaAlertaEstado.markSeen(s.ticketId);
+
     final abrir = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(

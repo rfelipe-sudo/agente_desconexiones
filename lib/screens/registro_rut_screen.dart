@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -8,6 +10,7 @@ import 'package:agente_desconexiones/constants/app_constants.dart';
 import 'package:agente_desconexiones/providers/auth_provider.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/utils/device_helper.dart';
+import 'package:agente_desconexiones/utils/rol_helper.dart';
 import 'package:agente_desconexiones/utils/rut_helper.dart';
 import 'package:agente_desconexiones/utils/session_manager.dart';
 import 'package:agente_desconexiones/widgets/creabox_wordmark.dart';
@@ -194,11 +197,13 @@ class _RegistroRutScreenState extends State<RegistroRutScreen> {
       );
       // Usar el rol devuelto por validar_rut_tecnico (supervisor / ito / tecnico).
       // data viene de la validación inicial que consultó equipos_crea primero.
-      final rolFinal = data['rol']?.toString().toLowerCase().trim();
-      await prefs.setString(
-        'user_rol',
-        (rolFinal != null && rolFinal.isNotEmpty) ? rolFinal : 'tecnico',
+      final rolFinal = RolHelper.normalizar(
+        data['rol']?.toString(),
+        cargo: row['tipo_personal']?.toString() ??
+            data['tipo_personal']?.toString(),
       );
+      await prefs.setString('user_rol', rolFinal);
+      await prefs.setString('rol_usuario', rolFinal);
 
       await SessionManager.marcarNombreGuardadoParaRut(rutFinal);
 
@@ -210,6 +215,7 @@ class _RegistroRutScreenState extends State<RegistroRutScreen> {
         final ok = await FcmService.instance
             .registrarTokenSiCambio(rut: rutFinal);
         print('[RegistroRut] FCM registro Kepler: $ok');
+        unawaited(FcmService.instance.syncFcmTokenDispositivo());
       } catch (e) {
         print('[RegistroRut] FCM registro fallo: $e');
       }

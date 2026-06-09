@@ -8,7 +8,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import 'package:agente_desconexiones/constants/map_styles.dart';
+import 'package:agente_desconexiones/screens/supervisor/tecnico_stock_screen.dart';
 import 'package:agente_desconexiones/services/logistica_service.dart';
+import 'package:agente_desconexiones/services/material_solicitud_service.dart';
 import 'package:agente_desconexiones/services/ubicacion_service.dart';
 
 class TecnicosCercanosMapaScreen extends StatefulWidget {
@@ -17,11 +19,21 @@ class TecnicosCercanosMapaScreen extends StatefulWidget {
     required this.tipoMaterial,
     required this.posicionSolicitante,
     required this.rutSolicitante,
+    this.modoSupervisor = false,
+    this.etiquetaSolicitante,
+    this.radioKm = 5.0,
   });
 
   final String   tipoMaterial;
   final Position posicionSolicitante;
   final String   rutSolicitante;
+  /// Vista supervisor: sin botón "Solicitar a este técnico".
+  final bool modoSupervisor;
+  final String? etiquetaSolicitante;
+  /// Radio de búsqueda en km. `null` = plantel completo con stock (sin límite).
+  final double? radioKm;
+
+  bool get _modoPlantel => radioKm == null;
 
   @override
   State<TecnicosCercanosMapaScreen> createState() =>
@@ -95,44 +107,77 @@ class _TecnicosCercanosMapaScreenState
       final lat = widget.posicionSolicitante.latitude;
       final lng = widget.posicionSolicitante.longitude;
 
-      // Técnicos dentro de 5 km con GPS activo
-      final cercanos = await UbicacionService.obtenerTecnicosCercanos(
-        latSolicitante: lat,
-        lngSolicitante: lng,
-        radioKm:        5.0,
-        excluirRut:     widget.rutSolicitante,
-      );
-
-      if (cercanos.isEmpty) {
-        setState(() {
-          _tecnicos = [];
-          _cargando = false;
-        });
-        _actualizarMapa();
-        return;
-      }
-
-      // Consultar stock KRP
+      final umbral = MaterialSolicitudService.umbralStock(widget.tipoMaterial);
       final stockList = await LogisticaService().fetchStock();
-      final stockMap  = {for (final t in stockList) t.rut: t};
 
       final List<_TecnicoCercano> resultado = [];
-      for (final c in cercanos) {
-        final rut     = c['rut_tecnico'] as String? ?? '';
-        final tecStock = stockMap[rut];
-        final cantidad = tecStock?.stock[widget.tipoMaterial] ?? 0;
-        if (cantidad <= 0) continue; // sin stock de este material
 
-        resultado.add(_TecnicoCercano(
-          rut:         rut,
-          nombre:      tecStock?.nombre ?? rut,
-          lat:         (c['lat'] as num).toDouble(),
-          lng:         (c['lng'] as num).toDouble(),
-          distanciaKm: (c['distancia_km'] as num).toDouble(),
-          stockQty:    cantidad.toInt(),
-          updatedAt:   DateTime.tryParse(c['updated_at'] as String? ?? '') ??
-                       DateTime.now(),
-        ));
+      if (widget._modoPlantel) {
+        final conGps = await UbicacionService.obtenerTecnicosOrdenadosPorDistancia(
+          latSolicitante: lat,
+          lngSolicitante: lng,
+          radioKm: null,
+          excluirRut: widget.rutSolicitante,
+        );
+        final gpsPorRut = <String, Map<String, dynamic>>{};
+        for (final c in conGps) {
+          final rut = c['rut_tecnico'] as String? ?? '';
+          if (rut.isNotEmpty) gpsPorRut[rut] = c;
+        }
+
+        for (final tecStock in stockList) {
+          if (LogisticaService.sameRut(tecStock.rut, widget.rutSolicitante)) {
+            continue;
+          }
+          final cantidad = tecStock.stock[widget.tipoMaterial] ?? 0;
+          if (cantidad <= umbral) continue;
+
+          Map<String, dynamic>? gps;
+          for (final entry in gpsPorRut.entries) {
+            if (LogisticaService.sameRut(entry.key, tecStock.rut)) {
+              gps = entry.value;
+              break;
+            }
+          }
+          if (gps == null) continue;
+
+          resultado.add(_TecnicoCercano(
+            rut: tecStock.rut,
+            nombre: tecStock.nombre,
+            lat: (gps['lat'] as num).toDouble(),
+            lng: (gps['lng'] as num).toDouble(),
+            distanciaKm: (gps['distancia_km'] as num).toDouble(),
+            stockQty: cantidad.toInt(),
+            updatedAt: DateTime.tryParse(gps['updated_at'] as String? ?? '') ??
+                DateTime.now(),
+          ));
+        }
+        resultado.sort((a, b) => a.distanciaKm.compareTo(b.distanciaKm));
+      } else {
+        final cercanos = await UbicacionService.obtenerTecnicosCercanos(
+          latSolicitante: lat,
+          lngSolicitante: lng,
+          radioKm: widget.radioKm,
+          excluirRut: widget.rutSolicitante,
+        );
+
+        for (final c in cercanos) {
+          final rut = c['rut_tecnico'] as String? ?? '';
+          final tecStock = _buscarStock(rut, stockList);
+          final cantidad = tecStock?.stock[widget.tipoMaterial] ?? 0;
+          if (cantidad <= umbral) continue;
+
+          resultado.add(_TecnicoCercano(
+            rut: rut,
+            nombre: tecStock?.nombre ?? rut,
+            lat: (c['lat'] as num).toDouble(),
+            lng: (c['lng'] as num).toDouble(),
+            distanciaKm: (c['distancia_km'] as num).toDouble(),
+            stockQty: cantidad.toInt(),
+            updatedAt: DateTime.tryParse(c['updated_at'] as String? ?? '') ??
+                DateTime.now(),
+          ));
+        }
       }
 
       setState(() {
@@ -145,6 +190,13 @@ class _TecnicosCercanosMapaScreenState
     }
   }
 
+  TecnicoStock? _buscarStock(String rut, List<TecnicoStock> lista) {
+    for (final t in lista) {
+      if (LogisticaService.sameRut(t.rut, rut)) return t;
+    }
+    return null;
+  }
+
   void _actualizarMapa() {
     final lat = widget.posicionSolicitante.latitude;
     final lng = widget.posicionSolicitante.longitude;
@@ -152,22 +204,25 @@ class _TecnicosCercanosMapaScreenState
     _markers.clear();
     _circles.clear();
 
-    // Círculo de 5 km
-    _circles.add(Circle(
-      circleId: const CircleId('radio'),
-      center:   LatLng(lat, lng),
-      radius:   5000,
-      fillColor: _accent.withValues(alpha: 0.06),
-      strokeColor: _accent.withValues(alpha: 0.4),
-      strokeWidth: 1,
-    ));
+    if (!widget._modoPlantel && widget.radioKm != null) {
+      _circles.add(Circle(
+        circleId: const CircleId('radio'),
+        center: LatLng(lat, lng),
+        radius: widget.radioKm! * 1000,
+        fillColor: _accent.withValues(alpha: 0.06),
+        strokeColor: _accent.withValues(alpha: 0.4),
+        strokeWidth: 1,
+      ));
+    }
 
     // Marcador propio
     _markers.add(Marker(
       markerId: const MarkerId('yo'),
       position: LatLng(lat, lng),
       icon:     _iconoYo ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-      infoWindow: const InfoWindow(title: 'Tú'),
+      infoWindow: InfoWindow(
+        title: widget.etiquetaSolicitante ?? 'Solicitante',
+      ),
     ));
 
     // Marcadores técnicos
@@ -225,16 +280,43 @@ class _TecnicosCercanosMapaScreenState
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10))),
-                onPressed: () {
-                  Navigator.pop(context);
-                  Navigator.pop(context, t.rut); // devuelve el RUT elegido
-                },
-                child: const Text('Solicitar a este técnico',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                onPressed: widget.modoSupervisor
+                    ? () => _abrirStockCompleto(t)
+                    : () {
+                        Navigator.pop(context);
+                        Navigator.pop(context, t.rut);
+                      },
+                child: Text(
+                  widget.modoSupervisor
+                      ? 'Ver stock completo'
+                      : 'Solicitar a este técnico',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> _abrirStockCompleto(_TecnicoCercano t) async {
+    final stock = await LogisticaService().fetchStockTecnico(
+      t.rut,
+      nombreDisplay: t.nombre,
+    );
+    if (!mounted) return;
+    if (stock == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo cargar el stock del técnico')),
+      );
+      return;
+    }
+    Navigator.pop(context);
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TecnicoStockScreen(tecnico: stock),
       ),
     );
   }
@@ -253,11 +335,13 @@ class _TecnicosCercanosMapaScreenState
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Técnicos cercanos',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600)),
+            Text(
+              widget._modoPlantel ? 'Plantel con stock' : 'Técnicos cercanos',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600),
+            ),
             Text(widget.tipoMaterial,
                 style: const TextStyle(color: _textDim, fontSize: 12)),
           ],
@@ -331,7 +415,9 @@ class _TecnicosCercanosMapaScreenState
               _cargando
                   ? 'Buscando...'
                   : _tecnicos.isEmpty
-                      ? 'Sin técnicos con stock en 5 km'
+                      ? (widget._modoPlantel
+                          ? 'Sin técnicos con stock en el plantel'
+                          : 'Sin técnicos con stock en ${widget.radioKm?.toStringAsFixed(0) ?? '5'} km')
                       : '${_tecnicos.length} técnico${_tecnicos.length > 1 ? 's' : ''} con stock disponible',
               style: const TextStyle(
                   color: Colors.white,
@@ -356,9 +442,11 @@ class _TecnicosCercanosMapaScreenState
           ],
           if (_tecnicos.isEmpty && !_cargando) ...[
             const SizedBox(height: 8),
-            const Text(
-              'No hay técnicos cercanos con GPS activo y stock del material solicitado.',
-              style: TextStyle(color: _textDim, fontSize: 12),
+            Text(
+              widget._modoPlantel
+                  ? 'No hay técnicos del plantel con GPS activo y stock del material solicitado.'
+                  : 'No hay técnicos cercanos con GPS activo y stock del material solicitado.',
+              style: const TextStyle(color: _textDim, fontSize: 12),
             ),
           ],
         ],

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_device_imei/flutter_device_imei.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:agente_desconexiones/utils/rol_helper.dart';
 import 'package:agente_desconexiones/utils/rut_helper.dart';
 import 'package:agente_desconexiones/services/produccion_service.dart';
 
@@ -231,6 +232,27 @@ Future<Map<String, dynamic>?> _validarRutFallbackTablas(
     final lista = variantes.where((s) => s.isNotEmpty).toList();
     if (lista.isEmpty) return null;
 
+    final bodega = await client
+        .from('nomina_bodega')
+        .select('rut, nombre')
+        .inFilter('rut', lista)
+        .limit(1)
+        .maybeSingle();
+
+    if (bodega != null) {
+      final nombre = bodega['nombre']?.toString().trim() ?? '';
+      if (nombre.isNotEmpty) {
+        print('[RUT] Fallback nomina_bodega OK: $nombre');
+        return {
+          'existe': true,
+          'nombre': nombre,
+          'tipo_personal': 'BODEGA',
+          'es_vigente': true,
+          'rol': 'bodeguero',
+        };
+      }
+    }
+
     final nom = await client
         .from('nomina_tecnicos')
         .select('rut, nombres, paterno, materno')
@@ -288,7 +310,10 @@ Future<Map<String, dynamic>?> _validarRutFallbackTablas(
           'nombre': nombre,
           'tipo_personal': plantel['cargo']?.toString() ?? '',
           'es_vigente': vigente,
-          'rol': 'tecnico',
+          'rol': RolHelper.normalizar(
+            null,
+            cargo: plantel['cargo']?.toString(),
+          ),
         };
       }
     }
@@ -324,17 +349,65 @@ Future<Map<String, dynamic>?> validarRutTecnicoSupabase(
   }
 
   Map<String, dynamic>? rpcPrimera = await llamarRpc(limpio);
-  if (rpcPrimera != null && rpcPrimera['existe'] == true) return rpcPrimera;
+  if (rpcPrimera != null && rpcPrimera['existe'] == true) {
+    return await _enriquecerRolDesdePlantel(rpcPrimera, limpio);
+  }
 
   final sinGuion = limpio.replaceAll('-', '');
   Map<String, dynamic>? rpcSegunda;
   if (sinGuion != limpio) {
     rpcSegunda = await llamarRpc(sinGuion);
-    if (rpcSegunda != null && rpcSegunda['existe'] == true) return rpcSegunda;
+    if (rpcSegunda != null && rpcSegunda['existe'] == true) {
+      return await _enriquecerRolDesdePlantel(rpcSegunda, limpio);
+    }
   }
 
   final fb = await _validarRutFallbackTablas(limpio);
   if (fb != null) return fb;
 
-  return rpcSegunda ?? rpcPrimera;
+  final base = rpcSegunda ?? rpcPrimera;
+  if (base != null && base['existe'] == true) {
+    return await _enriquecerRolDesdePlantel(base, limpio);
+  }
+  return base;
+}
+
+/// Ajusta `rol` según plantel_tecnicos / equipos_crea (ej. ITO de Calidad).
+Future<Map<String, dynamic>> _enriquecerRolDesdePlantel(
+  Map<String, dynamic> data,
+  String rut,
+) async {
+  try {
+    final client = Supabase.instance.client;
+    final variantes = ProduccionService.rutVariantes(rut).toSet()
+      ..add(rut)
+      ..add(rut.replaceAll('-', ''));
+    final lista = variantes.where((s) => s.isNotEmpty).toList();
+
+    String? cargo;
+    final plantel = await client
+        .from('plantel_tecnicos')
+        .select('cargo')
+        .inFilter('rut', lista)
+        .limit(1)
+        .maybeSingle();
+    cargo = plantel?['cargo']?.toString();
+
+    String? rolEquipo;
+    final eq = await client
+        .from('equipos_crea')
+        .select('rol')
+        .inFilter('rut_tecnico', lista)
+        .limit(1)
+        .maybeSingle();
+    rolEquipo = eq?['rol']?.toString();
+
+    final rol = RolHelper.normalizar(
+      rolEquipo ?? data['rol']?.toString(),
+      cargo: cargo,
+    );
+    return {...data, 'rol': rol};
+  } catch (_) {
+    return data;
+  }
 }

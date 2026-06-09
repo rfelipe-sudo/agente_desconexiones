@@ -6,6 +6,9 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import 'firma_electronica_leyenda_pdf.dart';
+import 'pdf_theme_service.dart';
+
 class AuditoriaPdfService {
   static Future<Uint8List> generar({
     required String nombreTecnico,
@@ -29,9 +32,12 @@ class AuditoriaPdfService {
             ? pw.MemoryImage(base64Decode(firmaAudiadoB64))
             : null;
 
+    final theme = await PdfThemeService.cargar();
+
     // Paso 1: página de contenido → SHA-256
     final docContenido = pw.Document();
     docContenido.addPage(_paginaContenido(
+      theme: theme,
       nombreTecnico: nombreTecnico,
       rutTecnico: rutTecnico,
       nombreAuditor: nombreAuditor,
@@ -48,6 +54,7 @@ class AuditoriaPdfService {
 
     final doc = pw.Document();
     doc.addPage(_paginaContenido(
+      theme: theme,
       nombreTecnico: nombreTecnico,
       rutTecnico: rutTecnico,
       nombreAuditor: nombreAuditor,
@@ -56,15 +63,30 @@ class AuditoriaPdfService {
       items: itemsAuditados,
       observaciones: observaciones,
     ));
-    doc.addPage(_paginaFirmas(
-      nombreAuditor: nombreAuditor,
-      rutAuditor: rutAuditor,
-      nombreAuditado: nombreTecnico,
-      rutAuditado: rutTecnico,
+    const pie = 'CREABOX — Auditoría de material en terreno';
+
+    doc.addPage(FirmaElectronicaLeyendaPdf.pagina(
+      theme: theme,
+      nombre: nombreAuditor,
+      rut: rutAuditor,
       fechaFirma: fechaFirma,
       sha256Hex: sha256Hex,
-      imgAuditor: imgAuditor,
-      imgAuditado: imgAuditado,
+      imgFirma: imgAuditor,
+      rol: 'auditor',
+      tituloFirma: 'Firma del Auditor',
+      pieDocumento: pie,
+    ));
+
+    doc.addPage(FirmaElectronicaLeyendaPdf.pagina(
+      theme: theme,
+      nombre: nombreTecnico,
+      rut: rutTecnico,
+      fechaFirma: fechaFirma,
+      sha256Hex: sha256Hex,
+      imgFirma: imgAuditado,
+      rol: 'trabajador',
+      tituloFirma: 'Firma del Técnico Auditado',
+      pieDocumento: pie,
     ));
 
     return doc.save();
@@ -73,6 +95,7 @@ class AuditoriaPdfService {
   // ── Página 1: Resumen de auditoría ──────────────────────────────────────
 
   static pw.Page _paginaContenido({
+    required pw.ThemeData theme,
     required String nombreTecnico,
     required String rutTecnico,
     required String nombreAuditor,
@@ -97,6 +120,7 @@ class AuditoriaPdfService {
         .toList();
 
     return pw.Page(
+      theme: theme,
       pageFormat: PdfPageFormat.a4,
       margin: const pw.EdgeInsets.all(40),
       build: (_) => pw.Column(
@@ -275,189 +299,6 @@ class AuditoriaPdfService {
           pw.Divider(),
           pw.Text(
             'CREABOX — Documento generado automáticamente',
-            style: pw.TextStyle(
-                fontSize: 8, color: PdfColors.blueGrey400),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Página 2: Firmas electrónicas ──────────────────────────────────────
-
-  static pw.Page _paginaFirmas({
-    required String nombreAuditor,
-    required String rutAuditor,
-    required String nombreAuditado,
-    required String rutAuditado,
-    required String fechaFirma,
-    required String sha256Hex,
-    pw.ImageProvider? imgAuditor,
-    pw.ImageProvider? imgAuditado,
-  }) {
-    const teal      = PdfColor.fromInt(0xFF00796B);
-    const tealLight = PdfColor.fromInt(0xFFE0F2F1);
-
-    const textoLegal =
-        'El presente documento ha sido firmado electrónicamente de conformidad con '
-        'la Ley N° 19.799 sobre Documentos Electrónicos, Firma Electrónica y '
-        'Servicios de Certificación (Chile). La firma electrónica simple aquí '
-        'registrada tiene plena validez legal y constituye manifestación de voluntad '
-        'del firmante respecto del contenido de este instrumento.';
-
-    pw.Widget firmaCol(String titulo, String nombre, String rut,
-        pw.ImageProvider? img) {
-      return pw.Expanded(
-        child: pw.Container(
-          padding: const pw.EdgeInsets.all(10),
-          decoration: pw.BoxDecoration(
-            border: pw.Border.all(color: PdfColors.grey300),
-            borderRadius: pw.BorderRadius.circular(4),
-          ),
-          child: pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.center,
-            children: [
-              pw.Text(titulo,
-                  style: pw.TextStyle(
-                      fontSize: 10,
-                      fontWeight: pw.FontWeight.bold,
-                      color: teal)),
-              pw.SizedBox(height: 4),
-              pw.Text(nombre,
-                  style: pw.TextStyle(
-                      fontSize: 9, fontWeight: pw.FontWeight.bold),
-                  textAlign: pw.TextAlign.center),
-              pw.Text(rut,
-                  style: const pw.TextStyle(
-                      fontSize: 8, color: PdfColors.blueGrey600),
-                  textAlign: pw.TextAlign.center),
-              pw.SizedBox(height: 10),
-              pw.Container(
-                width: double.infinity,
-                height: 100,
-                decoration: pw.BoxDecoration(
-                  border: pw.Border.all(color: PdfColors.grey400),
-                  borderRadius: pw.BorderRadius.circular(4),
-                ),
-                child: img != null
-                    ? pw.Image(img, fit: pw.BoxFit.contain)
-                    : pw.SizedBox(),
-              ),
-              pw.SizedBox(height: 6),
-              pw.Text(
-                'Firma electrónica — $fechaFirma',
-                style: pw.TextStyle(
-                    fontSize: 7,
-                    fontStyle: pw.FontStyle.italic,
-                    color: PdfColors.blueGrey500),
-                textAlign: pw.TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return pw.Page(
-      pageFormat: PdfPageFormat.a4,
-      margin:
-          const pw.EdgeInsets.symmetric(horizontal: 40, vertical: 36),
-      build: (_) => pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          // Encabezado
-          pw.Container(
-            width: double.infinity,
-            padding: const pw.EdgeInsets.symmetric(vertical: 10),
-            decoration: const pw.BoxDecoration(
-              border: pw.Border(
-                  bottom: pw.BorderSide(color: teal, width: 2)),
-            ),
-            child: pw.Text(
-              'FIRMAS ELECTRÓNICAS DE LAS PARTES',
-              textAlign: pw.TextAlign.center,
-              style: pw.TextStyle(
-                  fontSize: 14,
-                  fontWeight: pw.FontWeight.bold,
-                  color: teal),
-            ),
-          ),
-          pw.SizedBox(height: 14),
-
-          // Párrafo legal
-          pw.Container(
-            padding: const pw.EdgeInsets.all(10),
-            decoration: pw.BoxDecoration(
-              color: tealLight,
-              borderRadius: pw.BorderRadius.circular(4),
-            ),
-            child: pw.Text(
-              textoLegal,
-              style: const pw.TextStyle(fontSize: 9),
-              textAlign: pw.TextAlign.justify,
-            ),
-          ),
-          pw.SizedBox(height: 18),
-
-          // Columnas de firma
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              firmaCol('Auditor', nombreAuditor, rutAuditor, imgAuditor),
-              pw.SizedBox(width: 16),
-              firmaCol('Auditado', nombreAuditado, rutAuditado, imgAuditado),
-            ],
-          ),
-          pw.SizedBox(height: 20),
-
-          // SHA-256
-          pw.Container(
-            padding: const pw.EdgeInsets.all(10),
-            decoration: pw.BoxDecoration(
-              border: pw.Border.all(color: PdfColors.grey300),
-              borderRadius: pw.BorderRadius.circular(4),
-            ),
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Text('Código de integridad SHA-256:',
-                    style: pw.TextStyle(
-                        fontSize: 8,
-                        color: PdfColors.blueGrey600,
-                        fontWeight: pw.FontWeight.bold)),
-                pw.SizedBox(height: 4),
-                pw.Container(
-                  width: double.infinity,
-                  padding: const pw.EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 5),
-                  decoration: pw.BoxDecoration(
-                    color: PdfColors.grey100,
-                    borderRadius: pw.BorderRadius.circular(3),
-                    border: pw.Border.all(
-                        color: PdfColors.grey300, width: 0.5),
-                  ),
-                  child: pw.Text(
-                    sha256Hex,
-                    style: const pw.TextStyle(
-                        fontSize: 7, color: PdfColors.red),
-                  ),
-                ),
-                pw.SizedBox(height: 6),
-                pw.Text(
-                  'Firma Electrónica Simple — Ley N° 19.799 (Chile)',
-                  style: pw.TextStyle(
-                      fontSize: 8,
-                      fontStyle: pw.FontStyle.italic,
-                      color: teal),
-                ),
-              ],
-            ),
-          ),
-
-          pw.Spacer(),
-          pw.Divider(color: PdfColors.grey300),
-          pw.Text(
-            'CREABOX — Documento con Firma Electrónica Simple. Ley N° 19.799 (Chile)',
             style: pw.TextStyle(
                 fontSize: 8, color: PdfColors.blueGrey400),
           ),

@@ -1,8 +1,34 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:agente_desconexiones/services/wifi_demo_report_service.dart';
 
 /// Pantalla WiFi y mapas: acceso a credenciales y cobertura.
 class WifiMapasScreen extends StatelessWidget {
   const WifiMapasScreen({super.key});
+
+  Future<void> _generarDemo(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    final nombre = prefs.getString('nombre_tecnico') ??
+        prefs.getString('user_nombre');
+    final rut = prefs.getString('rut_tecnico') ?? prefs.getString('user_rut');
+
+    final html = WifiDemoReportService.buildHtml(
+      tecnicoNombre: nombre,
+      tecnicoRut: rut,
+    );
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Reporte demo — datos ficticios para presentación',
+        ),
+        duration: Duration(seconds: 3),
+      ),
+    );
+    Navigator.of(context).pushNamed('/certificado-wifi', arguments: html);
+  }
 
   Widget _buildLargeActionCard({
     required BuildContext context,
@@ -95,6 +121,29 @@ class WifiMapasScreen extends StatelessWidget {
                     onTap: () {
                       Navigator.of(context).pushNamed('/wifi-cobertura');
                     },
+                  ),
+                  const SizedBox(height: 28),
+                  OutlinedButton.icon(
+                    onPressed: () => _generarDemo(context),
+                    icon: const Icon(Icons.slideshow_outlined, size: 20),
+                    label: const Text('Generar reporte demo'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF00D9FF),
+                      side: const BorderSide(color: Color(0xFF00D9FF)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 14,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Certificado demo con extensor cableado recomendado a 9 m por debilitamiento de señal.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Color(0xFF8FA8C8), fontSize: 12),
                   ),
                 ],
               ),

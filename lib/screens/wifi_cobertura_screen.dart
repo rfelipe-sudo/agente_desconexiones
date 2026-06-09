@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:agente_desconexiones/services/cert_builder.dart';
 import 'package:agente_desconexiones/services/coverage_calculator.dart';
+import 'package:agente_desconexiones/services/coverage_floor_plan.dart';
 import 'package:agente_desconexiones/services/nyquist_service.dart';
 import 'package:agente_desconexiones/services/ont_wifi_service.dart';
 import 'package:agente_desconexiones/services/wifi_neighbor_service.dart';
@@ -972,6 +973,8 @@ class _WifiCoberturaScreenState extends State<WifiCoberturaScreen>
       ontMac: _ontWifi.ontMac,
       tecnicoRut: rut.isEmpty ? null : rut,
       tecnicoNombre: nombre.isEmpty ? null : nombre,
+      recomendacionExtensor:
+          _recomendacionExtensor.isEmpty ? null : _recomendacionExtensor,
     ));
   }
 
@@ -1844,12 +1847,22 @@ class _WifiCoberturaScreenState extends State<WifiCoberturaScreen>
     );
   }
 
+  CoverageFloorPlan get _floorPlan => CoverageFloorPlan(
+        tipoPropiedad: _tipoPropiedad.isNotEmpty ? _tipoPropiedad : 'casa1',
+        tamano: _tamano.isNotEmpty ? _tamano : 'med',
+        construccion: _construccionEfectiva,
+        vecinos5g: _neighbors.where((w) => w.es5GHz).length,
+        devices: _devices,
+        banda: '5 GHz',
+      );
+
   Widget _secHeatmap() {
+    final plan = _floorPlan;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Heatmap radial',
+          'Plano de cobertura',
           style: TextStyle(
             color: Colors.white,
             fontSize: 17,
@@ -1857,11 +1870,38 @@ class _WifiCoberturaScreenState extends State<WifiCoberturaScreen>
           ),
         ),
         const SizedBox(height: 4),
-        const Text(
-          'ONT al centro · radio = distancia inferida del RSSI · ángulo es estable por MAC.',
-          style: TextStyle(color: _kDim, fontSize: 12),
+        Text(
+          plan.subtitulo,
+          style: const TextStyle(color: _kDim, fontSize: 12),
         ),
         const SizedBox(height: 12),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: AspectRatio(
+            aspectRatio: 1.45,
+            child: CustomPaint(
+              painter: _FloorPlanHeatmapPainter(plan: plan),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        _mapaLeyenda(),
+        const SizedBox(height: 16),
+        const Text(
+          'Vista radial (dispositivos ONT)',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Cada punto es un cliente WiFi reportado por la ONT.',
+          style: TextStyle(color: _kDim, fontSize: 11),
+        ),
+        const SizedBox(height: 8),
         ClipRRect(
           borderRadius: BorderRadius.circular(14),
           child: AspectRatio(
@@ -2265,6 +2305,93 @@ class _ChoiceChip extends StatelessWidget {
 }
 
 // ─── Radar painter ─────────────────────────────────────────────────
+
+/// Plano de planta con heatmap simulado (sin recorrido del técnico).
+class _FloorPlanHeatmapPainter extends CustomPainter {
+  _FloorPlanHeatmapPainter({required this.plan});
+  final CoverageFloorPlan plan;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFF04091a),
+    );
+
+    final cellW = size.width / CoverageFloorPlan.gridCols;
+    final cellH = size.height / CoverageFloorPlan.gridRows;
+
+    for (var row = 0; row < CoverageFloorPlan.gridRows; row++) {
+      for (var col = 0; col < CoverageFloorPlan.gridCols; col++) {
+        final nx = (col + 0.5) / CoverageFloorPlan.gridCols;
+        final ny = (row + 0.5) / CoverageFloorPlan.gridRows;
+        if (plan.roomAt(nx, ny) == null) continue;
+        final rssi = plan.rssiGrid[row][col];
+        final color = CoverageFloorPlan.colorForRssi(rssi);
+        canvas.drawRect(
+          Rect.fromLTWH(col * cellW, row * cellH, cellW + 0.5, cellH + 0.5),
+          Paint()..color = color.withValues(alpha: 0.42),
+        );
+      }
+    }
+
+    final wallP = Paint()
+      ..color = const Color(0xFF7DD3FC)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.2;
+    for (final room in plan.rooms) {
+      final r = Rect.fromLTRB(
+        room.rect.left * size.width,
+        room.rect.top * size.height,
+        room.rect.right * size.width,
+        room.rect.bottom * size.height,
+      );
+      canvas.drawRect(r, wallP);
+
+      final tp = TextPainter(
+        text: TextSpan(
+          text: room.label,
+          style: TextStyle(
+            color: room.ontRoom ? const Color(0xFF00D9FF) : const Color(0xAAFFFFFF),
+            fontSize: 10,
+            fontWeight: room.ontRoom ? FontWeight.w800 : FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: r.width - 8);
+      tp.paint(canvas, Offset(r.left + 6, r.top + 6));
+    }
+
+    final ont = Offset(
+      plan.ontCenter.dx * size.width,
+      plan.ontCenter.dy * size.height,
+    );
+    canvas.drawCircle(
+      ont,
+      22,
+      Paint()
+        ..shader = const RadialGradient(
+          colors: [Color(0x6600D9FF), Color(0x0000D9FF)],
+        ).createShader(Rect.fromCircle(center: ont, radius: 22)),
+    );
+    canvas.drawCircle(ont, 9, Paint()..color = const Color(0xFF00D9FF));
+    final ontTp = TextPainter(
+      text: const TextSpan(
+        text: 'ONT',
+        style: TextStyle(
+          color: Color(0xFF00D9FF),
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    ontTp.paint(canvas, Offset(ont.dx - ontTp.width / 2, ont.dy + 14));
+  }
+
+  @override
+  bool shouldRepaint(covariant _FloorPlanHeatmapPainter old) => old.plan != plan;
+}
 
 /// Heatmap radial con data REAL: ONT al centro, devices posicionados por
 /// hash(MAC) (ángulo estable) y RSSI (radio = distancia inferida).

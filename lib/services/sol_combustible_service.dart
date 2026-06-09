@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:agente_desconexiones/services/ford_api_service.dart';
+import 'package:agente_desconexiones/services/supervisor_rutas_service.dart';
 import 'package:agente_desconexiones/widgets/combustible_format.dart';
 
 class SolCombustibleService {
@@ -50,6 +51,46 @@ class SolCombustibleService {
     return row;
   }
 
+  /// Supervisor: solicitud directa al jefe de operaciones (sin paso supervisor).
+  Future<Map<String, dynamic>> crearSolicitudAdicionalSupervisor({
+    required String rutSupervisor,
+    required String nombreSupervisor,
+    required double saldoLitros,
+    required double saldoPesos,
+  }) async {
+    final activa = await _db
+        .from('sol_comb_adicional')
+        .select('id')
+        .eq('rut_solicitante', rutSupervisor)
+        .not('estado', 'in', '("rechazado_supervisor","rechazado_jefe_ops","completada")')
+        .maybeSingle();
+
+    if (activa != null) throw StateError('Ya tienes una solicitud en proceso');
+
+    final precio = await _fetchPrecioLitro();
+    final sugerido = await calcularMontoSugerido(
+      rut: rutSupervisor,
+      precioLitroRef: precio,
+      esSupervisor: true,
+    );
+
+    final row = await _db.from('sol_comb_adicional').insert({
+      'rut_solicitante': rutSupervisor,
+      'nombre_solicitante': nombreSupervisor,
+      'saldo_litros_actual': saldoLitros,
+      'saldo_pesos_actual': saldoPesos.round(),
+      'monto_sugerido': sugerido,
+      'estado': 'pendiente_jefe_ops',
+      'tipo_solicitante': 'supervisor',
+    }).select().single();
+
+    unawaited(_notificarJefeOps(
+      titulo: 'Solicitud de combustible (supervisor)',
+      descripcion: '$nombreSupervisor solicita carga extra',
+    ));
+    return row;
+  }
+
   /// Solicitud activa del técnico (null si no hay ninguna en curso).
   Future<Map<String, dynamic>?> solicitudActivaTecnico(String rut) {
     return _db
@@ -60,6 +101,11 @@ class SolCombustibleService {
         .order('created_at', ascending: false)
         .limit(1)
         .maybeSingle();
+  }
+
+  /// Solicitud activa del supervisor (null si no hay ninguna en curso).
+  Future<Map<String, dynamic>?> solicitudActivaSupervisor(String rut) {
+    return solicitudActivaTecnico(rut);
   }
 
   // ── Supervisor ────────────────────────────────────────────────────────────
@@ -115,7 +161,7 @@ class SolCombustibleService {
     final rows = await _db
         .from('sol_comb_adicional')
         .select()
-        .eq('estado', 'aprobado_supervisor')
+        .inFilter('estado', ['aprobado_supervisor', 'pendiente_jefe_ops'])
         .order('created_at', ascending: true);
     return (rows as List).cast();
   }
@@ -231,6 +277,7 @@ class SolCombustibleService {
   Future<int> calcularMontoSugerido({
     required String rut,
     double? precioLitroRef,
+    bool esSupervisor = false,
   }) async {
     try {
       final precio = precioLitroRef ?? await _fetchPrecioLitro();
@@ -238,7 +285,9 @@ class SolCombustibleService {
       final hoy    = DateTime(ahora.year, ahora.month, ahora.day);
       final lunes  = hoy.subtract(Duration(days: hoy.weekday - 1));
 
-      final rutas = await FordApiService().getRutasDelTecnico(rut);
+      final rutas = esSupervisor
+          ? await SupervisorRutasService().getRutasDelSupervisor(rut)
+          : await FordApiService().getRutasDelTecnico(rut);
 
       // ── Promedio de la semana actual ──
       double totalCosto    = 0;
@@ -345,7 +394,11 @@ class SolCombustibleService {
     } catch (_) {}
   }
 
-  Future<void> _notificarJefeOps() async {
+  Future<void> _notificarJefeOps({
+    String titulo = 'Solicitud de combustible aprobada',
+    String descripcion =
+        'Solicitud aprobada por supervisor — requiere tu revisión',
+  }) async {
     try {
       final row = await _db
           .from('roles_flota')
@@ -356,10 +409,10 @@ class SolCombustibleService {
       final token = row?['fcm_token'] as String?;
       if (token != null && token.isNotEmpty) {
         await _sendFcm(
-          token:       token,
-          accion:      'sol_comb_jefe_ops',
-          titulo:      'Solicitud de combustible aprobada',
-          descripcion: 'Solicitud aprobada por supervisor — requiere tu revisión',
+          token: token,
+          accion: 'sol_comb_jefe_ops',
+          titulo: titulo,
+          descripcion: descripcion,
         );
       }
     } catch (_) {}
@@ -391,12 +444,7 @@ class SolCombustibleService {
     required String paso,
   }) async {
     try {
-      final tokenRow = await _db
-          .from('nomina_tecnicos')
-          .select('fcm_token')
-          .eq('rut', rut)
-          .maybeSingle();
-      final token = tokenRow?['fcm_token'] as String?;
+      final token = await _fcmTokenSolicitante(rut);
       if (token != null && token.isNotEmpty) {
         await _sendFcm(
           token:       token,
@@ -408,17 +456,28 @@ class SolCombustibleService {
     } catch (_) {}
   }
 
+  Future<String?> _fcmTokenSolicitante(String rut) async {
+    final sup = await _db
+        .from('supervisores_crea')
+        .select('fcm_token')
+        .eq('rut', rut)
+        .maybeSingle();
+    final tSup = sup?['fcm_token'] as String?;
+    if (tSup != null && tSup.isNotEmpty) return tSup;
+    final tec = await _db
+        .from('nomina_tecnicos')
+        .select('fcm_token')
+        .eq('rut', rut)
+        .maybeSingle();
+    return tec?['fcm_token'] as String?;
+  }
+
   Future<void> _notificarTecnicoCompletado({
     required String rut,
     required int monto,
   }) async {
     try {
-      final tokenRow = await _db
-          .from('nomina_tecnicos')
-          .select('fcm_token')
-          .eq('rut', rut)
-          .maybeSingle();
-      final token = tokenRow?['fcm_token'] as String?;
+      final token = await _fcmTokenSolicitante(rut);
       if (token != null && token.isNotEmpty) {
         await _sendFcm(
           token:       token,
@@ -441,7 +500,13 @@ class SolCombustibleService {
         'token':       token,
         'accion':      accion,
         'tipo':        titulo,
+        'title':       titulo,
+        'body':        descripcion,
         'descripcion': descripcion,
+        'data_only':          true,
+        'skip_notification':  true,
+        'android_channel_id': 'mat_alertas_7',
+        'android_priority':   'high',
       });
     } catch (_) {}
   }

@@ -1,3 +1,5 @@
+import 'package:agente_desconexiones/utils/fecha_chile.dart';
+
 class TraspassoBodega {
   final String id;
   final DateTime createdAt;
@@ -78,7 +80,7 @@ class TraspassoBodega {
 
   factory TraspassoBodega.fromMap(Map<String, dynamic> m) => TraspassoBodega(
         id:                   m['id'] as String,
-        createdAt:            DateTime.parse(m['created_at'] as String),
+        createdAt:            FechaChile.parse(m['created_at'] as String),
         solicitudMaterialId:  m['solicitud_material_id'] as String?,
         rutTecnicoB:          m['rut_tecnico_b'] as String,
         nombreTecnicoB:       m['nombre_tecnico_b'] as String,
@@ -92,13 +94,13 @@ class TraspassoBodega {
         aprobadoPor:          m['aprobado_por'] as String?,
         nombreAprobador:      m['nombre_aprobador'] as String?,
         aprobadoEn:           m['aprobado_en'] != null
-            ? DateTime.parse(m['aprobado_en'] as String)
+            ? FechaChile.parse(m['aprobado_en'] as String)
             : null,
         folioKepler:          m['folio_kepler'] as String?,
         pdfKeplerOk:          m['pdf_kepler_ok']      as bool? ?? false,
         sapOk:                m['sap_ok']             as bool? ?? false,
         sapConfirmadoEn:      m['sap_confirmado_en'] != null
-            ? DateTime.parse(m['sap_confirmado_en'] as String)
+            ? FechaChile.parse(m['sap_confirmado_en'] as String)
             : null,
       );
 }

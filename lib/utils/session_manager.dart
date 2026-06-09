@@ -1,6 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:agente_desconexiones/services/logistica_service.dart';
 import 'package:agente_desconexiones/utils/device_helper.dart';
 import 'package:agente_desconexiones/utils/rut_helper.dart';
 
@@ -94,7 +95,118 @@ class SessionManager {
 
   static Future<String> getRutTecnico() async {
     final p = await _prefs();
-    return p.getString('rut_tecnico') ?? '';
+    return p.getString('rut_tecnico') ??
+        p.getString('user_rut') ??
+        '';
+  }
+
+  /// RUT + nombre del técnico logueado (misma fuente que el home).
+  /// Evita mostrar otro nombre en saldo / solicitudes de material.
+  static Future<({String rut, String nombre})> identidadSesionMaterial() async {
+    await asegurarNombreCoherenteConRutActual();
+    final p = await _prefs();
+    final rutRaw = p.getString('rut_tecnico') ?? p.getString('user_rut') ?? '';
+    final rut = rutRaw.isEmpty ? '' : LogisticaService.canonicalRut(rutRaw);
+    var nombre =
+        (p.getString('nombre_tecnico') ?? p.getString('user_nombre') ?? '')
+            .trim()
+            .replaceAll(RegExp(r'\s+'), ' ');
+
+    if (rut.isNotEmpty) {
+      try {
+        final desdeNomina = await LogisticaService().nombreDesdeNomina(rut);
+        if (desdeNomina.isNotEmpty) {
+          if (desdeNomina != nombre) {
+            print(
+                '🔁 [Sesión] Nombre prefs "$nombre" → nómina "$desdeNomina" ($rut)');
+          }
+          nombre = desdeNomina;
+          await p.setString('nombre_tecnico', nombre);
+          await p.setString('user_nombre', nombre);
+          await marcarNombreGuardadoParaRut(rut);
+        }
+      } catch (e) {
+        print('⚠️ [Sesión] identidadSesionMaterial sin nómina para $rut: $e');
+      }
+    }
+
+    return (rut: rut, nombre: nombre);
+  }
+
+  /// RUT + nombre del bodeguero logueado (dispositivo → nómina bodega).
+  /// Evita que quede el RUT/nombre de otro usuario al cambiar de cuenta en el mismo teléfono.
+  static Future<({String rut, String nombre})> identidadBodeguero() async {
+    await asegurarNombreCoherenteConRutActual();
+    final p = await _prefs();
+
+    var rut = '';
+    var nombre = '';
+
+    try {
+      final imei = await obtenerIdDispositivo();
+      final row = await Supabase.instance.client
+          .from('dispositivos_autorizados')
+          .select('rut_tecnico, nombre_tecnico')
+          .eq('imei', imei)
+          .maybeSingle();
+
+      if (row != null) {
+        final rutDb = row['rut_tecnico']?.toString().trim() ?? '';
+        final nomDb = row['nombre_tecnico']?.toString().trim() ?? '';
+        if (rutDb.isNotEmpty) {
+          rut = LogisticaService.canonicalRut(rutDb);
+          if (nomDb.isNotEmpty) nombre = nomDb;
+
+          final prefsRut = LogisticaService.canonicalRut(
+            p.getString('rut_tecnico') ?? p.getString('user_rut') ?? '',
+          );
+          if (prefsRut.isNotEmpty && prefsRut != rut) {
+            print(
+              '🔁 [Sesión Bodega] prefs RUT $prefsRut → dispositivo $rut',
+            );
+          }
+          await p.setString('rut_tecnico', rut);
+          await p.setString('user_rut', rut);
+          if (nombre.isNotEmpty) {
+            await p.setString('nombre_tecnico', nombre);
+            await p.setString('user_nombre', nombre);
+          }
+          await marcarNombreGuardadoParaRut(rut);
+        }
+      }
+    } catch (e) {
+      print('⚠️ [Sesión Bodega] dispositivos_autorizados: $e');
+    }
+
+    if (rut.isEmpty) {
+      final rutRaw = p.getString('rut_tecnico') ?? p.getString('user_rut') ?? '';
+      rut = rutRaw.isEmpty ? '' : LogisticaService.canonicalRut(rutRaw);
+      nombre =
+          (p.getString('nombre_tecnico') ?? p.getString('user_nombre') ?? '')
+              .trim()
+              .replaceAll(RegExp(r'\s+'), ' ');
+    }
+
+    if (rut.isNotEmpty) {
+      try {
+        final desdeNomina = await LogisticaService().nombreDesdeNomina(rut);
+        if (desdeNomina.isNotEmpty) {
+          if (desdeNomina != nombre) {
+            print(
+              '🔁 [Sesión Bodega] nombre "$nombre" → nómina "$desdeNomina" ($rut)',
+            );
+          }
+          nombre = desdeNomina;
+          await p.setString('nombre_tecnico', nombre);
+          await p.setString('user_nombre', nombre);
+          await marcarNombreGuardadoParaRut(rut);
+        }
+      } catch (e) {
+        print('⚠️ [Sesión Bodega] sin nómina para $rut: $e');
+      }
+    }
+
+    return (rut: rut, nombre: nombre);
   }
 
   static Future<String> getTipoPersonal() async {

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:agente_desconexiones/services/creavox_api_service.dart';
 import 'package:agente_desconexiones/services/creavox_session_service.dart';
+import 'package:agente_desconexiones/services/logistica_service.dart';
+import 'package:agente_desconexiones/utils/session_manager.dart';
 import 'ast_workflow_screen.dart';
 
 const _bg      = Color(0xFF0A1628);
@@ -36,12 +38,24 @@ class _AstLoginScreenState extends State<AstLoginScreen> {
   Future<void> _verificarSesionYAutoLogin() async {
     await _session.inicializar();
 
-    // Si ya tiene sesión creavox activa, ir directo al workflow
-    if (_session.isLoggedIn() && mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const AstWorkflowScreen()),
-      );
-      return;
+    // Sesión Creavox solo si coincide con el RUT activo de la app
+    if (_session.isLoggedIn()) {
+      final prefs = await SharedPreferences.getInstance();
+      final rutApp = prefs.getString('rut_tecnico') ??
+          prefs.getString('user_rut') ??
+          '';
+      final tecnico = _session.getTecnico();
+      if (tecnico != null &&
+          rutApp.isNotEmpty &&
+          LogisticaService.sameRut(tecnico.rutTecnico, rutApp)) {
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const AstWorkflowScreen()),
+          );
+        }
+        return;
+      }
+      await _session.cerrarSesion();
     }
 
     // Obtener RUT registrado en la app → auto-login sin contraseña
@@ -63,10 +77,16 @@ class _AstLoginScreenState extends State<AstLoginScreen> {
     setState(() { _loading = true; _error = null; });
 
     try {
-      final tecnico = await _api.loginTecnico(rut);
+      var tecnico = await _api.loginTecnico(rut);
       if (tecnico == null) {
         if (mounted) setState(() => _error = 'RUT no encontrado o sin acceso');
         return;
+      }
+
+      final id = await SessionManager.identidadSesionMaterial();
+      if (id.nombre.isNotEmpty &&
+          LogisticaService.sameRut(tecnico.rutTecnico, id.rut)) {
+        tecnico = tecnico.copyWith(nombreTecnico: id.nombre);
       }
 
       await _session.iniciarSesion(tecnico);

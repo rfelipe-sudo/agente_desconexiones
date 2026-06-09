@@ -48,5 +48,11 @@ app.*.map.json
 # APKs en assets (binarios grandes, no versionar)
 assets/apk/
 
+# Distribución local de releases (binarios grandes)
+dist/
+
+# Temporales de Supabase CLI
+supabase/.temp/
+
 # Kotlin compiler session cache (per-build artifact, never commit)
 **/.kotlin/

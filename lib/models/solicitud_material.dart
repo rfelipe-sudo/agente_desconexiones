@@ -25,7 +25,8 @@ const kMateriales = [
   MaterialItem(nombre: 'Conector RJ45',      esSeriado: false),
   MaterialItem(nombre: 'Micro USB',          esSeriado: false),
   // ── Seriados ─────────────────────────────────────────────────
-  MaterialItem(nombre: 'Decodificador',      esSeriado: true),
+  MaterialItem(nombre: 'Decodificador Claro', esSeriado: true),
+  MaterialItem(nombre: 'Decodificador VTR',  esSeriado: true),
   MaterialItem(nombre: 'ONT ZTE',            esSeriado: true),
   MaterialItem(nombre: 'ONT Huawei',         esSeriado: true),
   MaterialItem(nombre: 'Extensor',           esSeriado: true),
@@ -49,8 +50,12 @@ class SolicitudMaterial {
   final double? lngEntregador;
   final String? guiaId;
   final String? modalidad; // 'yo_te_lo_llevo' | 'ven_por_el'
+  final double? latPartida;
+  final double? lngPartida;
+  final DateTime? partidaAt;
   final int?    idMaterial;   // ID interno Kepler — se guarda al aceptar
   final String? folioKepler;  // Folio devuelto por Kepler al confirmar PIN
+  final String? pinCodigo;
   final List<Map<String, dynamic>> materialesAdicionales;
 
   const SolicitudMaterial({
@@ -71,8 +76,12 @@ class SolicitudMaterial {
     this.lngEntregador,
     this.guiaId,
     this.modalidad,
+    this.latPartida,
+    this.lngPartida,
+    this.partidaAt,
     this.idMaterial,
     this.folioKepler,
+    this.pinCodigo,
     this.materialesAdicionales = const [],
   });
 
@@ -98,8 +107,14 @@ class SolicitudMaterial {
         lngEntregador:    (m['lng_entregador'] as num?)?.toDouble(),
         guiaId:           m['guia_id'] as String?,
         modalidad:        m['modalidad'] as String?,
+        latPartida:       (m['lat_partida'] as num?)?.toDouble(),
+        lngPartida:       (m['lng_partida'] as num?)?.toDouble(),
+        partidaAt:        m['partida_at'] != null
+            ? DateTime.tryParse(m['partida_at'] as String)
+            : null,
         idMaterial:       m['id_material'] as int?,
         folioKepler:      m['folio_kepler'] as String?,
+        pinCodigo:        m['pin_codigo'] as String?,
         materialesAdicionales: (m['materiales_adicionales'] as List?)
             ?.map((e) => Map<String, dynamic>.from(e as Map))
             .toList() ?? [],
@@ -113,8 +128,12 @@ class SolicitudMaterial {
     double?       lngEntregador,
     String?       guiaId,
     String?       modalidad,
+    double?       latPartida,
+    double?       lngPartida,
+    DateTime?     partidaAt,
     int?          idMaterial,
     String?       folioKepler,
+    String?       pinCodigo,
     List<String>? series,
   }) =>
       SolicitudMaterial(
@@ -135,7 +154,11 @@ class SolicitudMaterial {
         lngEntregador: lngEntregador ?? this.lngEntregador,
         guiaId: guiaId ?? this.guiaId,
         modalidad: modalidad ?? this.modalidad,
+        latPartida: latPartida ?? this.latPartida,
+        lngPartida: lngPartida ?? this.lngPartida,
+        partidaAt: partidaAt ?? this.partidaAt,
         idMaterial: idMaterial ?? this.idMaterial,
         folioKepler: folioKepler ?? this.folioKepler,
+        pinCodigo: pinCodigo ?? this.pinCodigo,
       );
 }

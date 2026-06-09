@@ -5,12 +5,14 @@
 //   1. Tabla equipos_reversa en Supabase
 //   2. Sistema KRP (POST /inventario/api/reversa)
 //
-// Solo sincroniza equipos cuya fecha_trabajo >= primer día del mes.
+// Solo sincroniza equipos del mes en curso (fecha_trabajo dentro del rango).
+// Para un mes fijo: ejecutar sincronizarEquiposReversaMes(2026, 6) → solo junio.
 //
 // SETUP:
 //   1. Completa KRP_BASE_URL cuando el equipo KRP entregue el host.
 //   2. Completa MATERIAL_MAP cuando KRP cree los id_material por tipo de equipo.
 //   3. Ejecuta crearTrigger() UNA SOLA VEZ para agendar las 7 AM diarias.
+//   4. Ejecuta actualizarNombresReversa() UNA VEZ si ya había registros con nombres malos.
 // ============================================================
 
 var SUPABASE_URL    = 'https://efvicvqffvxocnrqjxrs.supabase.co';
@@ -35,11 +37,24 @@ var MATERIAL_MAP = {
 };
 
 // ── Función principal ────────────────────────────────────────
+
+// Trigger diario: solo el mes en curso (ej. en junio → solo junio 2026).
 function sincronizarEquiposReversa() {
   var hoy = new Date();
-  var primerDiaMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-  var fechaMinStr = Utilities.formatDate(primerDiaMes, TZ, 'yyyy-MM-dd');
-  Logger.log('Sincronizando equipos con fecha_trabajo >= ' + fechaMinStr);
+  sincronizarEquiposReversaMes(hoy.getFullYear(), hoy.getMonth() + 1);
+}
+
+// Sincronizar un mes específico. Ej: sincronizarEquiposReversaMes(2026, 6) → solo junio.
+function sincronizarEquiposReversaMes(anno, mes) {
+  var fechaMinStr = anno + '-' + pad2(mes) + '-01';
+  var ultimoDia   = new Date(anno, mes, 0).getDate();
+  var fechaMaxStr = anno + '-' + pad2(mes) + '-' + pad2(ultimoDia);
+  sincronizarEquiposReversaRango(fechaMinStr, fechaMaxStr);
+}
+
+function sincronizarEquiposReversaRango(fechaMinStr, fechaMaxStr) {
+  Logger.log('Sincronizando equipos con fecha_trabajo entre '
+    + fechaMinStr + ' y ' + fechaMaxStr);
 
   // 1. Fetch Kepler
   var keplerResp = UrlFetchApp.fetch(KEPLER_ENDPOINT, { muteHttpExceptions: true });
@@ -59,9 +74,8 @@ function sincronizarEquiposReversa() {
   Logger.log('Equipos CREA encontrados en Kepler: ' + items.length);
   if (items.length === 0) return;
 
-  // 3. Colectar IDs únicos para consultas batch
+  // 3. Colectar OTs únicas para consultas batch de fechas
   var actividades = unique(items.map(function(r) { return r.ID_ACTIVIDAD; }));
-  var ruts        = unique(items.map(function(r) { return r.RUT_TECNICO_FS; }).filter(Boolean));
 
   // 4. Fechas desde produccion_creaciones en chunks de 50
   var fechaMap = {};
@@ -78,35 +92,29 @@ function sincronizarEquiposReversa() {
     Logger.log('Fechas encontradas en produccion_creaciones: ' + Object.keys(fechaMap).length);
   }
 
-  // 5. Nombres desde plantel_tecnicos en chunks de 50
-  var nombreMap = {};
-  if (ruts.length > 0) {
-    chunkArray(ruts, 50).forEach(function(chunk) {
-      var url = SUPABASE_URL
-        + '/rest/v1/plantel_tecnicos'
-        + '?select=rut,nombre_completo'
-        + '&rut=in.(' + chunk.join(',') + ')';
-      supabaseGet(url).forEach(function(r) {
-        nombreMap[r.rut] = r.nombre_completo || '';
-      });
-    });
-    Logger.log('Técnicos encontrados en plantel_tecnicos: ' + Object.keys(nombreMap).length);
-  }
+  // 5. Nombres desde produccion_creaciones (técnicos operativos CREABOX)
+  var rutsKepler = unique(items.map(function(r) { return r.RUT_TECNICO_FS; }).filter(Boolean));
+  var nombreMap  = cargarMapaNombresProduccion(fechaMinStr, rutsKepler);
+  Logger.log('Técnicos con producción cargados: ' + contarRutsEnMapa(nombreMap) + ' personas');
 
-  // 6. Construir registros filtrando por fecha mínima
+  // 6. Construir registros filtrando por rango de fechas del mes
   var registros = [];
-  var sinFecha = 0, anteriorAlMes = 0;
+  var sinFecha = 0, fueraDeRango = 0;
 
   items.forEach(function(r) {
     var fechaDesinstalacion = parseFecha(fechaMap[r.ID_ACTIVIDAD] || null);
-    if (!fechaDesinstalacion)          { sinFecha++;       return; }
-    if (fechaDesinstalacion < fechaMinStr) { anteriorAlMes++;  return; }
+    if (!fechaDesinstalacion) { sinFecha++; return; }
+    if (fechaDesinstalacion < fechaMinStr || fechaDesinstalacion > fechaMaxStr) {
+      fueraDeRango++;
+      return;
+    }
 
+    var rutCanon = canonicalRut(r.RUT_TECNICO_FS || '');
     registros.push({
       serial:               r.SERIAL_NO,
       ot:                   r.ID_ACTIVIDAD,
-      tecnico_rut:          r.RUT_TECNICO_FS || '',
-      tecnico_nombre:       nombreMap[r.RUT_TECNICO_FS] || r.RUT_TECNICO_FS || '',
+      tecnico_rut:          rutCanon,
+      tecnico_nombre:       resolverNombre(r.RUT_TECNICO_FS, nombreMap) || rutCanon,
       tipo_equipo:          r.MOD_EQUIPO || r.TIPO_CPE || '',
       descripcion:          r.ACTIVIDAD || '',
       fecha_desinstalacion: fechaDesinstalacion,
@@ -115,7 +123,7 @@ function sincronizarEquiposReversa() {
   });
 
   Logger.log('Filtro fechas — sin fecha: ' + sinFecha
-    + ', anteriores al mes: ' + anteriorAlMes
+    + ', fuera de rango: ' + fueraDeRango
     + ', a sincronizar: ' + registros.length);
 
   if (registros.length === 0) {
@@ -130,9 +138,119 @@ function sincronizarEquiposReversa() {
   enviarKrp(registros);
 }
 
+// ── Corrección one-shot de nombres ya insertados ─────────────
+// Ejecutar UNA VEZ después de corregir la fuente de nómina.
+// Por defecto solo el mes en curso; usar actualizarNombresReversaTodos() para todo el histórico.
+
+function actualizarNombresReversaTodos() {
+  actualizarNombresReversa(null);
+}
+
+function actualizarNombresReversa(fechaMin) {
+  if (fechaMin === undefined) {
+    var hoy = new Date();
+    var primerDiaMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+    fechaMin = Utilities.formatDate(primerDiaMes, TZ, 'yyyy-MM-dd');
+  }
+
+  Logger.log('[Nombres] Iniciando corrección'
+    + (fechaMin ? ' desde ' + fechaMin : ' (todo el histórico)'));
+
+  var filtro = fechaMin ? 'fecha_desinstalacion=gte.' + fechaMin : '';
+  var filas = supabaseGetAll(
+    'equipos_reversa',
+    'serial,ot,tecnico_rut,tecnico_nombre,fecha_desinstalacion',
+    filtro
+  );
+
+  Logger.log('[Nombres] Registros a revisar: ' + filas.length);
+
+  var rutsEnReversa = unique(filas.map(function(r) { return r.tecnico_rut; }).filter(Boolean));
+  var nombreMap = cargarMapaNombresProduccion(fechaMin, rutsEnReversa);
+  Logger.log('[Nombres] Técnicos con producción: ' + contarRutsEnMapa(nombreMap) + ' personas');
+
+  var actualizaciones = [];
+  var yaOk = 0, sinNombre = 0;
+
+  filas.forEach(function(row) {
+    var rutCanon   = canonicalRut(row.tecnico_rut || '');
+    var nombreNuevo = resolverNombre(row.tecnico_rut, nombreMap);
+
+    if (!nombreNuevo) {
+      sinNombre++;
+      return;
+    }
+
+    var nombreActual = (row.tecnico_nombre || '').trim();
+    var rutActual    = canonicalRut(row.tecnico_rut || '');
+
+    if (nombreActual === nombreNuevo && rutActual === rutCanon) {
+      yaOk++;
+      return;
+    }
+
+    actualizaciones.push({
+      serial:         row.serial,
+      ot:             row.ot,
+      tecnico_rut:    rutCanon,
+      tecnico_nombre: nombreNuevo
+    });
+  });
+
+  Logger.log('[Nombres] Ya correctos: ' + yaOk
+    + ' | Sin nombre en nómina: ' + sinNombre
+    + ' | A actualizar: ' + actualizaciones.length);
+
+  if (actualizaciones.length === 0) {
+    Logger.log('[Nombres] Nada que corregir');
+    return;
+  }
+
+  var actualizados = 0, errores = 0;
+  actualizaciones.forEach(function(reg) {
+    if (patchNombreReversa(reg)) actualizados++;
+    else errores++;
+  });
+
+  Logger.log('[Nombres] Resultado — actualizados: ' + actualizados + ', errores: ' + errores);
+}
+
+function patchNombreReversa(reg) {
+  var url = SUPABASE_URL
+    + '/rest/v1/equipos_reversa'
+    + '?serial=eq.' + encodeURIComponent(reg.serial)
+    + '&ot=eq.' + encodeURIComponent(reg.ot);
+
+  var resp = UrlFetchApp.fetch(url, {
+    method:  'PATCH',
+    headers: {
+      'Content-Type':  'application/json',
+      'apikey':        SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Prefer':        'return=minimal'
+    },
+    payload: JSON.stringify({
+      tecnico_rut:    reg.tecnico_rut,
+      tecnico_nombre: reg.tecnico_nombre
+    }),
+    muteHttpExceptions: true
+  });
+
+  var code = resp.getResponseCode();
+  if (code >= 200 && code < 300) return true;
+
+  Logger.log('[Nombres] PATCH falló serial=' + reg.serial
+    + ' ot=' + reg.ot + ' (' + code + '): ' + resp.getContentText());
+  return false;
+}
+
 // ── Destino 1: Supabase ──────────────────────────────────────
 
 function enviarSupabase(registros) {
+  return upsertEquiposReversa(registros, 'ignore-duplicates', '[Supabase]');
+}
+
+function upsertEquiposReversa(registros, resolution, logPrefix) {
   var upsertUrl = SUPABASE_URL + '/rest/v1/equipos_reversa?on_conflict=serial,ot';
   var resp = UrlFetchApp.fetch(upsertUrl, {
     method:  'POST',
@@ -140,7 +258,7 @@ function enviarSupabase(registros) {
       'Content-Type':  'application/json',
       'apikey':        SUPABASE_KEY,
       'Authorization': 'Bearer ' + SUPABASE_KEY,
-      'Prefer':        'resolution=ignore-duplicates,return=minimal'
+      'Prefer':        'resolution=' + resolution + ',return=minimal'
     },
     payload:            JSON.stringify(registros),
     muteHttpExceptions: true
@@ -148,10 +266,11 @@ function enviarSupabase(registros) {
 
   var code = resp.getResponseCode();
   if (code >= 200 && code < 300) {
-    Logger.log('[Supabase] OK — ' + registros.length + ' equipos procesados');
-  } else {
-    Logger.log('[Supabase] Error (' + code + '): ' + resp.getContentText());
+    Logger.log(logPrefix + ' OK — ' + registros.length + ' equipos procesados');
+    return true;
   }
+  Logger.log(logPrefix + ' Error (' + code + '): ' + resp.getContentText());
+  return false;
 }
 
 // ── Destino 2: KRP ───────────────────────────────────────────
@@ -206,7 +325,140 @@ function enviarKrp(registros) {
     + ', errores: ' + errores);
 }
 
+// ── Técnicos operativos CREABOX (produccion_creaciones) ──────
+// Misma lógica que paneles AST / producción: rut_tecnico + campo tecnico.
+
+function cargarMapaNombresProduccion(fechaMinStr, rutsExtra) {
+  var mapa = {};
+  var filtro = fechaMinStr ? filtroProduccionMes(fechaMinStr) : '';
+
+  supabaseGetAll('produccion_creaciones', 'rut_tecnico,tecnico,fecha_trabajo', filtro)
+    .forEach(function(r) {
+      if (!r.rut_tecnico) return;
+      if (fechaMinStr && parseFecha(r.fecha_trabajo) && parseFecha(r.fecha_trabajo) < fechaMinStr) return;
+      var nombre = (r.tecnico || '').trim().replace(/\s+/g, ' ');
+      if (nombre) registrarNombreEnMapa(mapa, r.rut_tecnico, nombre);
+    });
+
+  // Fallback puntual: RUTs de Kepler/reversa que no aparecieron en el mes filtrado
+  completarNombresDesdeNomina(mapa, rutsExtra || []);
+
+  Logger.log('Mapa nombres listo: ' + contarRutsEnMapa(mapa) + ' RUTs');
+  return mapa;
+}
+
+function filtroProduccionMes(fechaMinStr) {
+  var p = fechaMinStr.split('-');
+  var mes  = p[1];
+  var anno = p[0].length >= 4 ? p[0].substring(2) : p[0];
+  return 'fecha_trabajo=ilike.*/' + mes + '/' + anno;
+}
+
+function completarNombresDesdeNomina(mapa, ruts) {
+  var faltantes = unique((ruts || []).filter(function(r) {
+    return r && !resolverNombre(r, mapa);
+  }));
+  if (!faltantes.length) return;
+
+  chunkArray(faltantes, 50).forEach(function(chunk) {
+    var inList = chunk.map(function(r) { return canonicalRut(r); }).join(',');
+    var url = SUPABASE_URL
+      + '/rest/v1/nomina_tecnicos'
+      + '?select=rut,nombres,paterno,materno'
+      + '&rut=in.(' + inList + ')';
+    supabaseGet(url).forEach(function(r) {
+      var nombre = nombreDesdeNomina(r);
+      if (nombre) registrarNombreEnMapa(mapa, r.rut, nombre);
+    });
+  });
+
+  Logger.log('Fallback nomina_tecnicos — RUTs consultados: ' + faltantes.length);
+}
+
+function nombreDesdeNomina(row) {
+  return [row.nombres, row.paterno, row.materno]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function registrarNombreEnMapa(mapa, rut, nombre) {
+  if (!rut || !nombre) return;
+  var canon = canonicalRut(rut);
+  var key   = normalizeRutKey(rut);
+  mapa[canon]       = nombre;
+  mapa[key]         = nombre;
+  mapa[rut.trim()]  = nombre;
+}
+
+function resolverNombre(rut, mapa) {
+  if (!rut) return '';
+  return mapa[canonicalRut(rut)]
+    || mapa[normalizeRutKey(rut)]
+    || mapa[rut.trim()]
+    || '';
+}
+
+function contarRutsEnMapa(mapa) {
+  var ruts = {};
+  Object.keys(mapa).forEach(function(k) {
+    var canon = canonicalRut(k);
+    if (canon.length >= 3) ruts[canon] = true;
+  });
+  return Object.keys(ruts).length;
+}
+
+function normalizeRutKey(rut) {
+  return String(rut).replace(/[.\-\s]/g, '').toUpperCase();
+}
+
+function canonicalRut(rut) {
+  var k = normalizeRutKey(rut);
+  if (k.length < 2) return String(rut).trim();
+  return k.substring(0, k.length - 1) + '-' + k.substring(k.length - 1);
+}
+
 // ── Helpers ──────────────────────────────────────────────────
+
+function supabaseGetAll(table, select, filterOrPageSize, pageSize) {
+  var filter = '';
+  if (typeof filterOrPageSize === 'string') {
+    filter = filterOrPageSize;
+    pageSize = pageSize || 1000;
+  } else {
+    pageSize = filterOrPageSize || 1000;
+  }
+
+  var all = [];
+  var from = 0;
+
+  while (true) {
+    var url = SUPABASE_URL + '/rest/v1/' + table + '?select=' + encodeURIComponent(select);
+    if (filter) url += '&' + filter;
+    var resp = UrlFetchApp.fetch(url, {
+      headers: {
+        'apikey':        SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Range':         from + '-' + (from + pageSize - 1)
+      },
+      muteHttpExceptions: true
+    });
+
+    if (resp.getResponseCode() !== 200 && resp.getResponseCode() !== 206) {
+      Logger.log('Supabase GET ALL error ' + table + ' (' + resp.getResponseCode() + '): ' + resp.getContentText());
+      break;
+    }
+
+    var rows = JSON.parse(resp.getContentText());
+    if (!rows.length) break;
+    all = all.concat(rows);
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return all;
+}
 
 function supabaseGet(url) {
   var resp = UrlFetchApp.fetch(url, {
@@ -232,6 +484,10 @@ function parseFecha(valor) {
   var m4 = valor.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
   if (m4) return m4[3] + '-' + m4[2] + '-' + m4[1];
   return null;
+}
+
+function pad2(n) {
+  return (n < 10 ? '0' : '') + n;
 }
 
 function unique(arr) {

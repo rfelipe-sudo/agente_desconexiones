@@ -8,6 +8,7 @@ import 'package:agente_desconexiones/screens/bodega/bodega_auditorias_screen.dar
 import 'package:agente_desconexiones/screens/bodega/bodega_stock_screen.dart';
 import 'package:agente_desconexiones/screens/bodega/bodega_traspasos_screen.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart';
+import 'package:agente_desconexiones/utils/session_manager.dart';
 
 class BodegaScreen extends StatefulWidget {
   const BodegaScreen({super.key});
@@ -41,6 +42,8 @@ class _BodegaScreenState extends State<BodegaScreen> {
     _cargarDatos();
     _suscribirPendientes();
     _suscribirAlertasStock();
+    unawaited(FcmService.instance.registrarTokenBodeguero());
+    unawaited(FcmService.instance.initBodegaTraspasoMonitor());
   }
 
   @override
@@ -51,18 +54,11 @@ class _BodegaScreenState extends State<BodegaScreen> {
   }
 
   Future<void> _cargarDatos() async {
-    final prefs = await SharedPreferences.getInstance();
-    final rut   = prefs.getString('rut_tecnico') ??
-                  prefs.getString('user_rut') ?? '';
-    final row   = await _db
-        .from('nomina_bodega')
-        .select('nombre')
-        .eq('rut', rut)
-        .maybeSingle();
+    final id = await SessionManager.identidadBodeguero();
     if (mounted) {
       setState(() {
-        _rut    = rut;
-        _nombre = row?['nombre'] as String? ?? rut;
+        _rut    = id.rut;
+        _nombre = id.nombre.isNotEmpty ? id.nombre : id.rut;
       });
     }
   }

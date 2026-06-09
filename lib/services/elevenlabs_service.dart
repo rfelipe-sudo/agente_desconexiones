@@ -102,6 +102,7 @@ class ElevenLabsService extends ChangeNotifier {
   final List<Uint8List> _audioBuffer = [];
   bool _isPlayingResponse = false;
   bool _isBuffering = false;
+  bool _restartingMic = false;
   Timer? _bufferTimer;
   static const int _minBufferSize = 3; // Mínimo de chunks antes de reproducir
 
@@ -231,10 +232,12 @@ class ElevenLabsService extends ChangeNotifier {
         break;
         
       case 'user_transcript':
-        final transcript = data['user_transcript'] as String?;
+        final transcriptEvent =
+            data['user_transcription_event'] as Map<String, dynamic>?;
+        final transcript = transcriptEvent?['user_transcript'] as String? ??
+            data['user_transcript'] as String?;
         if (transcript != null && transcript.isNotEmpty) {
           print('🎤 Usuario: $transcript');
-          // Verificar si ya se agregó este transcript para evitar duplicados
           if (_lastUserTranscript != transcript) {
             _lastUserTranscript = transcript;
             _transcriptController.add(transcript);
@@ -283,10 +286,32 @@ class ElevenLabsService extends ChangeNotifier {
         }
         break;
         
+      case 'agent_response_complete':
+        print('✅ Agente terminó su turno (agent_response_complete)');
+        _lastAgentResponse = '';
+        if (!_textModeOnly && !_isPlayingResponse && _audioBuffer.isEmpty) {
+          unawaited(_restartMicrophone());
+        }
+        break;
+
+      case 'agent_response_correction':
+        final corr = data['agent_response_correction_event']
+            as Map<String, dynamic>?;
+        final corrected =
+            corr?['corrected_agent_response'] as String?;
+        if (corrected != null && corrected.isNotEmpty) {
+          _lastAgentResponse = corrected;
+          _responseController.add(corrected);
+        }
+        break;
+
       case 'interruption':
         print('⚡ Interrupción detectada');
-        _stopPlayback();
-        _setState(ElevenLabsState.listening);
+        unawaited(() async {
+          await _stopPlayback();
+          _setState(ElevenLabsState.listening);
+          if (!_textModeOnly) await _restartMicrophone();
+        }());
         break;
         
       case 'ping':
@@ -436,11 +461,37 @@ class ElevenLabsService extends ChangeNotifier {
     } finally {
       _isPlayingResponse = false;
       _isBuffering = false;
-      _lastAgentResponse = ''; // Evitar que bloquee la próxima respuesta del agente
+      _lastAgentResponse = '';
       _setState(ElevenLabsState.listening);
+      if (!_textModeOnly) {
+        await _restartMicrophone();
+      }
+    }
+  }
 
-      // Reiniciar la grabación después de reproducir
-      await _resumeRecording();
+  /// Reinicia el micrófono tras la respuesta del agente (Android pierde el
+  /// stream si solo se reanuda la suscripción anterior).
+  Future<void> _restartMicrophone() async {
+    if (_restartingMic ||
+        _textModeOnly ||
+        _state == ElevenLabsState.disconnected ||
+        _state == ElevenLabsState.error ||
+        _channel == null) {
+      return;
+    }
+    _restartingMic = true;
+    print('🔄 Reiniciando micrófono para siguiente turno...');
+    try {
+      await stopListening();
+      await _player.stop();
+      await Future.delayed(const Duration(milliseconds: 200));
+      await startListening();
+      print('✅ Micrófono listo para el siguiente mensaje');
+    } catch (e) {
+      print('❌ Error reiniciando micrófono: $e');
+      _setError('Error al reactivar micrófono: $e');
+    } finally {
+      _restartingMic = false;
     }
   }
   
@@ -702,10 +753,14 @@ class ElevenLabsService extends ChangeNotifier {
   }
 
   /// Detiene la reproducción de audio
-  void _stopPlayback() {
-    _player.stop();
+  Future<void> _stopPlayback() async {
+    _bufferTimer?.cancel();
     _audioBuffer.clear();
     _isPlayingResponse = false;
+    _isBuffering = false;
+    try {
+      await _player.stop();
+    } catch (_) {}
   }
 
   /// Envía un mensaje de texto al agente
@@ -735,7 +790,7 @@ class ElevenLabsService extends ChangeNotifier {
 
     _stopSilenceStream();
     await stopListening();
-    _stopPlayback();
+    await _stopPlayback();
     
     await _channel?.sink.close();
     _channel = null;

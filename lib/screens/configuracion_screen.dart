@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:agente_desconexiones/services/app_version_service.dart';
 import 'package:agente_desconexiones/utils/session_manager.dart';
 
 /// Ajustes que no modifican la identidad del técnico (RUT fijo en el dispositivo).
@@ -142,6 +143,14 @@ class _ConfiguracionScreenState extends State<ConfiguracionScreen> {
                           ),
                         ],
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.system_update, color: Colors.indigo),
+                      title: const Text('Versión CREABOX'),
+                      subtitle: Text(AppVersionService.versionLabel),
                     ),
                   ),
                 ],

@@ -1,3 +1,5 @@
+import 'package:agente_desconexiones/services/app_version_service.dart';
+
 // Constantes de configuración global del proyecto.
 //
 // Aviso: estas credenciales están hardcodeadas porque se usan para autenticar
@@ -24,8 +26,23 @@ const String kKeplerApiToken           = '5de53e7b5f89b6b547c5c93d635f162ae25947
 // Plataforma única por ahora
 const String kFcmPlatform = 'android';
 
-// Versión de la app (se reporta a dispositivos_autorizados al iniciar)
-const String kAppVersion = '1.3';
+/// Versión visible — leída de `pubspec.yaml` tras [AppVersionService.init].
+String get kAppVersion => AppVersionService.version;
+
+/// Texto distintivo del build actual (cambiar en cada release de prueba OTA).
+const String kBuildDistintivo = '🔧 Build 11 · CTO orden actual';
+
+/// Repositorio GitHub para releases OTA (fallback si Supabase no tiene config).
+const String kGitHubRepoOwner = 'rfelipe-sudo';
+const String kGitHubRepoName = 'agente_desconexiones';
+
+// Solicitud de material — radio geográfico de destinatarios.
+// `false` desactiva el filtro de distancia (útil en pruebas).
+const bool kMaterialFiltroDistanciaActivo = true;
+const double kMaterialRadioKm = 5.0;
+/// GPS vigente si [ubicaciones_activas.updated_at] es más reciente que esto.
+/// El foreground service publica cada 5 min → 10 min tolera dos ciclos + demora de red.
+const int kMaterialGpsMaxAntiguedadMinutos = 10;
 
 // Llaves de SharedPreferences
 const String kPrefFcmTokenRegistrado = 'fcm_token_registrado';

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' show FontFeature, ImageFilter;
 
@@ -6,7 +7,9 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:agente_desconexiones/config/constants.dart';
+import 'package:agente_desconexiones/config/constants.dart' show kAppVersion, kBuildDistintivo;
+import 'package:agente_desconexiones/services/app_update_service.dart';
+import 'package:agente_desconexiones/services/app_version_service.dart';
 import 'package:agente_desconexiones/constants/app_colors.dart';
 import 'package:agente_desconexiones/providers/auth_provider.dart';
 import 'package:agente_desconexiones/utils/device_helper.dart';
@@ -25,8 +28,12 @@ class _SplashScreenState extends State<SplashScreen>
   static const Color _bgTop = Color(0xFF0A0A0A);
   static const Color _bgMid = Color(0xFF0A0A12);
   static const Color _track = Color(0xFF1E293B);
-  static const String _versionLabel = 'v1.0.0';
+  String get _versionLabel => AppVersionService.versionLabel;
   static const String _leyendaConexion = 'Conectando......';
+
+  bool _verificandoActualizacion = false;
+  String _estadoActualizacion = '';
+  double _progresoActualizacion = 0;
 
   static const Duration _splashTotal = Duration(milliseconds: 2500);
 
@@ -93,6 +100,41 @@ class _SplashScreenState extends State<SplashScreen>
   Future<void> _startSplash() async {
     await Future<void>.delayed(_splashTotal);
     if (!mounted) return;
+
+    if (Platform.isAndroid) {
+      try {
+        setState(() {
+          _verificandoActualizacion = true;
+          _estadoActualizacion = 'Buscando actualizaciones...';
+        });
+        final updateResult =
+            await AppUpdateService.instance.checkDownloadAndInstall(
+          onProgress: (progress) {
+            if (!mounted) return;
+            setState(() => _progresoActualizacion = progress);
+          },
+          onStatus: (message) {
+            if (!mounted) return;
+            setState(() => _estadoActualizacion = message);
+          },
+        );
+        if (!mounted) return;
+        if (updateResult == AppUpdateResult.installStarted) {
+          print('[Splash] Actualización descargada → instalador abierto');
+          return;
+        }
+      } catch (e) {
+        print('[Splash] Verificación de actualización: $e');
+      } finally {
+        if (mounted) {
+          setState(() {
+            _verificandoActualizacion = false;
+            _progresoActualizacion = 0;
+            _estadoActualizacion = '';
+          });
+        }
+      }
+    }
 
     try {
       final deviceId = await obtenerIdDispositivo();
@@ -487,6 +529,31 @@ class _SplashScreenState extends State<SplashScreen>
                     },
                   ),
                   const SizedBox(height: 18),
+                  if (_verificandoActualizacion &&
+                      _estadoActualizacion.isNotEmpty) ...[
+                    Text(
+                      _estadoActualizacion,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.primaryLight.withValues(alpha: 0.95),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    if (_progresoActualizacion > 0) ...[
+                      const SizedBox(height: 10),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(999),
+                        child: LinearProgressIndicator(
+                          minHeight: 6,
+                          value: _progresoActualizacion.clamp(0.0, 1.0),
+                          backgroundColor: _track,
+                          color: AppColors.primaryLight,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                  ],
                   Text(
                     _versionLabel,
                     textAlign: TextAlign.center,
@@ -494,6 +561,30 @@ class _SplashScreenState extends State<SplashScreen>
                       fontSize: 11,
                       color: AppColors.textMuted.withValues(alpha: 0.9),
                       letterSpacing: 0.35,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF22C55E).withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: const Color(0xFF4ADE80).withValues(alpha: 0.7),
+                      ),
+                    ),
+                    child: Text(
+                      kBuildDistintivo,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF86EFAC),
+                        letterSpacing: 0.2,
+                      ),
                     ),
                   ),
                 ],

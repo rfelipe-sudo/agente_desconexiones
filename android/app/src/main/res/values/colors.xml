@@ -4,5 +4,5 @@
     <color name="splash_background">#0A0A0A</color>
     
     <!-- Color de fondo para el icono de la app -->
-    <color name="ic_launcher_background">#0D1B2E</color>
+    <color name="ic_launcher_background">#0D1B2A</color>
 </resources>

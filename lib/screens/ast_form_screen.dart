@@ -8,6 +8,8 @@ import 'package:agente_desconexiones/models/ast_registro.dart' show ASTRegistro;
 import 'package:agente_desconexiones/models/creavox_orden.dart';
 import 'package:agente_desconexiones/services/creavox_session_service.dart';
 import 'package:agente_desconexiones/services/ast_service.dart';
+import 'package:agente_desconexiones/services/logistica_service.dart';
+import 'package:agente_desconexiones/utils/session_manager.dart';
 
 const _bg = Color(0xFF0A1628);
 const _surface = Color(0xFF0D1B2A);
@@ -73,22 +75,34 @@ class _AstFormScreenState extends State<AstFormScreen> {
   static const _condCriticasOpc = ['Ninguna','Altura mayor a 1.8m','Trabajo con energía viva','Espacio confinado','Trabajo en vía pública','Otro'];
   static const _condClimaticasOpc = ['Despejado','Nublado','Lluvia','Viento fuerte','Calor extremo','Frío extremo','Otro'];
 
+  String _rutSesion = '';
+
   @override
   void initState() {
     super.initState();
     _cargarDatos();
   }
 
-  void _cargarDatos() {
+  Future<void> _cargarDatos() async {
+    final id = await SessionManager.identidadSesionMaterial();
     final t = _session.getTecnico();
     final now = DateTime.now();
-    _fechaCtrl.text = '${now.day.toString().padLeft(2,'0')}/${now.month.toString().padLeft(2,'0')}/${now.year}';
-    _nombreCtrl.text = t?.nombreTecnico ?? '';
-    _jefaturaCtrl.text = t?.nombreSupervisor ?? '';
-    _otCtrl.text = widget.orden.ordenDeTrabajo;
-    _actividadCtrl.text = widget.orden.tipoActividad;
-    _cargoCtrl.text = 'Técnico de Campo';
-    _empresaCtrl.text = 'SBIP';
+    _rutSesion = id.rut.isNotEmpty
+        ? id.rut
+        : (t?.rutTecnico ?? '');
+    if (!mounted) return;
+    setState(() {
+      _fechaCtrl.text =
+          '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
+      _nombreCtrl.text = id.nombre.isNotEmpty
+          ? id.nombre
+          : (t?.nombreTecnico ?? '');
+      _jefaturaCtrl.text = t?.nombreSupervisor ?? '';
+      _otCtrl.text = widget.orden.ordenDeTrabajo;
+      _actividadCtrl.text = widget.orden.tipoActividad;
+      _cargoCtrl.text = 'Técnico de Campo';
+      _empresaCtrl.text = 'SBIP';
+    });
   }
 
   Future<void> _tomarFoto() async {
@@ -200,17 +214,31 @@ class _AstFormScreenState extends State<AstFormScreen> {
       } catch (_) {}
 
       final tecnico = _session.getTecnico();
-      final rut     = tecnico?.rutTecnico ?? 'sin_rut';
-      final ts      = DateTime.now().millisecondsSinceEpoch;
+      final identidad = await SessionManager.identidadSesionMaterial();
+      final rut = identidad.rut.isNotEmpty
+          ? identidad.rut
+          : (tecnico?.rutTecnico ?? 'sin_rut');
+      final nombre = identidad.nombre.isNotEmpty
+          ? identidad.nombre
+          : await LogisticaService().nombrePorRut(
+              rut,
+              fallback: _nombreCtrl.text,
+            );
 
-      final urlFoto  = await _astSvc.subirImagen(_foto!,      'foto_${rut}_$ts.jpg');
-      final urlFirma = await _astSvc.subirImagen(_firmaFile!, 'firma_${rut}_$ts.png');
+      final fotoPayload = await _astSvc.comprimirImagen(_foto!, label: 'area_trabajo');
+      final firmaPayload =
+          await _astSvc.comprimirImagen(_firmaFile!, label: 'firma', maxWidth: 480, quality: 75);
+
+      if (fotoPayload == null || firmaPayload == null) {
+        throw StateError('No se pudo comprimir foto o firma');
+      }
 
       final registro = ASTRegistro(
         ordenTrabajo: widget.orden.ordenDeTrabajo,
         rutTecnico: rut,
-        nombreTecnico: _nombreCtrl.text,
+        nombreTecnico: nombre,
         cargo: _cargoCtrl.text,
+        actividad: _actividadCtrl.text.trim(),
         empresa: _empresaCtrl.text,
         lugarActividad: _lugarActividad ?? '',
         tareasRealizar: _tareas,
@@ -222,18 +250,19 @@ class _AstFormScreenState extends State<AstFormScreen> {
         estadoHerramientas: _estadoHerramientas ?? '',
         condicionesCriticas: _condCriticas ?? '',
         condicionesClimaticas: _condClimaticas ?? '',
-        urlFotoAreaTrabajo: urlFoto,
+        fotoArea: fotoPayload,
+        firma: firmaPayload,
         observaciones: _obsCtrl.text,
-        urlFirmaTecnico: urlFirma,
         latitud: pos?.latitude ?? 0.0,
         longitud: pos?.longitude ?? 0.0,
         fechaHora: DateTime.now(),
       );
 
-      await _astSvc.guardarAST(registro);
+      final astId = await _astSvc.insertarAST(registro);
+      await _session.guardarUltimaOrden(widget.orden);
       if (mounted) {
-        _snack('AST guardado exitosamente');
-        Navigator.of(context).pop();
+        _snack('AST guardado (${(fotoPayload['bytes_comprimidos'] as int? ?? 0) ~/ 1024} KB foto)');
+        Navigator.of(context).pop(astId);
       }
     } catch (e) {
       if (mounted) _snack('Error al guardar: $e', error: true);

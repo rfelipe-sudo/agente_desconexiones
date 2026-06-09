@@ -120,6 +120,10 @@ dependencies {
     // MultiDex — necesario para MultiDexApplication y para ClassLoader correcto en hilos JNI
     implementation("androidx.multidex:multidex:2.0.1")
 
+    // FCM nativo (CreaboxFirebaseMessagingService, MaterialAlertNotifier)
+    implementation("com.google.firebase:firebase-messaging:24.1.0")
+    implementation("androidx.core:core-ktx:1.15.0")
+
     // Guava / ListenableFuture (requerido por CameraX en tiempo de compilación)
     implementation("com.google.guava:guava:32.1.3-android")
 }

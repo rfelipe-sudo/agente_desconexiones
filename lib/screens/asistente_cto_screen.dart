@@ -100,8 +100,13 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
   bool       _actualizandoIniciada = false;
   String?    _horaConsultaIniciada;
   String?    _nyquistErrorIniciada;
+  /// FTTH/CFTTH/HFC/CHFC: no consultar Nyquist, mostrar aviso de red no neutra.
+  String?    _tipoRedNoMedibleIniciada;
   /// access_id_corto → estado (de produccion_crea, usado para filtrar completados)
   Map<String, String> _estadosHoy = {};
+  /// OT resuelta cuando no hay match en tabla_access_id/historial.
+  String? _otActivaResuelta;
+  String? _tipoOrdenActiva;
 
   static const _ctoChannel = MethodChannel(
     'com.creacionestecnologicas.agente_desconexiones/cto_scan',
@@ -174,71 +179,52 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
         return;
       }
 
-      // Ejecutar en paralelo: historial (acceso_ids) + orden activa Kepler + estados produccion_crea
+      // Ejecutar en paralelo: historial (acceso_ids) + orden activa (Kepler TOA + get_pelo_db)
       final results = await Future.wait([
         _nyquist.buscarHistorialPorRut(rut),
-        _nyquist.fetchActiveOrderFromKepler(rut).catchError((_) => null),
+        _nyquist.resolveOrdenActivaCto(rut),
         _fetchEstadosHoy(rut),
       ]);
       if (!mounted) return;
 
       final lista      = results[0] as List<OrdenHistorial>;
-      final activeOrder = results[1] as KeplerActiveOrder?;
+      final activa     = results[1] as OrdenActivaCto?;
       final estadosMap = results[2] as Map<String, String>;
 
       final hoy = DateTime.now();
       bool esHoy(DateTime d) => d.year == hoy.year && d.month == hoy.month && d.day == hoy.day;
       final hoyOnly = lista.where((o) => esHoy(o.fechaReferencia)).toList();
 
-      // Identificar la orden iniciada:
-      // 1°: Kepler nos da el access_id_corto del trabajo activo.
-      //     En tabla_access_id, orden_trabajo puede contener ese mismo valor.
-      // 2°: Fallback por estado en produccion_crea.
-      OrdenHistorial? iniciada;
-      if (activeOrder != null) {
-        final aid = activeOrder.accessIdCorto;
-        for (final o in hoyOnly) {
-          if (o.ordenTrabajo == aid || o.accessIdPrefijado == activeOrder.accessIdPrefijado) {
-            iniciada = o; break;
-          }
-        }
-        // Si no está en hoyOnly, buscar en toda la lista (puede ser de ayer)
-        if (iniciada == null) {
-          for (final o in lista) {
-            if (o.ordenTrabajo == aid || o.accessIdPrefijado == activeOrder.accessIdPrefijado) {
-              iniciada = o; break;
-            }
-          }
-        }
-      }
-      // Fallback: estado 'iniciado' en produccion_crea
-      if (iniciada == null) {
-        for (final o in hoyOnly) {
-          final est = estadosMap[o.ordenTrabajo]?.toLowerCase() ?? '';
-          if (est == 'iniciado') { iniciada = o; break; }
-        }
-      }
-
       setState(() {
-        _historial    = hoyOnly;
-        _ordenIniciada = iniciada;
-        _estadosHoy   = estadosMap;
+        _historial = hoyOnly;
+        _estadosHoy = estadosMap;
         _cargandoHistorial = false;
-        // Si Kepler devolvió datos Nyquist, usarlos directamente (sin llamada extra)
-        if (activeOrder != null) {
-          _resultadoIniciada    = activeOrder.estado;
-          _horaConsultaIniciada = _formatHoraAhora();
-          _accessIdIniciadaNyquist = activeOrder.accessIdPrefijado;
-        } else if (iniciada != null) {
-          _cargandoIniciada = true; // se cargará aparte
-        }
+        _cargandoIniciada = activa != null &&
+            !activa.tieneEstado &&
+            activa.tieneAccessId &&
+            !activa.esRedNoNeutra;
+        _nyquistErrorIniciada = null;
+        _tipoRedNoMedibleIniciada = null;
       });
+
+      _aplicarOrdenActiva(activa, historial: lista);
+
+      if (!mounted) return;
+      setState(() {});
 
       _evaluarAlertasHistorial(hoyOnly);
 
-      // Solo llamar _cargarIniciadaPotencias si Kepler no trajo datos
-      if (activeOrder == null && iniciada != null && iniciada.tieneAccessId) {
-        _cargarIniciadaPotencias(iniciada);
+      if (activa != null && !activa.tieneEstado && activa.tieneAccessId) {
+        if (activa.esRedNoNeutra) {
+          setState(() {
+            _tipoRedNoMedibleIniciada = activa.tipoRedProducto;
+            _nyquistErrorIniciada =
+                mensajeOrdenSinAccessIdRedNeutra(activa.tipoRedProducto);
+          });
+        } else {
+          final orden = _ordenIniciada ?? activa.toHistorial();
+          _cargarIniciadaPotencias(orden);
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -270,13 +256,36 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
     }
   }
 
+  Future<bool> _bloquearSiRedNoMedible(String ot, {required bool iniciada}) async {
+    if (ot.trim().isEmpty) return false;
+    final tipo = await _nyquist.obtenerTipoRedProductoPorOt(ot);
+    if (!esTipoRedNoMedible(tipo)) return false;
+    if (!mounted) return true;
+    setState(() {
+      if (iniciada) {
+        _tipoRedNoMedibleIniciada = tipo;
+        _nyquistErrorIniciada = mensajeOrdenSinAccessIdRedNeutra(tipo!);
+        _resultadoIniciada = null;
+        _cargandoIniciada = false;
+        _actualizandoIniciada = false;
+      } else {
+        _tipoRedError = tipo;
+        _error = 'tecnologia_incompatible';
+        _cargando = false;
+      }
+    });
+    return true;
+  }
+
   Future<void> _cargarIniciadaPotencias(OrdenHistorial orden) async {
     setState(() {
       _cargandoIniciada = true;
       _resultadoIniciada = null;
       _nyquistErrorIniciada = null;
+      _tipoRedNoMedibleIniciada = null;
       _accessIdIniciadaNyquist = orden.accessIdPrefijado;
     });
+    if (await _bloquearSiRedNoMedible(orden.ordenTrabajo, iniciada: true)) return;
     try {
       final r = await _nyquist.consultarEstado(orden.accessIdPrefijado);
       if (!mounted) return;
@@ -296,6 +305,8 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
 
   Future<void> _actualizarIniciadaPotencias() async {
     if (_accessIdIniciadaNyquist == null) return;
+    final ot = _ordenIniciada?.ordenTrabajo ?? _otActivaResuelta ?? '';
+    if (await _bloquearSiRedNoMedible(ot, iniciada: true)) return;
     setState(() => _actualizandoIniciada = true);
     try {
       final r = await _nyquist.consultarEstado(_accessIdIniciadaNyquist!);
@@ -330,6 +341,15 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
 
     await Future.wait(paraConsultar.map((o) async {
       try {
+        final tipo = await _nyquist.obtenerTipoRedProductoPorOt(o.ordenTrabajo);
+        if (esTipoRedNoMedible(tipo)) {
+          if (mounted) {
+            setState(() {
+              _alertasPendientes = (_alertasPendientes - 1).clamp(0, 999);
+            });
+          }
+          return;
+        }
         final r = await _nyquist.consultarEstado(o.accessIdPrefijado);
         final tiene = r.puertos.any((p) {
           if (!p.activo || p.rxBefore == null) return false;
@@ -398,6 +418,8 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
         return;
       }
 
+      if (await _bloquearSiRedNoMedible(orden.ordenTrabajo, iniciada: false)) return;
+
       debugPrint('🔍 [CTO] Consultando Nyquist → $accessIdNyquist');
       setState(() => _accessIdNyquist = accessIdNyquist);
 
@@ -442,36 +464,59 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
         return;
       }
 
-      debugPrint('🔍 [AsistenteCTO] get_pelo_db para RUT: $rut');
-      KeplerActiveOrder? activa;
-      try {
-        activa = await _nyquist.fetchActiveOrderFromKepler(rut);
-      } catch (e) {
-        if (mounted) setState(() {
-          _error = e.toString().replaceFirst('Exception: ', '');
-          _cargando = false;
-        });
-        return;
-      }
+      debugPrint('🔍 [AsistenteCTO] resolveOrdenActivaCto para RUT: $rut');
+      final activa = await _nyquist.resolveOrdenActivaCto(rut);
       if (activa == null) {
         setState(() { _cargando = false; _error = 'sin_trabajo'; });
         return;
       }
 
-      _accessIdNyquist = activa.accessIdPrefijado;
+      _accessIdNyquist = activa.accessIdPrefijado.isNotEmpty
+          ? activa.accessIdPrefijado
+          : null;
       _accessIdCorto = activa.accessIdCorto.isNotEmpty
           ? activa.accessIdCorto
           : activa.accessIdPrefijado.replaceFirst(RegExp(r'^\d{1,2}-'), '');
+      _ordenTrabajo = activa.ordenTrabajo.isNotEmpty ? activa.ordenTrabajo : null;
 
-      if (mounted) {
+      if (activa.tieneEstado) {
+        if (mounted) {
+          setState(() {
+            _resultado = activa.estado;
+            _horaConsulta = _formatHoraAhora();
+            _cargando = false;
+          });
+        }
+        return;
+      }
+
+      if (!activa.tieneAccessId) {
+        setState(() { _cargando = false; _error = 'sin_trabajo'; });
+        return;
+      }
+
+      if (activa.esRedNoNeutra) {
         setState(() {
-          _resultado = activa!.estado;
+          _tipoRedError = activa.tipoRedProducto;
+          _error = 'tecnologia_incompatible';
+          _cargando = false;
+        });
+        return;
+      }
+
+      try {
+        final r = await _nyquist.consultarEstado(activa.accessIdPrefijado);
+        if (!mounted) return;
+        setState(() {
+          _resultado = r;
           _horaConsulta = _formatHoraAhora();
           _cargando = false;
-          // Si venimos del historial, _ordenIniciada tiene el número de OT.
-          if (_ordenIniciada != null && _ordenIniciada!.ordenTrabajo.isNotEmpty) {
-            _ordenTrabajo = _ordenIniciada!.ordenTrabajo;
-          }
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _nyquistError = e.toString().replaceFirst('Exception: ', '');
+          _cargando = false;
         });
       }
     } catch (e) {
@@ -486,6 +531,11 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
     setState(() => _actualizandoEndpoint = true);
     try {
       if (_accessIdNyquist != null) {
+        final ot = _ordenTrabajo ?? '';
+        if (await _bloquearSiRedNoMedible(ot, iniciada: false)) {
+          if (mounted) setState(() => _actualizandoEndpoint = false);
+          return;
+        }
         final r = await _nyquist.consultarEstado(_accessIdNyquist!);
         if (mounted) {
           setState(() {
@@ -502,12 +552,14 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
           if (mounted) setState(() => _actualizandoEndpoint = false);
           return;
         }
-        final activa = await _nyquist.fetchActiveOrderFromKepler(rut);
+        final activa = await _nyquist.resolveOrdenActivaCto(rut);
         if (mounted) {
           setState(() {
-            if (activa != null) {
+            if (activa != null && activa.tieneEstado) {
               _resultado = activa.estado;
-              _accessIdNyquist = activa.accessIdPrefijado;
+              _accessIdNyquist = activa.accessIdPrefijado.isNotEmpty
+                  ? activa.accessIdPrefijado
+                  : null;
               _accessIdCorto = activa.accessIdCorto;
               _horaConsulta = _formatHoraAhora();
             }
@@ -967,6 +1019,10 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
   }
 
   Widget _buildSinTrabajo() {
+    return _buildSinOrdenIniciadaPantalla(onRefresh: _cargarPotencias);
+  }
+
+  Widget _buildSinOrdenIniciadaPantalla({VoidCallback? onRefresh}) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -975,38 +1031,80 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
           children: [
             const Icon(Icons.work_off_outlined, size: 72, color: Colors.white30),
             const SizedBox(height: 24),
-            const Text('Sin trabajo activo',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
+            const Text(
+              'Sin orden iniciada',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
             const SizedBox(height: 12),
             const Text(
-              'No se encontró ninguna orden en estado "Iniciado".\nEl Asistente CTO requiere una orden activa.',
+              'Inicia la orden en TOA para revisar el estado de la CTO.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.white54, height: 1.5),
             ),
-            const SizedBox(height: 32),
-            _buildBotonActualizar(onPressed: _cargarPotencias),
+            if (onRefresh != null) ...[
+              const SizedBox(height: 32),
+              _buildBotonActualizar(onPressed: onRefresh),
+            ],
           ],
         ),
       ),
     );
   }
 
+  Widget _buildAvisoRedNoNeutra(String tipo) {
+    final color = tipo.toUpperCase().contains('FTTH')
+        ? Colors.purple[300]!
+        : Colors.orange[300]!;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withOpacity(0.45)),
+      ),
+      child: Column(children: [
+        Icon(
+          tipo.toUpperCase().contains('FTTH')
+              ? Icons.settings_input_component
+              : Icons.cable,
+          size: 48,
+          color: color,
+        ),
+        const SizedBox(height: 14),
+        Text(
+          mensajeOrdenSinAccessIdRedNeutra(tipo),
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: color,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            height: 1.45,
+          ),
+        ),
+      ]),
+    );
+  }
+
   Widget _buildTecnologiaIncompatible() {
     final tipo = _tipoRedError ?? '';
-    final String mensaje;
+    final mensaje = tipo.isNotEmpty
+        ? mensajeOrdenSinAccessIdRedNeutra(tipo)
+        : 'Este trabajo pertenece a una tecnología\ndiferente a red neutra.';
     final IconData icono;
     final Color color;
 
     if (tipo.contains('FTTH')) {
-      mensaje = 'ORDEN FTTH\nSOLO PUEDO MEDIR RED NEUTRA';
       icono = Icons.settings_input_component;
       color = Colors.purple[300]!;
     } else if (tipo.contains('HFC')) {
-      mensaje = 'ORDEN HFC\nSOLO PUEDO MEDIR RED NEUTRA';
       icono = Icons.cable;
       color = Colors.orange[300]!;
     } else {
-      mensaje = 'Este trabajo pertenece a una tecnología\ndiferente a NFTT';
       icono = Icons.fiber_manual_record;
       color = Colors.orange;
     }
@@ -1540,6 +1638,65 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
     return '${h.toString().padLeft(2, '0')}:$m $period';
   }
 
+  /// Aplica el resultado de [NyquistService.resolveOrdenActivaCto] al estado UI.
+  void _aplicarOrdenActiva(OrdenActivaCto? activa, {List<OrdenHistorial>? historial}) {
+    if (activa == null) {
+      _ordenIniciada = null;
+      _otActivaResuelta = null;
+      _tipoOrdenActiva = null;
+      _accessIdIniciadaNyquist = null;
+      _resultadoIniciada = null;
+      _horaConsultaIniciada = null;
+      return;
+    }
+
+    OrdenHistorial? iniciada;
+    if (historial != null) {
+      for (final o in historial) {
+        final otMatch = activa.ordenTrabajo.isNotEmpty &&
+            o.ordenTrabajo == activa.ordenTrabajo;
+        final aidMatch = activa.accessIdPrefijado.isNotEmpty &&
+            (o.accessIdPrefijado == activa.accessIdPrefijado ||
+                o.accessIdPrefijado.endsWith('-${activa.accessIdCorto}'));
+        if (otMatch || aidMatch) {
+          iniciada = o;
+          break;
+        }
+      }
+    }
+
+    iniciada ??= activa.tieneAccessId || activa.ordenTrabajo.isNotEmpty
+        ? activa.toHistorial()
+        : null;
+
+    _ordenIniciada = iniciada;
+    _otActivaResuelta =
+        activa.ordenTrabajo.isNotEmpty ? activa.ordenTrabajo : null;
+    _tipoOrdenActiva =
+        activa.tipoOrden.isNotEmpty ? activa.tipoOrden : null;
+    _accessIdIniciadaNyquist =
+        activa.accessIdPrefijado.isNotEmpty ? activa.accessIdPrefijado : null;
+    _resultadoIniciada = activa.estado;
+    _horaConsultaIniciada =
+        activa.tieneEstado ? _formatHoraAhora() : null;
+  }
+
+  bool get _hayTrabajoIniciado =>
+      _ordenIniciada != null ||
+      _otActivaResuelta != null ||
+      _accessIdIniciadaNyquist != null ||
+      _resultadoIniciada != null;
+
+  String get _otIniciadaDisplay =>
+      _ordenIniciada?.ordenTrabajo ??
+      _otActivaResuelta ??
+      '(sin OT)';
+
+  String get _tipoOrdenIniciadaDisplay =>
+      _ordenIniciada?.tipoOrden ??
+      _tipoOrdenActiva ??
+      '';
+
   Widget _thCell(String text, {int flex = 1}) => Expanded(
     flex: flex,
     child: Text(text, textAlign: TextAlign.center,
@@ -1588,7 +1745,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
                     icono: Icons.play_circle_outline,
                     titulo: 'Orden Iniciada',
                     color: const Color(0xFF1E88E5),
-                    onTap: _cargarIniciadaView,
+                    onTap: _intentarAbrirOrdenIniciada,
                   ),
                   const SizedBox(height: 24),
                   _buildTarjetaSolida(
@@ -1606,6 +1763,86 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
     );
   }
 
+  Future<void> _intentarAbrirOrdenIniciada() async {
+    final prefs = await SharedPreferences.getInstance();
+    final rut = prefs.getString('rut_tecnico') ?? '';
+    if (rut.isEmpty) {
+      if (!mounted) return;
+      _mostrarSinOrdenIniciada();
+      return;
+    }
+
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Card(
+          color: _surfaceColor,
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: _cyanColor),
+                SizedBox(height: 16),
+                Text(
+                  'Verificando orden iniciada…',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    OrdenActivaCto? activa;
+    try {
+      activa = await _nyquist.resolveOrdenActivaCto(rut);
+    } catch (_) {
+      activa = null;
+    }
+
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    if (activa == null) {
+      _mostrarSinOrdenIniciada();
+      return;
+    }
+
+    await _cargarIniciadaView();
+  }
+
+  void _mostrarSinOrdenIniciada() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        icon: const Icon(Icons.work_off_outlined, color: Colors.orange, size: 40),
+        title: const Text(
+          'Sin orden iniciada',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
+        content: const Text(
+          'No tienes una orden en estado iniciado. '
+          'Inicia el trabajo en TOA para revisar el estado de la CTO.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white70, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Entendido'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _cargarIniciadaView() async {
     setState(() {
       _vista = _Vista.iniciadaCto;
@@ -1614,9 +1851,12 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       _resultadoIniciada = null;
       _cargandoIniciada = true;
       _nyquistErrorIniciada = null;
+      _tipoRedNoMedibleIniciada = null;
       _horaConsultaIniciada = null;
       _accessIdIniciadaNyquist = null;
       _ordenIniciada = null;
+      _otActivaResuelta = null;
+      _tipoOrdenActiva = null;
       _estadosHoy = {};
     });
     try {
@@ -1627,30 +1867,47 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
         if (mounted) setState(() => _cargandoIniciada = false);
         return;
       }
-      final activeOrder = await _nyquist.fetchActiveOrderFromKepler(rut);
+
+      final results = await Future.wait([
+        _nyquist.resolveOrdenActivaCto(rut),
+        _nyquist.buscarHistorialPorRut(rut),
+      ]);
       if (!mounted) return;
 
-      // Intentar hacer coincidir con el historial para obtener la OT
-      OrdenHistorial? iniciada;
-      if (activeOrder != null) {
-        final historial = await _nyquist.buscarHistorialPorRut(rut);
-        for (final o in historial) {
-          if (o.ordenTrabajo == activeOrder.accessIdCorto ||
-              o.accessIdPrefijado == activeOrder.accessIdPrefijado) {
-            iniciada = o;
-            break;
-          }
-        }
+      final activa = results[0] as OrdenActivaCto?;
+      final historial = results[1] as List<OrdenHistorial>;
+
+      if (activa == null) {
+        setState(() {
+          _cargandoIniciada = false;
+          _ordenIniciada = null;
+        });
+        return;
       }
+
+      _aplicarOrdenActiva(activa, historial: historial);
 
       if (!mounted) return;
       setState(() {
-        _ordenIniciada = iniciada;
-        _accessIdIniciadaNyquist = activeOrder?.accessIdPrefijado;
-        _resultadoIniciada = activeOrder?.estado;
-        _horaConsultaIniciada = activeOrder != null ? _formatHoraAhora() : null;
         _cargandoIniciada = false;
+        if (!activa.tieneEstado && activa.tieneAccessId) {
+          _nyquistErrorIniciada =
+              'Orden iniciada detectada. Cargando niveles de la CTO…';
+        }
       });
+
+      if (!activa.tieneEstado && activa.tieneAccessId) {
+        if (activa.esRedNoNeutra) {
+          setState(() {
+            _tipoRedNoMedibleIniciada = activa.tipoRedProducto;
+            _nyquistErrorIniciada =
+                mensajeOrdenSinAccessIdRedNeutra(activa.tipoRedProducto);
+          });
+        } else {
+          final orden = _ordenIniciada ?? activa.toHistorial();
+          await _cargarIniciadaPotencias(orden);
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1690,10 +1947,12 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       final mananaStr = '${manana.year}-${manana.month.toString().padLeft(2, '0')}-${manana.day.toString().padLeft(2, '0')}';
       const vno = '02';
 
+      final rutQuery = formatRutForKepler(rut);
+
       final rawRows = await Supabase.instance.client
           .from('produccion_creaciones')
           .select('orden_trabajo, estado, tipo_orden, hora_inicio, fecha_proceso')
-          .eq('rut_tecnico', rut)
+          .eq('rut_tecnico', rutQuery)
           .gte('fecha_proceso', ayerStr)
           .lt('fecha_proceso', mananaStr)
           .order('fecha_proceso', ascending: false);
@@ -1749,7 +2008,17 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       }
 
       final completadasRows = ultimoEstadoRows.where(_esCompletada).toList();
-      final iniciadasRows   = ultimoEstadoRows.where(_esIniciada).toList();
+      DateTime _instanteIniciada(dynamic r) {
+        final fp = DateTime.tryParse(r['fecha_proceso']?.toString() ?? '') ?? hoy;
+        final hi = r['hora_inicio']?.toString() ?? '00:00';
+        final partes = hi.split(':');
+        final horas = int.tryParse(partes.first) ?? 0;
+        final mins = partes.length > 1 ? int.tryParse(partes[1]) ?? 0 : 0;
+        return DateTime(fp.year, fp.month, fp.day, horas, mins);
+      }
+
+      final iniciadasRows = ultimoEstadoRows.where(_esIniciada).toList()
+        ..sort((a, b) => _instanteIniciada(b).compareTo(_instanteIniciada(a)));
       final pendientesRows  = ultimoEstadoRows.where(_esPendiente).toList();
 
       // 5. Construir OrdenHistorial con el access_id real de tabla_access_id.
@@ -1769,8 +2038,35 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
       }
 
       final completadas = completadasRows.map(_toOrden).toList();
-      final iniciadas   = iniciadasRows.map(_toOrden).toList();
+      var iniciadas   = iniciadasRows.map(_toOrden).toList();
       final pendientes  = pendientesRows.map(_toOrden).toList();
+
+      // 6. Complementar iniciadas con TOA Kepler (fuente de verdad en tiempo real).
+      final toaIniciada = await _nyquist.fetchOrdenIniciadaDesdeToa(rut);
+      if (toaIniciada != null) {
+        final otToa = toaIniciada['orden_trabajo'] ?? '';
+        if (otToa.isNotEmpty && !iniciadas.any((o) => o.ordenTrabajo == otToa)) {
+          var accessRaw = accessPorOT[otToa] ?? '';
+          if (accessRaw.isEmpty) {
+            accessRaw = await _nyquist.buscarAccessIdEnTablaAccesId(otToa) ?? '';
+            if (accessRaw.isNotEmpty) accessPorOT[otToa] = accessRaw;
+          }
+          final accessFull =
+              accessRaw.isNotEmpty ? '$vno-$accessRaw' : '';
+          iniciadas = [
+            OrdenHistorial(
+              ordenTrabajo: otToa,
+              accessIdPrefijado: accessFull,
+              tipoOrden: toaIniciada['tipo_orden'] ?? '',
+              estado: 'Iniciado',
+              fechaReferencia: hoy,
+              horaInicio: hoy,
+            ),
+            ...iniciadas,
+          ];
+          debugPrint('🔍 [CTO] iniciada TOA agregada: $otToa');
+        }
+      }
 
       setState(() {
         _historial         = completadas;
@@ -1809,6 +2105,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
 
   Widget _buildIniciadaView() {
     if (_cargandoIniciada) return _buildCargando();
+    if (!_hayTrabajoIniciado) return _buildSinOrdenIniciadaPantalla();
     return RefreshIndicator(
       color: _cyanColor,
       backgroundColor: _surfaceColor,
@@ -1961,8 +2258,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
   // ── Sección superior: potencias del trabajo iniciado ──────────────────
 
   Widget _buildSeccionIniciada() {
-    final iniciada = _ordenIniciada;
-    if (iniciada == null) {
+    if (!_hayTrabajoIniciado) {
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -1975,7 +2271,7 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
           SizedBox(width: 10),
           Expanded(
             child: Text(
-              'No hay trabajo iniciado en este momento.',
+              'Sin orden iniciada.',
               style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
             ),
           ),
@@ -1985,6 +2281,9 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
 
     final puertos = _buildPuertosCombinadosFrom(_resultadoIniciada);
     final resumen = _resumenPuertos(puertos);
+    final accessDisplay = _accessIdIniciadaNyquist
+            ?.replaceFirst(RegExp(r'^\d{1,2}-'), '') ??
+        _ordenIniciada?.accessIdPrefijado.replaceFirst(RegExp(r'^\d{1,2}-'), '');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2010,18 +2309,18 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
                     style: TextStyle(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
                 const SizedBox(height: 2),
                 Text(
-                  iniciada.ordenTrabajo.isEmpty ? '(sin OT)' : iniciada.ordenTrabajo,
+                  _otIniciadaDisplay,
                   style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
                 ),
-                if (iniciada.tipoOrden.isNotEmpty)
-                  Text(iniciada.tipoOrden, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                if (_accessIdIniciadaNyquist != null) ...[
+                if (_tipoOrdenIniciadaDisplay.isNotEmpty)
+                  Text(_tipoOrdenIniciadaDisplay, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                if (accessDisplay != null && accessDisplay.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Row(children: [
                     const Icon(Icons.cable, color: Colors.white54, size: 12),
                     const SizedBox(width: 4),
                     Text(
-                      iniciada.accessIdPrefijado.replaceFirst(RegExp(r'^\d{1,2}-'), ''),
+                      accessDisplay,
                       style: const TextStyle(color: Colors.white54, fontSize: 11, fontFamily: 'monospace'),
                     ),
                   ]),
@@ -2031,18 +2330,20 @@ class _AsistenteCtoScreenState extends State<AsistenteCtoScreen> {
           ]),
         ),
         const SizedBox(height: 10),
-        // Botón actualizar
-        _buildBotonActualizar(
-          onPressed: _actualizandoIniciada ? null : _actualizarIniciadaPotencias,
-          isLoading: _actualizandoIniciada,
-        ),
-        const SizedBox(height: 10),
+        if (_tipoRedNoMedibleIniciada == null)
+          _buildBotonActualizar(
+            onPressed: _actualizandoIniciada ? null : _actualizarIniciadaPotencias,
+            isLoading: _actualizandoIniciada,
+          ),
+        if (_tipoRedNoMedibleIniciada == null) const SizedBox(height: 10),
         // Contenido: loading / error / tabla
         if (_cargandoIniciada)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 28),
             child: Center(child: CircularProgressIndicator(color: _cyanColor, strokeWidth: 2)),
           )
+        else if (_tipoRedNoMedibleIniciada != null)
+          _buildAvisoRedNoNeutra(_tipoRedNoMedibleIniciada!)
         else if (_nyquistErrorIniciada != null)
           Container(
             padding: const EdgeInsets.all(12),

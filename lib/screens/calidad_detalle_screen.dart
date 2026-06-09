@@ -23,6 +23,8 @@ class _CalidadDetalleScreenState extends State<CalidadDetalleScreen> {
   List<Map<String, dynamic>> _detalleEnCurso = [];
   /// Datos para el gráfico: `periodo`, `porcentaje`, `label`.
   List<Map<String, dynamic>> _graficoTresMeses = [];
+  Map<String, dynamic> _rankingCalidad = {};
+  String _periodoRanking = '';
   
   @override
   void initState() {
@@ -71,6 +73,14 @@ class _CalidadDetalleScreenState extends State<CalidadDetalleScreen> {
         _calidadEnCurso = await _service.obtenerCalidadPorPeriodo(_tecnicoRut!, periodoEnCurso);
         _detalleEnCurso = await _construirDetalle(_calidadEnCurso);
         print('📋 [En curso] ${_detalleEnCurso.length} detalles cargados');
+      }
+
+      // Ranking = bono del mes en curso (ej. en junio → 2026-06, medición mayo).
+      if (periodoCerrado.isNotEmpty) {
+        _periodoRanking = periodoCerrado;
+        _rankingCalidad =
+            await _service.obtenerPosicionCalidad(_tecnicoRut!, periodoCerrado);
+        print('🏆 [Ranking] Período bono $_periodoRanking');
       }
     } catch (e) {
       print('❌ Error cargando datos de calidad: $e');
@@ -611,16 +621,47 @@ class _CalidadDetalleScreenState extends State<CalidadDetalleScreen> {
     );
   }
   
+  String _getNombreMes(int mes) {
+    const meses = [
+      '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+    ];
+    if (mes < 1 || mes > 12) return '';
+    return meses[mes];
+  }
+
+  String _etiquetaPeriodoRanking(String periodo) {
+    final partes = periodo.split('-');
+    if (partes.length != 2) {
+      return 'Período $periodo · menor % es mejor';
+    }
+    final anno = int.tryParse(partes[0]) ?? 0;
+    final mesPago = int.tryParse(partes[1]) ?? 0;
+    if (mesPago < 1) return 'Período $periodo · menor % es mejor';
+    final med = DateTime(anno, mesPago - 1, 1);
+    final nombreBono = _getNombreMes(mesPago);
+    final nombreMed = _getNombreMes(med.month);
+    return 'Bono $nombreBono (medición $nombreMed) · menor % es mejor';
+  }
+
   Widget _buildRankingExpansion() {
+    final posicion = (_rankingCalidad['posicion'] as num?)?.toInt() ?? 0;
+    final total = (_rankingCalidad['totalTecnicos'] as num?)?.toInt() ?? 0;
+    final pct =
+        (_rankingCalidad['porcentajeReiterados'] as num?)?.toDouble() ?? 0.0;
+
     return Card(
       color: Colors.grey[850],
       elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.all(16),
+        childrenPadding: const EdgeInsets.only(bottom: 16),
+        iconColor: Colors.white,
+        collapsedIconColor: Colors.white,
+        title: Row(
           children: [
-            Icon(Icons.emoji_events_outlined, color: Colors.grey[500], size: 28),
-            const SizedBox(width: 14),
+            Icon(Icons.emoji_events, color: _getColorCalidad(pct), size: 28),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -628,21 +669,111 @@ class _CalidadDetalleScreenState extends State<CalidadDetalleScreen> {
                   const Text(
                     'Ranking de calidad',
                     style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                      fontSize: 14,
+                      color: Colors.white70,
                     ),
                   ),
-                  const SizedBox(height: 4),
                   Text(
-                    'Próximamente',
-                    style: TextStyle(fontSize: 13, color: Colors.grey[400]),
+                    posicion > 0 ? '#$posicion de $total' : 'Sin posición',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: _getColorCalidad(pct),
+                    ),
                   ),
                 ],
               ),
             ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${pct.toStringAsFixed(1)}%',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const Text(
+                  'reiteración',
+                  style: TextStyle(fontSize: 11, color: Colors.white70),
+                ),
+              ],
+            ),
           ],
         ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_periodoRanking.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      _etiquetaPeriodoRanking(_periodoRanking),
+                      style: TextStyle(fontSize: 11, color: Colors.grey[400]),
+                    ),
+                  ),
+                ...(_rankingCalidad['top10'] as List? ?? []).map((tecnico) {
+                  final t = tecnico as Map<String, dynamic>;
+                  final rut = t['rut_tecnico']?.toString() ?? '';
+                  final esYo = ProduccionService.rutsCoinciden(rut, _tecnicoRut ?? '');
+                  final reit =
+                      (t['porcentaje_reiteracion'] as num?)?.toDouble() ?? 0.0;
+                  return Container(
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                    margin: const EdgeInsets.only(bottom: 4),
+                    decoration: BoxDecoration(
+                      color: esYo
+                          ? Colors.amber.withOpacity(0.15)
+                          : Colors.grey[800],
+                      borderRadius: BorderRadius.circular(8),
+                      border: esYo
+                          ? Border.all(color: Colors.amber[700]!, width: 2)
+                          : null,
+                    ),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 36,
+                          child: Text(
+                            '#${t['posicion']}',
+                            style: TextStyle(
+                              color: esYo ? Colors.amber : Colors.white70,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            t['tecnico']?.toString() ?? '',
+                            style: TextStyle(
+                              color: esYo ? Colors.white : Colors.white70,
+                              fontWeight:
+                                  esYo ? FontWeight.bold : FontWeight.normal,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          '${reit.toStringAsFixed(1)}%',
+                          style: TextStyle(
+                            color: _getColorCalidad(reit),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

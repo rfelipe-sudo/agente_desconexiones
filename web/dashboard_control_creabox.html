@@ -142,13 +142,13 @@ td{padding:10px 16px;font-size:12px;vertical-align:middle;}
 .eq-board{display:flex;gap:10px;overflow-x:auto;padding-bottom:12px;align-items:flex-start;min-height:420px;}
 .eq-board::-webkit-scrollbar{height:6px;}
 .eq-board::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px;}
-.eq-col{width:220px;flex-shrink:0;display:flex;flex-direction:column;max-height:calc(100vh - 240px);}
+.eq-col{width:240px;flex-shrink:0;display:flex;flex-direction:column;max-height:calc(100vh - 240px);}
 .eq-col.eq-sin .eq-col-h{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.06);}
 .eq-col-h{padding:10px 12px;border:1px solid var(--border);border-radius:10px 10px 0 0;background:var(--bg3);display:flex;align-items:center;gap:8px;border-bottom:none;}
 .eq-col.eq-sin .eq-col-h{background:linear-gradient(135deg,rgba(210,153,34,.14),rgba(210,153,34,.04));}
 .eq-avatar{width:28px;height:28px;border-radius:7px;flex-shrink:0;background:rgba(56,139,253,.12);border:1px solid rgba(56,139,253,.25);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--blue);}
 .eq-col.eq-sin .eq-avatar{background:rgba(210,153,34,.15);border-color:rgba(210,153,34,.4);color:var(--yellow);}
-.eq-col-name{font-size:11px;font-weight:700;flex:1;min-width:0;line-height:1.3;}
+.eq-col-name{font-size:11px;font-weight:700;flex:1;min-width:0;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .eq-col-cnt{font-size:10px;font-weight:700;color:var(--muted);background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:2px 7px;}
 .eq-list{flex:1;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 10px 10px;background:var(--bg2);min-height:120px;}
 .eq-list.eq-drag-over{background:rgba(56,139,253,.04);outline:1.5px dashed rgba(56,139,253,.25);}
@@ -166,7 +166,39 @@ td{padding:10px 16px;font-size:12px;vertical-align:middle;}
 .eq-col.eq-lic .eq-avatar{background:rgba(188,140,255,.15);border-color:rgba(188,140,255,.4);color:var(--purple);}
 .eq-col.eq-lic .eq-item{border-left-color:rgba(188,140,255,.65);}
 .eq-col.eq-lic .eq-ini{background:rgba(188,140,255,.1);border-color:rgba(188,140,255,.25);color:var(--purple);}
-.eq-nom{font-size:11px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Supervisores — color distinto por columna */
+.eq-col.eq-sup-0 .eq-col-h{border-color:rgba(56,189,248,.45);background:linear-gradient(135deg,rgba(56,189,248,.18),rgba(56,189,248,.05));}
+.eq-col.eq-sup-0 .eq-avatar{background:rgba(56,189,248,.18);border-color:rgba(56,189,248,.5);color:#38bdf8;}
+.eq-col.eq-sup-0 .eq-list{border-color:rgba(56,189,248,.22);}
+.eq-col.eq-sup-0 .eq-item{border-left-color:rgba(56,189,248,.75);}
+.eq-col.eq-sup-0 .eq-ini{background:rgba(56,189,248,.12);border-color:rgba(56,189,248,.3);color:#38bdf8;}
+.eq-col.eq-sup-1 .eq-col-h{border-color:rgba(63,185,80,.45);background:linear-gradient(135deg,rgba(63,185,80,.18),rgba(63,185,80,.05));}
+.eq-col.eq-sup-1 .eq-avatar{background:rgba(63,185,80,.18);border-color:rgba(63,185,80,.5);color:var(--green);}
+.eq-col.eq-sup-1 .eq-list{border-color:rgba(63,185,80,.22);}
+.eq-col.eq-sup-1 .eq-item{border-left-color:rgba(63,185,80,.75);}
+.eq-col.eq-sup-1 .eq-ini{background:rgba(63,185,80,.12);border-color:rgba(63,185,80,.3);color:var(--green);}
+.eq-col.eq-sup-2 .eq-col-h{border-color:rgba(251,146,60,.5);background:linear-gradient(135deg,rgba(251,146,60,.2),rgba(251,146,60,.06));}
+.eq-col.eq-sup-2 .eq-avatar{background:rgba(251,146,60,.18);border-color:rgba(251,146,60,.55);color:#fb923c;}
+.eq-col.eq-sup-2 .eq-list{border-color:rgba(251,146,60,.25);}
+.eq-col.eq-sup-2 .eq-item{border-left-color:rgba(251,146,60,.8);}
+.eq-col.eq-sup-2 .eq-ini{background:rgba(251,146,60,.12);border-color:rgba(251,146,60,.32);color:#fb923c;}
+.eq-col.eq-sup-3 .eq-col-h{border-color:rgba(244,114,182,.45);background:linear-gradient(135deg,rgba(244,114,182,.18),rgba(244,114,182,.05));}
+.eq-col.eq-sup-3 .eq-avatar{background:rgba(244,114,182,.18);border-color:rgba(244,114,182,.5);color:#f472b6;}
+.eq-col.eq-sup-3 .eq-list{border-color:rgba(244,114,182,.22);}
+.eq-col.eq-sup-3 .eq-item{border-left-color:rgba(244,114,182,.75);}
+.eq-col.eq-sup-3 .eq-ini{background:rgba(244,114,182,.12);border-color:rgba(244,114,182,.3);color:#f472b6;}
+.eq-col.eq-sup-cal .eq-col-h{border-color:rgba(234,179,8,.5);background:linear-gradient(135deg,rgba(234,179,8,.22),rgba(234,179,8,.06));}
+.eq-col.eq-sup-cal .eq-avatar{background:rgba(234,179,8,.2);border-color:rgba(234,179,8,.55);color:#eab308;}
+.eq-col.eq-sup-cal .eq-list{border-color:rgba(234,179,8,.28);}
+.eq-col.eq-sup-cal .eq-item{border-left-color:rgba(234,179,8,.85);}
+.eq-col.eq-sup-cal .eq-ini{background:rgba(234,179,8,.14);border-color:rgba(234,179,8,.35);color:#eab308;}
+.eq-col.eq-sup-cal-1 .eq-col-h{border-color:rgba(168,85,247,.45);background:linear-gradient(135deg,rgba(168,85,247,.2),rgba(168,85,247,.06));}
+.eq-col.eq-sup-cal-1 .eq-avatar{background:rgba(168,85,247,.18);border-color:rgba(168,85,247,.5);color:#a855f7;}
+.eq-col.eq-sup-cal-1 .eq-list{border-color:rgba(168,85,247,.25);}
+.eq-col.eq-sup-cal-1 .eq-item{border-left-color:rgba(168,85,247,.8);}
+.eq-col.eq-sup-cal-1 .eq-ini{background:rgba(168,85,247,.12);border-color:rgba(168,85,247,.3);color:#a855f7;}
+.eq-badge-ito{font-size:8px;font-weight:800;padding:1px 5px;border-radius:4px;background:rgba(234,179,8,.15);color:#eab308;border:1px solid rgba(234,179,8,.35);flex-shrink:0;}
+.eq-nom{font-size:11px;flex:1;min-width:0;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .eq-empty{text-align:center;padding:16px 8px;color:var(--muted);font-size:10px;font-style:italic;}
 .eq-div{width:1px;background:var(--border);flex-shrink:0;align-self:stretch;margin:0 2px;}
 .eq-loading{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:var(--muted);font-size:12px;height:200px;width:100%;}
@@ -1716,6 +1748,11 @@ function toast(msg,type='ok'){
 
 // ── EQUIPOS (drag & drop + importar plantel) ─────────────────────────────────
 let eqDatos=null, eqPendiente=null, eqImportPendiente=[];
+const EQ_RUTS_ITO_CALIDAD=new Set(['18534498-3','25821869-8','26857054-3','18907543-K']);
+const EQ_RUT_EDINSON_CALIDAD='15538814-5';
+const EQ_RUT_RAFAEL_CALIDAD='26601622-0';
+const EQ_CARGOS_CALIDAD=new Set(['supervisor_calidad','jefe_calidad']);
+function eqEsSupervisorCalidad(s){return EQ_CARGOS_CALIDAD.has(String(s?.cargo||'').toLowerCase());}
 
 function eqNormNombre(s){
   return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
@@ -1727,20 +1764,64 @@ function eqNormRut(v){
   if(s.length>=2) return s.slice(0,-1)+'-'+s.slice(-1);
   return s;
 }
+function eqLimpiarPrefijo(s){
+  let t=String(s||'').trim();
+  const re=/^(?:(?:FS_|MM_|AN_|CL_)?(?:SE_|MM_)?(?:HFC_|NFTT_)?(?:TRAZ_|CREA_)?_?)+/i;
+  let prev;
+  do{prev=t;t=t.replace(re,'').trim();}while(t!==prev);
+  return t;
+}
+function eqNombreCortoDesdePartes(nombres,paterno,materno){
+  const n=eqLimpiarPrefijo(nombres).split(/\s+/).filter(Boolean);
+  const nom=n[0]||'';
+  const pat=String(paterno||'').trim();
+  const mat=String(materno||'').trim();
+  if(pat||mat) return [nom,pat,mat].filter(Boolean).join(' ');
+  if(n.length>=3) return [n[0],n[n.length-2],n[n.length-1]].join(' ');
+  return n.join(' ');
+}
+function eqNombreCortoDesdeTexto(raw){
+  const p=eqLimpiarPrefijo(raw).split(/\s+/).filter(Boolean);
+  if(!p.length) return '';
+  if(p.length<=3) return p.join(' ');
+  return [p[0],p[p.length-2],p[p.length-1]].join(' ');
+}
+function eqNombreCorto(t){
+  if(!t) return '—';
+  if(typeof t==='string') return eqNombreCortoDesdeTexto(t)||t;
+  return eqNombreCortoDesdePartes(t.nombres,t.paterno,t.materno)||t.rut||'—';
+}
 function eqIniciales(nombre){
-  const p=(nombre||'').trim().split(' ').filter(Boolean);
+  const p=eqNombreCortoDesdeTexto(nombre||'').split(' ').filter(Boolean);
   if(!p.length) return '?';
-  if(p.length===1) return p[0][0].toUpperCase();
+  if(p.length===1) return p[0].slice(0,2).toUpperCase();
   return (p[0][0]+p[1][0]).toUpperCase();
 }
 function eqNombreCompleto(t){
-  return `${t.nombres||''} ${t.paterno||''} ${t.materno||''}`.trim()||t.rut||'—';
+  return eqNombreCorto(t);
+}
+function eqEsItoCalidad(rut,rolEquipo){
+  if(EQ_RUTS_ITO_CALIDAD.has(rut)) return true;
+  return String(rolEquipo||'').toLowerCase()==='ito_calidad';
+}
+const EQ_TIPOS_EXCLUIDOS=new Set(['ITO','TA','ADMINISTRATIVO','FUNCIONARIO']);
+function eqEsPersonalEquipo(t){
+  const tipo=String(t?.tipo_personal||'').trim().toUpperCase();
+  return !EQ_TIPOS_EXCLUIDOS.has(tipo);
 }
 function eqMatchSupervisor(excelNombre, supervisores){
   const n=eqNormNombre(excelNombre);
   if(!n) return null;
+  if(n.includes('EDINSON')&&n.includes('MELLADO')){
+    return supervisores.find(s=>s.rut===EQ_RUT_EDINSON_CALIDAD)
+      ||supervisores.find(s=>eqEsSupervisorCalidad(s)&&eqNormNombre(s.nombre).includes('EDINSON'))
+      ||null;
+  }
   if((n.includes('RAFAEL')&&n.includes('MARTINEZ'))||(n.includes('MARTINEZ')&&n.includes('RAFAEL'))){
-    return supervisores.find(s=>s.rut==='25626541-9')||null;
+    return supervisores.find(s=>s.rut==='25626541-9')
+      ||supervisores.find(s=>s.rut===EQ_RUT_RAFAEL_CALIDAD)
+      ||supervisores.find(s=>eqEsSupervisorCalidad(s)&&eqNormNombre(s.nombre).includes('RAFAEL'))
+      ||null;
   }
   let m=supervisores.find(s=>eqNormNombre(s.nombre)===n);
   if(m) return m;
@@ -1768,12 +1849,19 @@ async function cargarEquipos(){
   board.innerHTML='<div class="eq-loading"><div class="eq-spin"></div>Cargando equipos…</div>';
   eqDatos=null;
   try{
-    const[{data:tecs},{data:asigs},{data:sups}]=await Promise.all([
-      sb.from('nomina_tecnicos').select('rut,nombres,paterno,materno,estado_vigencia').order('paterno'),
+    const[{data:tecs},{data:asigs},{data:sups},{data:equipos}]=await Promise.all([
+      sb.from('nomina_tecnicos').select('rut,nombres,paterno,materno,estado_vigencia,tipo_personal').order('paterno'),
       sb.from('supervisor_tecnicos_crea').select('rut_tecnico,rut_supervisor'),
-      sb.from('supervisores_crea').select('rut,nombre').eq('activo',true).order('nombre'),
+      sb.from('supervisores_crea').select('rut,nombre,cargo').eq('activo',true).order('nombre'),
+      sb.from('equipos_crea').select('rut_tecnico,rol'),
     ]);
-    const supervisores=sups||[];
+    const rolesEquipo={};
+    (equipos||[]).forEach(e=>{rolesEquipo[e.rut_tecnico]=e.rol;});
+    const itoCalidadRuts=new Set(EQ_RUTS_ITO_CALIDAD);
+    (equipos||[]).forEach(e=>{if(e.rol==='ito_calidad') itoCalidadRuts.add(e.rut_tecnico);});
+    const supervisoresCalidad=(sups||[]).filter(eqEsSupervisorCalidad);
+    const supervisoresTerreno=(sups||[]).filter(s=>!eqEsSupervisorCalidad(s));
+    const supervisores=[...supervisoresTerreno,...supervisoresCalidad];
     const supMap={};
     (asigs||[]).forEach(a=>{supMap[a.rut_tecnico]=a.rut_supervisor;});
     const supNombre=Object.fromEntries(supervisores.map(s=>[s.rut,s.nombre]));
@@ -1782,10 +1870,17 @@ async function cargarEquipos(){
       nombre:eqNombreCompleto(t),
       rut_supervisor:supMap[t.rut]||null,
       nombre_supervisor:supMap[t.rut]?supNombre[supMap[t.rut]]||null:null,
+      esItoCalidad:eqEsItoCalidad(t.rut,rolesEquipo[t.rut])||String(t.tipo_personal||'').toUpperCase()==='ITO'&&itoCalidadRuts.has(t.rut),
     });
-    const tecnicos=(tecs||[]).filter(t=>esVigenteCom(t.estado_vigencia)).map(mapTec);
-    const licencias=(tecs||[]).filter(t=>esLicenciaMedicaCom(t.estado_vigencia)).map(mapTec);
-    eqDatos={supervisores,tecnicos,licencias,supNombre};
+    const tecnicos=(tecs||[]).filter(t=>{
+      if(!esVigenteCom(t.estado_vigencia)) return false;
+      if(!eqEsPersonalEquipo(t)) return false;
+      if(itoCalidadRuts.has(t.rut)||eqEsItoCalidad(t.rut,rolesEquipo[t.rut])) return false;
+      return true;
+    }).map(mapTec);
+    const itosCalidad=(tecs||[]).filter(t=>esVigenteCom(t.estado_vigencia)&&(itoCalidadRuts.has(t.rut)||eqEsItoCalidad(t.rut,rolesEquipo[t.rut]))).map(mapTec);
+    const licencias=(tecs||[]).filter(t=>esLicenciaMedicaCom(t.estado_vigencia)&&eqEsPersonalEquipo(t)&&!itoCalidadRuts.has(t.rut)).map(mapTec);
+    eqDatos={supervisores,supervisoresTerreno,supervisoresCalidad,tecnicos,itosCalidad,licencias,supNombre,itoCalidadRuts};
     document.getElementById('eqLastUpd').textContent='Act. '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
     eqRenderBoard();
   }catch(e){
@@ -1797,9 +1892,9 @@ function eqRenderBoard(){
   const board=document.getElementById('eqBoard');
   board.innerHTML='';
   if(!eqDatos){board.innerHTML='<div class="eq-loading">Sin datos</div>';return;}
-  const {supervisores,tecnicos,licencias}=eqDatos;
+  const {supervisoresTerreno,supervisoresCalidad,tecnicos,itosCalidad,licencias}=eqDatos;
   const supTecs={};
-  supervisores.forEach(s=>{supTecs[s.rut]=[];});
+  (supervisoresTerreno||[]).forEach(s=>{supTecs[s.rut]=[];});
   const sinSup=[];
   tecnicos.forEach(t=>{
     const item={rut:t.rut,nombre:t.nombre};
@@ -1811,20 +1906,48 @@ function eqRenderBoard(){
   const listaLic=(licencias||[]).map(t=>({rut:t.rut,nombre:t.nombre}));
   listaLic.sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
 
+  const calidadSups=[...(supervisoresCalidad||[])].sort((a,b)=>{
+    if(a.rut===EQ_RUT_RAFAEL_CALIDAD) return -1;
+    if(b.rut===EQ_RUT_RAFAEL_CALIDAD) return 1;
+    if(a.rut===EQ_RUT_EDINSON_CALIDAD) return -1;
+    if(b.rut===EQ_RUT_EDINSON_CALIDAD) return 1;
+    return a.nombre.localeCompare(b.nombre,'es');
+  });
+  const supTecsCal={};
+  calidadSups.forEach(s=>{supTecsCal[s.rut]=[];});
+  (itosCalidad||[]).forEach(t=>{
+    const item={rut:t.rut,nombre:t.nombre,esItoCalidad:true};
+    let dest=t.rut_supervisor;
+    if(!dest||supTecsCal[dest]===undefined){
+      dest=supTecsCal[EQ_RUT_EDINSON_CALIDAD]!==undefined?EQ_RUT_EDINSON_CALIDAD:calidadSups[0]?.rut;
+    }
+    if(dest&&supTecsCal[dest]!==undefined) supTecsCal[dest].push(item);
+  });
+  Object.keys(supTecsCal).forEach(r=>supTecsCal[r].sort((a,b)=>a.nombre.localeCompare(b.nombre,'es')));
+
   board.appendChild(eqCrearColumna('__sin_sup__','Sin supervisor',sinSup,'sin'));
   board.appendChild(eqCrearDivisor());
 
   let totalAsig=0;
-  supervisores.forEach(sup=>{
+  (supervisoresTerreno||[]).forEach((sup,idx)=>{
     const lista=supTecs[sup.rut]||[];
     totalAsig+=lista.length;
-    board.appendChild(eqCrearColumna(sup.rut,sup.nombre,lista,'sup'));
+    board.appendChild(eqCrearColumna(sup.rut,eqNombreCortoDesdeTexto(sup.nombre),lista,'sup',idx));
   });
+
+  if(calidadSups.length){
+    board.appendChild(eqCrearDivisor());
+    calidadSups.forEach((sup,idx)=>{
+      const lista=supTecsCal[sup.rut]||[];
+      totalAsig+=lista.length;
+      board.appendChild(eqCrearColumnaCalidad(sup.rut,eqNombreCortoDesdeTexto(sup.nombre),lista,idx));
+    });
+  }
 
   board.appendChild(eqCrearDivisor());
   board.appendChild(eqCrearColumna('__licencia__','Licencias médicas',listaLic,'lic'));
 
-  eqActualizarInfoBar(totalAsig,sinSup.length,listaLic.length);
+  eqActualizarInfoBar(totalAsig,sinSup.length,listaLic.length,(itosCalidad||[]).length);
 
   if(typeof Sortable!=='undefined'){
     document.querySelectorAll('#eqBoard .eq-list').forEach(lista=>{
@@ -1846,16 +1969,28 @@ function eqCrearDivisor(){
   div.className='eq-div';
   return div;
 }
-function eqActualizarInfoBar(totalAsig,sinSup,totalLic){
+function eqActualizarInfoBar(totalAsig,sinSup,totalLic,totalItos){
   const s=sinSup??(eqDatos?.tecnicos||[]).filter(t=>!t.rut_supervisor).length;
   const a=totalAsig??(eqDatos?.tecnicos||[]).filter(t=>t.rut_supervisor).length;
   const l=totalLic??(eqDatos?.licencias||[]).length;
+  const ic=totalItos??(eqDatos?.itosCalidad||[]).length;
+  const st=(eqDatos?.supervisoresTerreno||[]).length;
+  const sc=(eqDatos?.supervisoresCalidad||[]).length;
   document.getElementById('eqInfo').textContent=
-    `${a} asignados · ${s} sin supervisor · ${l} licencias médicas · ${eqDatos?.supervisores?.length||0} supervisores`;
+    `${a} asignados · ${s} sin supervisor · ${ic} ITO calidad · ${l} licencias · ${st} sup. terreno${sc?` · ${sc} sup. calidad`:''}`;
 }
-function eqCrearColumna(rutSup,nombre,lista,tipo){
+function eqCrearColumnaCalidad(rutSup,nombre,lista,colorIdx){
+  const col=eqCrearColumna(rutSup,nombre,lista,'cal',colorIdx);
+  col.classList.add(colorIdx%2?'eq-sup-cal-1':'eq-sup-cal');
+  return col;
+}
+function eqCrearColumna(rutSup,nombre,lista,tipo,colorIdx){
   const col=document.createElement('div');
-  col.className='eq-col'+(tipo==='sin'?' eq-sin':tipo==='lic'?' eq-lic':'');
+  let cls='eq-col';
+  if(tipo==='sin') cls+=' eq-sin';
+  else if(tipo==='lic') cls+=' eq-lic';
+  else if(tipo==='sup') cls+=` eq-sup-${(colorIdx??0)%4}`;
+  col.className=cls;
   col.dataset.rutSup=rutSup;
   col.dataset.nombre=nombre;
   const ini=tipo==='sin'?'?':tipo==='lic'?'🏥':eqIniciales(nombre);
@@ -1872,10 +2007,11 @@ function eqCrearColumna(rutSup,nombre,lista,tipo){
 }
 function eqRenderItem(t){
   const ini=eqIniciales(t.nombre);
+  const badge=t.esItoCalidad?'<span class="eq-badge-ito">ITO</span>':'';
   return `<div class="eq-item" data-rut="${t.rut}" data-nombre="${t.nombre.replace(/"/g,'&quot;')}">
     <span class="eq-handle">⠿</span>
     <div class="eq-ini">${ini}</div>
-    <span class="eq-nom" title="${t.nombre.replace(/"/g,'&quot;')}">${t.nombre}</span>
+    <span class="eq-nom" title="${t.nombre.replace(/"/g,'&quot;')}">${t.nombre}</span>${badge}
   </div>`;
 }
 
@@ -1921,6 +2057,12 @@ async function eqPersistirMovimiento(rutTecnico,rutOrigen,rutDestino){
     if(insErr) throw insErr;
     const nomSup=eqDatos?.supNombre?.[rutDestino]||'';
     await sb.from('plantel_tecnicos').update({supervisor:nomSup}).eq('rut',rutTecnico);
+    const{data:supEq,error:errSupEq}=await sb.from('equipos_crea').select('equipo').eq('rut_tecnico',rutDestino).eq('rol','supervisor').maybeSingle();
+    if(errSupEq) throw errSupEq;
+    if(supEq?.equipo!=null){
+      const{error:errEq}=await sb.from('equipos_crea').update({equipo:supEq.equipo}).eq('rut_tecnico',rutTecnico).eq('rol','tecnico');
+      if(errEq) throw errEq;
+    }
   }
 }
 async function eqConfirmarMover(){
@@ -2005,7 +2147,7 @@ function eqColIdx(headers, variants){
   return -1;
 }
 function eqParseNombreExcel(raw){
-  const parts=String(raw||'').trim().toUpperCase().split(/\s+/).filter(Boolean);
+  const parts=eqLimpiarPrefijo(String(raw||'').trim()).toUpperCase().split(/\s+/).filter(Boolean);
   if(!parts.length) return{nombres:'SIN',paterno:'DATO',materno:null,nombreCompleto:'SIN DATO'};
   if(parts.length===1) return{nombres:parts[0],paterno:parts[0],materno:null,nombreCompleto:parts[0]};
   if(parts.length===2) return{nombres:parts[0],paterno:parts[1],materno:null,nombreCompleto:parts.join(' ')};
@@ -2016,7 +2158,7 @@ function eqParseNombreExcel(raw){
   return{nombres,paterno,materno,nombreCompleto:parts.join(' ')};
 }
 function eqNombreDesdeNomina(row){
-  return `${row.nombres||''} ${row.paterno||''} ${row.materno||''}`.trim();
+  return eqNombreCorto(row);
 }
 async function eqProcesarExcel(input){
   const file=input.files?.[0];
@@ -2051,10 +2193,16 @@ async function eqProcesarExcel(input){
       const estado=iEst>=0?String(row[iEst]):'';
       if(!eqEsOperativoExcel(estado)) continue;
       const supExcel=String(row[iSup]||'').trim();
-      const sup=supExcel?eqMatchSupervisor(supExcel,eqDatos.supervisores):null;
-      const rutSupDest=sup?.rut||'__sin_sup__';
-      if(supExcel&&!sup){sinMatch.push({rut,supExcel});continue;}
+      const allSups=[...(eqDatos.supervisores||[]),...(eqDatos.supervisoresCalidad||[])];
+      let sup=supExcel?eqMatchSupervisor(supExcel,allSups):null;
+      let rutSupDest=sup?.rut||'__sin_sup__';
+      let nomSupDest=sup?.nombre||'Sin supervisor';
+      if(EQ_RUTS_ITO_CALIDAD.has(rut)){
+        const edinson=allSups.find(s=>s.rut===EQ_RUT_EDINSON_CALIDAD);
+        if(edinson){rutSupDest=edinson.rut;nomSupDest=edinson.nombre;}
+      }else if(supExcel&&!sup){sinMatch.push({rut,supExcel});continue;}
       const enNomina=nominaMap[rut];
+      if(enNomina&&!eqEsPersonalEquipo(enNomina)) continue;
       if(!enNomina){
         const nomRaw=iNom>=0?String(row[iNom]).trim():'';
         if(!nomRaw){sinNombre.push(rut);continue;}
@@ -2063,11 +2211,11 @@ async function eqProcesarExcel(input){
           rut,esNuevo:true,
           nombres:parsed.nombres,paterno:parsed.paterno,materno:parsed.materno,
           nombre:parsed.nombreCompleto,
-          supExcel:supExcel||'(vacío)',rutSupDest,nomSupDest:sup?.nombre||'Sin supervisor',
+          supExcel:supExcel||'(vacío)',rutSupDest,nomSupDest,
         });
         continue;
       }
-      const actual=eqDatos.tecnicos.find(t=>t.rut===rut)||eqDatos.licencias.find(t=>t.rut===rut);
+      const actual=eqDatos.tecnicos.find(t=>t.rut===rut)||eqDatos.licencias.find(t=>t.rut===rut)||eqDatos.itosCalidad?.find(t=>t.rut===rut);
       const supActual=actual?.rut_supervisor??supMapImport[rut]??null;
       const rutSupActualNorm=supActual||'__sin_sup__';
       const reactivar=!esVigenteCom(enNomina.estado_vigencia)&&!esLicenciaMedicaCom(enNomina.estado_vigencia);
@@ -2076,7 +2224,7 @@ async function eqProcesarExcel(input){
       const nombre=actual?.nombre||eqNombreDesdeNomina(enNomina)||rut;
       cambios.push({
         rut,esNuevo:false,reactivar,desdeLicencia,nombre,
-        supExcel:supExcel||'(vacío)',rutSupDest,nomSupDest:sup?.nombre||'Sin supervisor',
+        supExcel:supExcel||'(vacío)',rutSupDest,nomSupDest,
       });
     }
     eqImportPendiente=cambios;

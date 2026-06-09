@@ -1,6 +1,10 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'produccion_service.dart';
 
 /// Ítem individual del stock de Kepler (antes de agrupar por categoría).
 class ItemStock {
@@ -54,15 +58,410 @@ class TecnicoStock {
   /// Todos los ítems seriados de [categoria] (para que B escanee y elija).
   List<ItemStock> seriadosPorCategoria(String categoria) =>
       items.where((i) => i.categoria == categoria && i.esSeriado).toList();
+
+  /// Busca un ítem por número de serie (exacto o coincidencia parcial de barcode).
+  ItemStock? findSerie(String serie) {
+    final candidatas = LogisticaService.variantesSerieEscaneada(serie);
+    if (candidatas.isEmpty) return null;
+
+    ItemStock? parcial;
+    for (final cand in candidatas) {
+      for (final i in items) {
+        if (i.serie == null) continue;
+        final itemSerie = LogisticaService.normalizeSerie(i.serie!);
+        if (itemSerie.isEmpty) continue;
+        if (itemSerie == cand) return i;
+        if (itemSerie.length >= 6 &&
+            cand.length >= 6 &&
+            (cand.endsWith(itemSerie) ||
+                itemSerie.endsWith(cand) ||
+                cand.contains(itemSerie) ||
+                itemSerie.contains(cand))) {
+          parcial ??= i;
+        }
+      }
+    }
+    return parcial;
+  }
 }
 
 class LogisticaService {
   static const _url = 'https://logistica.sbip.cl/api/get_all_saldo';
 
+  /// SKUs Kepler clasificados como decodificador Claro (resto deco → VTR).
+  static const Set<String> skusDecodificadorClaro = {
+    'CL-000-0040-23017',
+    'CL-000-0040-24563',
+    'CL-000-0040-24818',
+  };
+
+  static bool esTipoDecodificador(String tipoMaterial) =>
+      tipoMaterial.contains('Decodificador');
+
+  /// Clave de comparación (sin puntos ni guión).
+  static String normalizeRutKey(String rut) =>
+      rut.replaceAll(RegExp(r'[.\-\s]'), '').toUpperCase();
+
+  /// Formato estándar Kepler: 12345678-9
+  static String canonicalRut(String rut) {
+    final k = normalizeRutKey(rut);
+    if (k.length < 2) return rut.trim();
+    return '${k.substring(0, k.length - 1)}-${k.substring(k.length - 1)}';
+  }
+
+  static bool sameRut(String a, String b) =>
+      normalizeRutKey(a) == normalizeRutKey(b);
+
+  /// Normaliza serie escaneada (espacios, prefijos GS1, códigos de barra).
+  static String normalizeSerie(String raw) {
+    var s = raw.trim().toUpperCase();
+    if (s.isEmpty) return s;
+
+    // Prefijos habituales en etiquetas
+    for (final p in ['S/N:', 'SN:', 'SERIE:', 'SERIAL:', 'N/S:']) {
+      if (s.startsWith(p)) {
+        s = s.substring(p.length).trim();
+        break;
+      }
+    }
+
+    // Códigos GS1 / Code128: ]C1, ]E0, FNC1 (␝), etc.
+    s = s.replaceAll(RegExp(r'^\](?:C1|E0|E3|d2)'), '');
+    s = s.replaceAll(RegExp(r'[\x1D\x1E]'), ' ');
+
+    // AI 21 (número de serie) en cualquier posición
+    final m21 = RegExp(r'(?:\(21\)|21)([A-Z0-9]{5,})').firstMatch(s);
+    if (m21 != null) return m21.group(1)!;
+
+    // Último bloque alfanumérico largo (típico en etiquetas ONT/deco)
+    final bloques = RegExp(r'[A-Z0-9]{8,}')
+        .allMatches(s.replaceAll(RegExp(r'[^A-Z0-9]'), ' '))
+        .map((m) => m.group(0)!)
+        .toList();
+    if (bloques.isNotEmpty) return bloques.last;
+
+    return s.replaceAll(RegExp(r'[^A-Z0-9]'), '');
+  }
+
+  /// Variantes posibles de una lectura de escáner para cruzar con Kepler.
+  static List<String> variantesSerieEscaneada(String raw) {
+    final out = <String>{};
+    void add(String? v) {
+      if (v == null || v.isEmpty) return;
+      out.add(v);
+    }
+
+    final upper = raw.trim().toUpperCase();
+    add(normalizeSerie(raw));
+
+    for (final m in RegExp(r'(?:\(21\)|21)([A-Z0-9]{5,})')
+        .allMatches(upper)) {
+      add(normalizeSerie(m.group(1)!));
+    }
+    for (final m
+        in RegExp(r'[A-Z0-9]{8,}').allMatches(upper.replaceAll(RegExp(r'[^A-Z0-9]'), ' '))) {
+      add(m.group(0));
+    }
+    add(upper.replaceAll(RegExp(r'[^A-Z0-9]'), ''));
+
+    return out.where((s) => s.length >= 5).toList();
+  }
+
+  /// Normaliza serie para almacenar; retorna null si queda vacía.
+  static String? _normalizeSerieAlmacenada(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final s = normalizeSerie(raw);
+    return s.isEmpty ? null : s;
+  }
+
+  Future<Map<String, dynamic>> _fetchApiData() async {
+    final response = await http
+        .get(Uri.parse(_url))
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      throw Exception('Error logística HTTP ${response.statusCode}');
+    }
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return body['data'] as Map<String, dynamic>;
+  }
+
+  void _procesarItems(
+    List<dynamic> apiItems,
+    Map<String, Map<String, double>> acum,
+    Map<String, List<ItemStock>> rawItems, {
+    bool porSerie = false,
+  }) {
+    for (final item in apiItems) {
+      final rutRaw = item['trabajador_rut'] as String? ?? '';
+      final rut    = canonicalRut(rutRaw);
+      final idMat  = item['id_material'];
+      if (rut.isEmpty || idMat == null) continue;
+
+      final idMaterial = idMat is int ? idMat : int.tryParse(idMat.toString());
+      if (idMaterial == null) continue;
+
+      final cantidad = porSerie
+          ? 1.0
+          : (double.tryParse(item['cantidad']?.toString() ?? '0') ?? 0);
+      if (cantidad <= 0) continue;
+
+      final nombreErp = item['nombre'] as String? ?? '';
+      final sku      = item['sku']?.toString();
+      final cat = categorizar(nombreErp, sku: sku);
+      if (cat == null) continue;
+
+      final serieRaw = porSerie
+          ? _normalizeSerieAlmacenada(item['serie']?.toString())
+          : null;
+
+      if (porSerie && (serieRaw == null || serieRaw.isEmpty)) continue;
+
+      acum.putIfAbsent(rut, () => {});
+      acum[rut]![cat] = (acum[rut]![cat] ?? 0) + cantidad;
+
+      rawItems.putIfAbsent(rut, () => []);
+      rawItems[rut]!.add(ItemStock(
+        idMaterial: idMaterial,
+        nombre:     nombreErp,
+        categoria:  cat,
+        cantidad:   cantidad,
+        serie:      serieRaw,
+      ));
+    }
+  }
+
+  /// `null` si el RUT puede solicitar material; mensaje legible si debe bloquearse.
+  Future<String?> mensajeBloqueoSolicitudMaterial(String rut) async {
+    final canon = canonicalRut(rut);
+    final db = Supabase.instance.client;
+
+    final results = await Future.wait<dynamic>([
+      db.from('nomina_bodega').select('rut').eq('rut', canon).maybeSingle(),
+      db.from('supervisores_crea').select('rut').eq('rut', canon).maybeSingle(),
+      db.from('roles_flota').select('rut').eq('rut', canon).maybeSingle(),
+    ]);
+
+    if (results[0] != null) {
+      return 'Los bodegueros no pueden solicitar material de campo desde esta pantalla.';
+    }
+    if (results[1] != null) {
+      return 'Los supervisores gestionan solicitudes desde el panel de supervisor.';
+    }
+    if (results[2] != null) {
+      return 'Tu perfil de flota no puede solicitar material de campo.';
+    }
+
+    try {
+      await nombreDesdeNomina(rut);
+      return null;
+    } on StateError catch (e) {
+      return e.message;
+    }
+  }
+
+  /// Nombre por RUT: nómina primero; caché de sesión solo si el RUT es el logueado.
+  Future<String> nombreParaSesion(String rut, {String? nombreSesion}) async {
+    if (rut.trim().isEmpty) {
+      final local = nombreSesion?.trim();
+      return (local != null && local.isNotEmpty) ? local : '';
+    }
+    try {
+      return await nombreDesdeNomina(rut);
+    } catch (_) {
+      final canon = canonicalRut(rut);
+      final prefs = await SharedPreferences.getInstance();
+      final rutSesion = canonicalRut(
+        prefs.getString('rut_tecnico') ??
+            prefs.getString('user_rut') ??
+            '',
+      );
+      if (canon == rutSesion) {
+        final n = (prefs.getString('nombre_tecnico') ??
+                prefs.getString('user_nombre') ??
+                '')
+            .trim();
+        if (n.isNotEmpty) return n;
+      }
+      final local = nombreSesion?.trim();
+      if (local != null && local.isNotEmpty) return local;
+      return canon;
+    }
+  }
+
+  /// Nombre por RUT desde nómina (fuente de verdad en guías / traspasos / PDF).
+  Future<String> nombrePorRut(String rut, {String? fallback}) async {
+    if (rut.trim().isEmpty) {
+      final fb = fallback?.trim();
+      return (fb != null && fb.isNotEmpty) ? fb : '';
+    }
+    try {
+      return await nombreDesdeNomina(rut);
+    } catch (_) {
+      final fb = fallback?.trim();
+      return (fb != null && fb.isNotEmpty) ? fb : canonicalRut(rut);
+    }
+  }
+
+  static String _nombreDesdeFilaNomina(Map<String, dynamic> row) {
+    final nombre =
+        '${row['nombres'] ?? ''} ${row['paterno'] ?? ''} ${row['materno'] ?? ''}'
+            .trim()
+            .replaceAll(RegExp(r'\s+'), ' ');
+    return nombre;
+  }
+
+  static List<String> _variantesRutNomina(String rut) {
+    final canon = canonicalRut(rut);
+    final key = normalizeRutKey(rut);
+    return {
+      canon,
+      rut.trim(),
+      key,
+      key.replaceAll(RegExp(r'[.\-\s]'), ''),
+      ...ProduccionService.rutVariantes(rut),
+      ...ProduccionService.rutVariantes(canon),
+    }.where((s) => s.isNotEmpty).toList();
+  }
+
+  /// Nombre canónico desde nómina (técnicos o bodegueros).
+  Future<String> nombreDesdeNomina(String rut) async {
+    final variantes = _variantesRutNomina(rut);
+    final db = Supabase.instance.client;
+
+    final bodega = await db
+        .from('nomina_bodega')
+        .select('rut, nombre')
+        .inFilter('rut', variantes)
+        .limit(1)
+        .maybeSingle();
+    if (bodega != null) {
+      final nombreBod = bodega['nombre']?.toString().trim() ?? '';
+      if (nombreBod.isNotEmpty) return nombreBod;
+    }
+
+    final row = await db
+        .from('nomina_tecnicos')
+        .select('rut, nombres, paterno, materno')
+        .inFilter('rut', variantes)
+        .limit(1)
+        .maybeSingle();
+    if (row == null) {
+      throw StateError('RUT ${canonicalRut(rut)} no está en nómina de técnicos');
+    }
+    final nombre = _nombreDesdeFilaNomina(Map<String, dynamic>.from(row as Map));
+    if (nombre.isEmpty) {
+      throw StateError('RUT ${canonicalRut(rut)} sin nombre en nómina');
+    }
+    return nombre;
+  }
+
+  Future<String?> _nombreNomina(String rut) async {
+    try {
+      return await nombreDesdeNomina(rut);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Mapa RUT canónico → nombre completo para todos los técnicos en nómina.
+  Future<Map<String, String>> _cargarNombresNomina() async {
+    final rows = await Supabase.instance.client
+        .from('nomina_tecnicos')
+        .select('rut, nombres, paterno, materno');
+
+    final Map<String, String> nombrePorRut = {};
+    for (final r in rows as List) {
+      final rut = canonicalRut(r['rut'] as String? ?? '');
+      final nombre =
+          '${r['nombres'] ?? ''} ${r['paterno'] ?? ''} ${r['materno'] ?? ''}'
+              .trim()
+              .replaceAll(RegExp(r'\s+'), ' ');
+      if (rut.isNotEmpty && nombre.isNotEmpty) {
+        nombrePorRut[rut] = nombre;
+      }
+    }
+    return nombrePorRut;
+  }
+
+  /// Stock de un técnico directo desde Kepler (sin depender del listado global).
+  /// [nombreDisplay]: respaldo si el RUT no está en nómina.
+  Future<TecnicoStock?> fetchStockTecnico(
+    String rut, {
+    String? nombreDisplay,
+  }) async {
+    final rutCanon = canonicalRut(rut);
+    final nombreNomina = await _nombreNomina(rutCanon);
+    final display = nombreDisplay?.trim();
+    final nombre = (nombreNomina != null && nombreNomina.isNotEmpty)
+        ? nombreNomina
+        : (display != null && display.isNotEmpty ? display : null);
+    if (nombre == null || nombre.isEmpty) return null;
+    if (display != null &&
+        display.isNotEmpty &&
+        nombreNomina != null &&
+        nombreNomina.toLowerCase() != display.toLowerCase()) {
+      // ignore: avoid_print
+      print(
+          '[Logistica] nombre cacheado "$display" → nómina "$nombreNomina" '
+          '($rutCanon)');
+    }
+
+    final data = await _fetchApiData();
+    final acum     = <String, Map<String, double>>{};
+    final rawItems = <String, List<ItemStock>>{};
+
+    _procesarItems(data['no_seriados'] as List<dynamic>? ?? [], acum, rawItems);
+    _procesarItems(
+      data['seriados'] as List<dynamic>? ?? [],
+      acum,
+      rawItems,
+      porSerie: true,
+    );
+
+    final rutKey = _resolverRutEnMapa(acum, rutCanon);
+    final stock  = rutKey != null ? acum[rutKey] : null;
+    if (stock == null || stock.isEmpty) {
+      return TecnicoStock(rut: rutCanon, nombre: nombre, stock: const {}, items: const []);
+    }
+
+    return TecnicoStock(
+      rut:    rutCanon,
+      nombre: nombre,
+      stock:  stock,
+      items:  rutKey != null ? (rawItems[rutKey] ?? []) : const [],
+    );
+  }
+
+  /// Kepler a veces devuelve el RUT con formato distinto al de nómina.
+  static String? _resolverRutEnMapa(
+    Map<String, Map<String, double>> acum,
+    String rutCanon,
+  ) {
+    if (acum.containsKey(rutCanon)) return rutCanon;
+    for (final k in acum.keys) {
+      if (sameRut(k, rutCanon)) return k;
+    }
+    return null;
+  }
+
+  /// Busca una serie en Kepler y devuelve el ítem si pertenece al [rut].
+  Future<ItemStock?> buscarSerieTecnico(String rut, String serie) async {
+    final s = normalizeSerie(serie);
+    final tecnico = await fetchStockTecnico(rut);
+    return tecnico?.findSerie(s);
+  }
+
   // ── Categorización ──────────────────────────────────────────
   // Mapea el nombre del ERP → categoría de kMateriales.
   // Retorna null si no pertenece a ninguna categoría relevante.
-  static String? categorizar(String nombreErp) {
+  static String? _categoriaDecodificador(String? sku) {
+    final skuNorm = (sku ?? '').trim().toUpperCase();
+    return skusDecodificadorClaro.contains(skuNorm)
+        ? 'Decodificador Claro'
+        : 'Decodificador VTR';
+  }
+
+  static String? categorizar(String nombreErp, {String? sku}) {
     final n = nombreErp.toUpperCase();
 
     if (n.contains('ROSETA'))                                      return 'Roseta';
@@ -100,9 +499,11 @@ class LogisticaService {
     }
 
     if (n.contains('DECODIFICADOR') || n.contains('DECO ') ||
-        n.contains('STB ') || n.contains('SET TOP') ||
-        n.contains('CPE ') || n.contains('FUSE4K') ||
-        n.contains('FUSE 4K'))                                    return 'Decodificador';
+        n.contains('STB') || n.contains('SET TOP') ||
+        n.contains('CPE') || n.contains('FUSE4K') ||
+        n.contains('FUSE 4K') || n.contains('FUSE STICK')) {
+      return _categoriaDecodificador(sku);
+    }
 
     // ── Nuevas categorías ────────────────────────────────────────
     if (n.contains('CANCAMO') || n.contains('CÁNCAMO'))          return 'Cáncamos';
@@ -122,99 +523,30 @@ class LogisticaService {
   // ── Fetch principal ─────────────────────────────────────────
 
   Future<List<TecnicoStock>> fetchStock() async {
-    final db = Supabase.instance.client;
+    // Todos los técnicos en nómina (sin filtrar por equipo/supervisor CREA).
+    final nombrePorRut = await _cargarNombresNomina();
 
-    // 1. Todos los RUTs registrados en la relación supervisor-técnico
-    final stcRows = await db
-        .from('supervisor_tecnicos_crea')
-        .select('rut_tecnico');
+    final data = await _fetchApiData();
 
-    final ruts = (stcRows as List)
-        .map((r) => r['rut_tecnico'] as String? ?? '')
-        .where((r) => r.isNotEmpty)
-        .toSet()
-        .toList();
-
-    // 2. Nombres desde nómina
-    final Map<String, String> nombrePorRut = {};
-    if (ruts.isNotEmpty) {
-      final nominaRows = await db
-          .from('nomina_tecnicos')
-          .select('rut, nombres, paterno, materno')
-          .inFilter('rut', ruts);
-
-      for (final r in nominaRows as List) {
-        final rut = r['rut'] as String? ?? '';
-        final nombre =
-            '${r['nombres'] ?? ''} ${r['paterno'] ?? ''} ${r['materno'] ?? ''}'
-                .trim()
-                .replaceAll(RegExp(r'\s+'), ' ');
-        if (rut.isNotEmpty && nombre.isNotEmpty) {
-          nombrePorRut[rut] = nombre;
-        }
-      }
-    }
-
-    // 2. Llamar API de logística
-    final response = await http
-        .get(Uri.parse(_url))
-        .timeout(const Duration(seconds: 30));
-
-    if (response.statusCode != 200) {
-      throw Exception('Error logística HTTP ${response.statusCode}');
-    }
-
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
-    final data = body['data'] as Map<String, dynamic>;
-
-    // 3. Acumular stock por RUT + categoría, guardando también ítems individuales
+    // Acumular stock por RUT + categoría, guardando también ítems individuales
     final Map<String, Map<String, double>> acum  = {};
     final Map<String, List<ItemStock>>     rawItems = {};
 
-    void procesar(List<dynamic> apiItems, {bool porSerie = false}) {
-      for (final item in apiItems) {
-        final rut      = item['trabajador_rut'] as String? ?? '';
-        final nombre   = item['nombre'] as String? ?? '';
-        final idMat    = item['id_material'];
-        if (rut.isEmpty || idMat == null) continue;
+    _procesarItems(data['no_seriados'] as List<dynamic>? ?? [], acum, rawItems);
+    _procesarItems(
+      data['seriados'] as List<dynamic>? ?? [],
+      acum,
+      rawItems,
+      porSerie: true,
+    );
 
-        final idMaterial = idMat is int ? idMat : int.tryParse(idMat.toString());
-        if (idMaterial == null) continue;
-
-        final cantidad = porSerie
-            ? 1.0
-            : (double.tryParse(item['cantidad']?.toString() ?? '0') ?? 0);
-        if (cantidad <= 0) continue;
-
-        final cat = categorizar(nombre);
-        if (cat == null) continue;
-
-        final serie = porSerie ? item['serie']?.toString().trim() : null;
-
-        acum.putIfAbsent(rut, () => {});
-        acum[rut]![cat] = (acum[rut]![cat] ?? 0) + cantidad;
-
-        rawItems.putIfAbsent(rut, () => []);
-        rawItems[rut]!.add(ItemStock(
-          idMaterial: idMaterial,
-          nombre:     nombre,
-          categoria:  cat,
-          cantidad:   cantidad,
-          serie:      serie,
-        ));
-      }
-    }
-
-    procesar(data['no_seriados'] as List<dynamic>? ?? []);
-    procesar(data['seriados']    as List<dynamic>? ?? [], porSerie: true);
-
-    // 4. Construir lista de TecnicoStock — solo técnicos con nombre en Supabase
+    // Solo técnicos con saldo en Kepler y ficha en nomina_tecnicos.
     final List<TecnicoStock> resultado = [];
 
     for (final entry in acum.entries) {
       final rut    = entry.key;
       final nombre = nombrePorRut[rut];
-      if (nombre == null) continue; // técnico fuera del equipo/sin registro
+      if (nombre == null) continue;
 
       resultado.add(TecnicoStock(
         rut:    rut,
@@ -237,49 +569,17 @@ class LogisticaService {
 
   Future<({List<TecnicoStock> tecnicos, Map<String, String> serieDueno})>
       fetchStockConIndice() async {
-    final db = Supabase.instance.client;
+    final nombreTodos = await _cargarNombresNomina();
 
-    // RUTs registrados (filtro de la lista de técnicos)
-    final stcRows = await db
-        .from('supervisor_tecnicos_crea')
-        .select('rut_tecnico');
-    final rutosRegistrados = (stcRows as List)
-        .map((r) => r['rut_tecnico'] as String? ?? '')
-        .where((r) => r.isNotEmpty)
-        .toSet();
-
-    // Nombres de TODOS los técnicos en nómina (sin filtro de supervisor)
-    final nominaRows = await db
-        .from('nomina_tecnicos')
-        .select('rut, nombres, paterno, materno');
-    final Map<String, String> nombreTodos = {};
-    for (final r in nominaRows as List) {
-      final rut = r['rut'] as String? ?? '';
-      final nombre =
-          '${r['nombres'] ?? ''} ${r['paterno'] ?? ''} ${r['materno'] ?? ''}'
-              .trim()
-              .replaceAll(RegExp(r'\s+'), ' ');
-      if (rut.isNotEmpty && nombre.isNotEmpty) nombreTodos[rut] = nombre;
-    }
-
-    // Llamada única a Kepler
-    final response = await http
-        .get(Uri.parse(_url))
-        .timeout(const Duration(seconds: 30));
-    if (response.statusCode != 200) {
-      throw Exception('Error logística HTTP ${response.statusCode}');
-    }
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
-    final data = body['data'] as Map<String, dynamic>;
+    final data = await _fetchApiData();
 
     final Map<String, Map<String, double>> acum     = {};
     final Map<String, List<ItemStock>>     rawItems = {};
-    final Map<String, String>              serieDueno = {}; // SERIE_UPPER → nombre
+    final Map<String, String>              serieDueno = {};
 
     void procesarCompleto(List<dynamic> apiItems, {bool porSerie = false}) {
       for (final item in apiItems) {
-        final rut    = item['trabajador_rut'] as String? ?? '';
-        final nombre = item['nombre']         as String? ?? '';
+        final rut    = canonicalRut(item['trabajador_rut'] as String? ?? '');
         final idMat  = item['id_material'];
         if (rut.isEmpty || idMat == null) continue;
 
@@ -291,18 +591,20 @@ class LogisticaService {
             : (double.tryParse(item['cantidad']?.toString() ?? '0') ?? 0);
         if (cantidad <= 0) continue;
 
-        final cat = categorizar(nombre);
+        final nombreErp = item['nombre'] as String? ?? '';
+        final sku      = item['sku']?.toString();
+        final cat = categorizar(nombreErp, sku: sku);
         if (cat == null) continue;
 
-        final serieRaw = porSerie ? item['serie']?.toString().trim() : null;
+        final serieRaw = porSerie
+            ? _normalizeSerieAlmacenada(item['serie']?.toString())
+            : null;
 
-        // Índice global de series (todos los técnicos de Kepler)
         if (porSerie && serieRaw != null && serieRaw.isNotEmpty) {
-          serieDueno[serieRaw.toUpperCase()] = nombreTodos[rut] ?? rut;
+          serieDueno[serieRaw] = nombreTodos[rut] ?? rut;
         }
 
-        // Acumulado solo para técnicos registrados
-        if (!rutosRegistrados.contains(rut)) continue;
+        if (!nombreTodos.containsKey(rut)) continue;
 
         acum.putIfAbsent(rut, () => {});
         acum[rut]![cat] = (acum[rut]![cat] ?? 0) + cantidad;
@@ -310,7 +612,7 @@ class LogisticaService {
         rawItems.putIfAbsent(rut, () => []);
         rawItems[rut]!.add(ItemStock(
           idMaterial: idMaterial,
-          nombre:     nombre,
+          nombre:     nombreErp,
           categoria:  cat,
           cantidad:   cantidad,
           serie:      serieRaw,
@@ -325,7 +627,7 @@ class LogisticaService {
     for (final entry in acum.entries) {
       final rut    = entry.key;
       final nombre = nombreTodos[rut];
-      if (nombre == null || !rutosRegistrados.contains(rut)) continue;
+      if (nombre == null) continue;
       resultado.add(TecnicoStock(
         rut:    rut,
         nombre: nombre,

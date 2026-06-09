@@ -827,6 +827,66 @@ class ProduccionService {
   // CONSULTA RGU DESDE SUPABASE (produccion_crea)
   // ═══════════════════════════════════════════════════════════
 
+  bool _esMesEnCurso(int mes, int anno) {
+    final now = DateTime.now();
+    return mes == now.month && anno == now.year;
+  }
+
+  /// Días laborables L-S ya transcurridos en el mes (hasta hoy si es el mes actual).
+  int _diasLaborablesTranscurridos(int mes, int anno) {
+    final now = DateTime.now();
+    final ultimoDiaMes = DateTime(anno, mes + 1, 0).day;
+    final diaLimite = _esMesEnCurso(mes, anno) ? now.day : ultimoDiaMes;
+    var count = 0;
+    for (var dia = 1; dia <= diaLimite; dia++) {
+      if (DateTime(anno, mes, dia).weekday != DateTime.sunday) count++;
+    }
+    return count;
+  }
+
+  /// Resuelve ausencias evitando contar días futuros del mes en curso.
+  ///
+  /// `v_asistencia_tecnicos.ausencias` resta contra `dias_habiles_mes` (mes completo),
+  /// por eso un técnico con 5/5 días de producción puede mostrar 17 ausencias.
+  int _resolverDiasAusentes({
+    required Map<String, dynamic>? asistenciaData,
+    required int mes,
+    required int anno,
+    int diasTrabajadosFallback = 0,
+  }) {
+    if (asistenciaData == null) {
+      if (!_esMesEnCurso(mes, anno)) return 0;
+      final efectivos = _diasLaborablesTranscurridos(mes, anno);
+      return (efectivos - diasTrabajadosFallback).clamp(0, efectivos);
+    }
+
+    final ausenciasView = (asistenciaData['ausencias'] as num?)?.toInt() ?? 0;
+    if (!_esMesEnCurso(mes, anno)) return ausenciasView;
+
+    final vacaciones = (asistenciaData['vacaciones'] as num?)?.toInt() ?? 0;
+    final licencias = (asistenciaData['licencias'] as num?)?.toInt() ?? 0;
+    final diasExcluidos = (asistenciaData['dias_excluidos'] as num?)?.toInt() ?? 0;
+    final diasEfectivos = (asistenciaData['dias_efectivos'] as num?)?.toInt() ??
+        _diasLaborablesTranscurridos(mes, anno);
+    final diasProduccion =
+        (asistenciaData['dias_con_produccion'] as num?)?.toInt() ?? 0;
+    final sinProduccion =
+        (asistenciaData['sin_produccion'] as num?)?.toInt() ?? 0;
+    final diasPresentes = (asistenciaData['dias_presentes'] as num?)?.toInt();
+    final diasCubiertos = diasPresentes ?? (diasProduccion + sinProduccion);
+
+    final ausentesCalculados =
+        diasEfectivos - diasCubiertos - vacaciones - licencias - diasExcluidos;
+
+    print(
+      '📊 [Produccion] Ausencias mes en curso: efectivos=$diasEfectivos, '
+      'cubiertos=$diasCubiertos, view=$ausenciasView, '
+      'calc=${ausentesCalculados.clamp(0, diasEfectivos)}',
+    );
+
+    return ausentesCalculados.clamp(0, diasEfectivos);
+  }
+
   /// Obtener resumen del mes con datos de RGU desde Supabase
   Future<Map<String, dynamic>> obtenerResumenMesRGU(
     String rutTecnico, {
@@ -842,7 +902,7 @@ class ProduccionService {
       // TEMPORALMENTE COMENTADO - FeriadosChile
       // final diasHabiles = FeriadosChile.calcularDiasHabilesMes(mesConsulta, annoConsulta);
       // final feriadosEnMes = FeriadosChile.contarFeriadosHabilesEnMes(mesConsulta, annoConsulta);
-      final diasHabiles = 22; // Valor aproximado temporal
+      var diasHabiles = 22; // Valor aproximado temporal; se ajusta más abajo
       final feriadosEnMes = 0; // Temporal
 
       // Obtener asistencia desde v_asistencia_tecnicos (mismo origen que el dashboard)
@@ -859,9 +919,10 @@ class ProduccionService {
         if (asistenciaData != null) {
           print('📊 [Produccion] Asistencia v_asistencia_tecnicos (periodo: $periodoAsist):');
           print('   - Días con producción: ${asistenciaData['dias_con_produccion']}');
-          print('   - Ausencias: ${asistenciaData['ausencias']}');
+          print('   - Días efectivos: ${asistenciaData['dias_efectivos']}');
+          print('   - Ausencias (view): ${asistenciaData['ausencias']}');
           print('   - Vacaciones: ${asistenciaData['vacaciones']}');
-          print('   - Días hábiles: ${asistenciaData['dias_habiles_mes']}');
+          print('   - Días hábiles mes: ${asistenciaData['dias_habiles_mes']}');
         } else {
           print('⚠️ [Produccion] Sin datos en v_asistencia_tecnicos para $periodoAsist');
         }
@@ -892,8 +953,18 @@ class ProduccionService {
           'diasTrabajados': (asistenciaData?['dias_con_produccion'] as num?)?.toInt() ?? 0,
           'diasPX0': 0,
           'diasPX0List': <Map<String, dynamic>>[],
-          'diasAusentes': (asistenciaData?['ausencias'] as num?)?.toInt() ?? 0,
-          'diasHabiles': (asistenciaData?['dias_habiles_mes'] as num?)?.toInt() ?? diasHabiles,
+          'diasAusentes': _resolverDiasAusentes(
+            asistenciaData: asistenciaData,
+            mes: mesConsulta,
+            anno: annoConsulta,
+            diasTrabajadosFallback:
+                (asistenciaData?['dias_con_produccion'] as num?)?.toInt() ?? 0,
+          ),
+          'diasHabiles': _esMesEnCurso(mesConsulta, annoConsulta)
+              ? ((asistenciaData?['dias_efectivos'] as num?)?.toInt() ??
+                  _diasLaborablesTranscurridos(mesConsulta, annoConsulta))
+              : ((asistenciaData?['dias_habiles_mes'] as num?)?.toInt() ??
+                  diasHabiles),
           'feriados': feriadosEnMes,
           'vacaciones': (asistenciaData?['vacaciones'] as num?)?.toInt() ?? 0,
           'efectividad': 0.0,
@@ -972,15 +1043,36 @@ class ProduccionService {
         // v_asistencia_tecnicos tiene datos — fuente de verdad igual que el dashboard
         diasTrabajados = (asistenciaData['dias_con_produccion'] as num?)?.toInt()
             ?? diasConProduccion.length;
-        diasAusentesFinales = (asistenciaData['ausencias'] as num?)?.toInt() ?? 0;
         vacacionesFinales = (asistenciaData['vacaciones'] as num?)?.toInt() ?? 0;
-        print('✅ [Produccion] Usando v_asistencia_tecnicos: dias_con_produccion=$diasTrabajados, ausencias=$diasAusentesFinales, vacaciones=$vacacionesFinales');
+        diasAusentesFinales = _resolverDiasAusentes(
+          asistenciaData: asistenciaData,
+          mes: mesConsulta,
+          anno: annoConsulta,
+          diasTrabajadosFallback: diasTrabajados + diasPX0,
+        );
+        print(
+          '✅ [Produccion] Usando v_asistencia_tecnicos: dias_con_produccion=$diasTrabajados, '
+          'ausencias=$diasAusentesFinales, vacaciones=$vacacionesFinales',
+        );
       } else {
         // Fallback: calcular desde produccion_creaciones
         diasTrabajados = diasConProduccion.length + diasPX0;
         vacacionesFinales = 0;
-        diasAusentesFinales = (diasHabiles - diasTrabajados - feriadosFinales - vacacionesFinales).clamp(0, diasHabiles);
+        diasAusentesFinales = _resolverDiasAusentes(
+          asistenciaData: null,
+          mes: mesConsulta,
+          anno: annoConsulta,
+          diasTrabajadosFallback: diasTrabajados,
+        );
         print('⚠️ [Produccion] Sin asistencia en Supabase — calculando desde produccion_creaciones ($diasTrabajados días)');
+      }
+
+      if (_esMesEnCurso(mesConsulta, annoConsulta)) {
+        diasHabiles = (asistenciaData?['dias_efectivos'] as num?)?.toInt() ??
+            _diasLaborablesTranscurridos(mesConsulta, annoConsulta);
+      } else if (asistenciaData != null) {
+        diasHabiles =
+            (asistenciaData['dias_habiles_mes'] as num?)?.toInt() ?? diasHabiles;
       }
 
       // Divisor para promedio = días trabajados (ya incluye PX-0)
@@ -1296,54 +1388,16 @@ class ProduccionService {
     print('🔍 [Ranking] Consultando mes: $mesConsulta, año: $annoConsulta');
 
     try {
-      // Obtener TODAS las órdenes completadas usando paginación
-      List<Map<String, dynamic>> todasOrdenes = [];
-      int offset = 0;
-      const int pageSize = 1000;
-      bool hasMore = true;
+      final todasOrdenes = await _cargarOrdenesProduccionCreacionesMes(
+        mes: mesConsulta,
+        anno: annoConsulta,
+      );
 
-      while (hasMore) {
-        final response = await _supabase
-            .from('produccion_crea')
-            .select('rut_tecnico, tecnico, rgu_total, fecha_trabajo, estado')
-            .eq('estado', 'Completado')
-            .range(offset, offset + pageSize - 1);
+      print('📊 [Ranking] Total órdenes mes (produccion_creaciones): ${todasOrdenes.length}');
 
-        final batch = List<Map<String, dynamic>>.from(response as List);
-        todasOrdenes.addAll(batch);
+      final ordenesMes = todasOrdenes.where(cuentaComoProduccion).toList();
 
-        print('📦 [Ranking] Lote offset=$offset: ${batch.length} registros');
-
-        hasMore = batch.length == pageSize;
-        offset += pageSize;
-      }
-
-      print('📊 [Ranking] Total órdenes completadas obtenidas: ${todasOrdenes.length}');
-
-      // Debug: mostrar ejemplos de fechas
-      if (todasOrdenes.isNotEmpty) {
-        final ejemplosFechas = todasOrdenes.take(5).map((o) => o['fecha_trabajo']).toList();
-        print('🔍 [Ranking] Ejemplos de fechas: $ejemplosFechas');
-      }
-
-      // Filtrar por mes y año
-      final ordenesMes = todasOrdenes.where((orden) {
-        final fechaStr = orden['fecha_trabajo']?.toString() ?? '';
-        final partes = fechaStr.split('/');
-
-        if (partes.length != 3) {
-          return false;
-        }
-
-        // Formato: D/M/YYYY o DD/MM/YYYY
-        final mesOrden = int.tryParse(partes[1]) ?? 0;
-        final annoOrden = int.tryParse(partes[2]) ?? 0;
-
-        final coincide = mesOrden == mesConsulta && annoOrden == annoConsulta;
-        return coincide;
-      }).toList();
-
-      print('✅ [Ranking] Órdenes filtradas mes $mesConsulta/$annoConsulta: ${ordenesMes.length}');
+      print('✅ [Ranking] Órdenes con producción mes $mesConsulta/$annoConsulta: ${ordenesMes.length}');
 
       if (ordenesMes.isEmpty) {
         print('⚠️ [Ranking] No hay órdenes para el mes seleccionado');
@@ -1434,10 +1488,10 @@ class ProduccionService {
 
     print('🎯 [Posicion] Ranking tiene ${ranking.length} técnicos');
 
-    // Buscar al técnico
+    // Buscar al técnico (normalizar variantes de RUT)
     Map<String, dynamic>? tecnicoEncontrado;
     for (var t in ranking) {
-      if (t['rut'] == rutTecnico) {
+      if (_rutsCoinciden(t['rut']?.toString() ?? '', rutTecnico)) {
         tecnicoEncontrado = t;
         break;
       }
@@ -1472,8 +1526,441 @@ class ProduccionService {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // RANKING DE PRODUCTIVIDAD
+  // ═══════════════════════════════════════════════════════════
+
+  Future<Map<String, dynamic>> obtenerRankingProductividad({
+    int? mes,
+    int? anno,
+  }) async {
+    final now = DateTime.now();
+    final mesConsulta = mes ?? now.month;
+    final annoConsulta = anno ?? now.year;
+
+    try {
+      final ordenesMes = (await _cargarOrdenesProduccionCreacionesMes(
+        mes: mesConsulta,
+        anno: annoConsulta,
+      ))
+          .where(_ordenCuentaParaMetricasTiempo)
+          .toList();
+
+      if (ordenesMes.isEmpty) {
+        return {'ranking': <Map<String, dynamic>>[], 'totalTecnicos': 0};
+      }
+
+      final porTecnico = <String, Map<String, List<Map<String, dynamic>>>>{};
+      final nombres = <String, String>{};
+
+      for (final orden in ordenesMes) {
+        final rut = orden['rut_tecnico']?.toString() ?? '';
+        if (rut.isEmpty) continue;
+        nombres[rut] = orden['tecnico']?.toString() ?? nombres[rut] ?? '';
+        final fecha = orden['fecha_trabajo']?.toString() ?? '';
+        porTecnico.putIfAbsent(rut, () => {});
+        porTecnico[rut]!.putIfAbsent(fecha, () => []).add(orden);
+      }
+
+      final ranking = <Map<String, dynamic>>[];
+      for (final entry in porTecnico.entries) {
+        final metricas = _calcularMetricasTiempoDesdePorDia(
+          rutTecnico: entry.key,
+          porDia: entry.value,
+          mesConsulta: mesConsulta,
+          annoConsulta: annoConsulta,
+        );
+        ranking.add({
+          'rut': entry.key,
+          'nombre': nombres[entry.key] ?? '',
+          'productividad': (metricas['productividad'] as num?)?.toDouble() ?? 0.0,
+          'diasTrabajados': metricas['diasTrabajados'] ?? 0,
+        });
+      }
+
+      ranking.sort((a, b) =>
+          (b['productividad'] as double).compareTo(a['productividad'] as double));
+      for (var i = 0; i < ranking.length; i++) {
+        ranking[i]['posicion'] = i + 1;
+      }
+
+      return {'ranking': ranking, 'totalTecnicos': ranking.length};
+    } catch (e) {
+      print('❌ [Ranking Productividad] Error: $e');
+      return {'ranking': <Map<String, dynamic>>[], 'totalTecnicos': 0};
+    }
+  }
+
+  Future<Map<String, dynamic>> obtenerPosicionProductividad(
+    String rutTecnico, {
+    int? mes,
+    int? anno,
+  }) async {
+    final data = await obtenerRankingProductividad(mes: mes, anno: anno);
+    final ranking = List<Map<String, dynamic>>.from(data['ranking'] as List);
+
+    Map<String, dynamic>? encontrado;
+    for (final t in ranking) {
+      if (_rutsCoinciden(t['rut']?.toString() ?? '', rutTecnico)) {
+        encontrado = t;
+        break;
+      }
+    }
+
+    if (encontrado == null) {
+      return {
+        'posicion': 0,
+        'totalTecnicos': ranking.length,
+        'productividad': 0.0,
+        'diasTrabajados': 0,
+        'top10': ranking,
+      };
+    }
+
+    return {
+      'posicion': encontrado['posicion'],
+      'totalTecnicos': ranking.length,
+      'productividad': encontrado['productividad'],
+      'diasTrabajados': encontrado['diasTrabajados'],
+      'nombre': encontrado['nombre'],
+      'top10': ranking,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // MÉTRICAS DE TIEMPO
   // ═══════════════════════════════════════════════════════════
+
+  static const int _minutosBodegaExtra = 60; // 08:45 → 09:45
+
+  String _filtroFechaMesIlike(int mes, int anno) {
+    final mesPadded = mes.toString().padLeft(2, '0');
+    final annoCorto = (anno % 100).toString().padLeft(2, '0');
+    return '*/$mesPadded/$annoCorto';
+  }
+
+  String _normalizarRutKey(String rut) =>
+      rut.replaceAll(RegExp(r'[.\-\s]'), '').toUpperCase();
+
+  static bool rutsCoinciden(String a, String b) {
+    if (a.isEmpty || b.isEmpty) return false;
+    final keysA = rutVariantes(a).map(_normalizarRutKeyStatic).toSet();
+    final keysB = rutVariantes(b).map(_normalizarRutKeyStatic).toSet();
+    return keysA.intersection(keysB).isNotEmpty;
+  }
+
+  static String _normalizarRutKeyStatic(String rut) =>
+      rut.replaceAll(RegExp(r'[.\-\s]'), '').toUpperCase();
+
+  bool _rutsCoinciden(String a, String b) => rutsCoinciden(a, b);
+
+  bool _ordenCuentaParaMetricasTiempo(Map<String, dynamic> orden) {
+    final hora = orden['hora_inicio']?.toString().trim() ?? '';
+    if (hora.isEmpty || hora == '00:00') return false;
+    final estado = (orden['estado']?.toString() ?? '').trim();
+    return estado.isNotEmpty;
+  }
+
+  Future<List<Map<String, dynamic>>> _cargarOrdenesProduccionCreacionesMes({
+    required int mes,
+    required int anno,
+    String? rutTecnico,
+  }) async {
+    final filtro = _filtroFechaMesIlike(mes, anno);
+    final campos =
+        'rut_tecnico,tecnico,rgu_total,fecha_trabajo,estado,area_derivacion,hora_inicio,hora_fin,duracion_min';
+    final todas = <Map<String, dynamic>>[];
+    var offset = 0;
+    const pageSize = 1000;
+    var hasMore = true;
+
+    while (hasMore) {
+      var query = _supabase
+          .from('produccion_creaciones')
+          .select(campos)
+          .ilike('fecha_trabajo', filtro);
+
+      if (rutTecnico != null && rutTecnico.isNotEmpty) {
+        query = query.inFilter('rut_tecnico', rutVariantes(rutTecnico));
+      }
+
+      final response = await query.range(offset, offset + pageSize - 1);
+      final batch = (response as List)
+          .map((o) => Map<String, dynamic>.from(o as Map))
+          .toList();
+      todas.addAll(batch);
+      hasMore = batch.length == pageSize;
+      offset += pageSize;
+    }
+
+    return todas
+        .where((o) =>
+            _fechaCoincideMesConsulta(o['fecha_trabajo']?.toString() ?? '', mes, anno))
+        .toList();
+  }
+
+  int _duracionMinOrden(Map<String, dynamic> orden) {
+    final dur = (orden['duracion_min'] as num?)?.toInt() ?? 0;
+    if (dur > 0) return dur;
+    final ini = _parseHoraAMinutos(orden['hora_inicio']?.toString() ?? '00:00');
+    final fin = _parseHoraAMinutos(orden['hora_fin']?.toString() ?? '00:00');
+    return fin > ini ? fin - ini : 0;
+  }
+
+  bool _aplicaJornadaJunio2026(int mes, int anno) =>
+      anno > 2026 || (anno == 2026 && mes >= 6);
+
+  int _parseAnnoFechaTrabajo(String annoStr) {
+    final n = int.tryParse(annoStr) ?? 0;
+    if (n >= 100) return n;
+    return n >= 50 ? 1900 + n : 2000 + n;
+  }
+
+  bool _fechaCoincideMesConsulta(String fechaStr, int mes, int anno) {
+    final partes = fechaStr.split('/');
+    if (partes.length != 3) return false;
+    final mesOrden = int.tryParse(partes[1]) ?? 0;
+    final annoOrden = _parseAnnoFechaTrabajo(partes[2]);
+    return mesOrden == mes && annoOrden == anno;
+  }
+
+  DateTime? _parseFechaTrabajo(String fechaStr) =>
+      _parseFechaTrabajoPartes(fechaStr.split('/'));
+
+  DateTime? _parseFechaTrabajoPartes(List<String> partes) {
+    if (partes.length != 3) return null;
+    final dia = int.tryParse(partes[0]) ?? 1;
+    final mes = int.tryParse(partes[1]) ?? 1;
+    final anno = _parseAnnoFechaTrabajo(partes[2]);
+    return DateTime(anno, mes, dia);
+  }
+
+  int _semanaIsoDelAnio(DateTime fecha) {
+    final jueves = fecha.add(Duration(days: DateTime.thursday - fecha.weekday));
+    final primerJueves = DateTime(jueves.year, 1, 4);
+    return 1 + jueves.difference(primerJueves).inDays ~/ 7;
+  }
+
+  ({int inicio, int fin, int productivoMin}) _horarioJornada({
+    required String rutTecnico,
+    required DateTime? fecha,
+    required int mesConsulta,
+    required int annoConsulta,
+  }) {
+    final esSabado = fecha?.weekday == DateTime.saturday;
+
+    if (_aplicaJornadaJunio2026(mesConsulta, annoConsulta) &&
+        fecha != null &&
+        fecha.weekday != DateTime.sunday) {
+      return (inicio: 585, fin: 1065, productivoMin: 480); // L-S 9:45–17:45
+    }
+
+    if (_rutsTurnoRotativo.contains(rutTecnico)) {
+      final wd = fecha?.weekday ?? DateTime.monday;
+      final fin = (esSabado || wd == DateTime.monday || wd == DateTime.thursday)
+          ? 1035
+          : 1095;
+      return (inicio: 585, fin: fin, productivoMin: esSabado ? 240 : 480);
+    }
+
+    final fin = esSabado
+        ? 900
+        : (_rutsTurnoAntiguo.contains(rutTecnico) ? 1125 : 1065);
+    final inicio = esSabado ? 600 : 585;
+    return (inicio: inicio, fin: fin, productivoMin: esSabado ? 240 : 480);
+  }
+
+  Map<String, dynamic> _calcularMetricasTiempoDesdePorDia({
+    required String rutTecnico,
+    required Map<String, List<Map<String, dynamic>>> porDia,
+    required int mesConsulta,
+    required int annoConsulta,
+  }) {
+    if (porDia.isEmpty) return _metricasTiempoVacias();
+
+    int tiempoTrabajoTotal = 0;
+    int tiempoTrayectoTotal = 0;
+    int tiempoInicioTardioTotal = 0;
+    int tiempoFinTempranoTotal = 0;
+    int tiempoProductivoEsperado = 0;
+    final diasTrabajados = porDia.length;
+    int diasSemana = 0;
+    int diasSabado = 0;
+    final detalleInicioTardio = <Map<String, dynamic>>[];
+    final detalleHorasExtras = <Map<String, dynamic>>[];
+    int horasExtrasTotal = 0;
+    final overtimePorSemana = <String, List<Map<String, dynamic>>>{};
+    final semanasConTrabajo = <int>{};
+
+    for (final entry in porDia.entries) {
+      final fechaStr = entry.key;
+      var ordenesDelDia = entry.value;
+      final partesFecha = fechaStr.split('/');
+      final fecha = _parseFechaTrabajoPartes(partesFecha);
+      if (fecha == null) continue;
+
+      final jornada = _horarioJornada(
+        rutTecnico: rutTecnico,
+        fecha: fecha,
+        mesConsulta: mesConsulta,
+        annoConsulta: annoConsulta,
+      );
+      final horaInicioJornada = jornada.inicio;
+      final horaFinJornada = jornada.fin;
+      final esSabado = fecha.weekday == DateTime.saturday;
+
+      if (esSabado) {
+        diasSabado++;
+      } else {
+        diasSemana++;
+      }
+
+      tiempoProductivoEsperado += jornada.productivoMin;
+      semanasConTrabajo.add(_semanaIsoDelAnio(fecha));
+
+      ordenesDelDia.sort((a, b) {
+        final horaA = _parseHoraAMinutos(a['hora_inicio']?.toString() ?? '00:00');
+        final horaB = _parseHoraAMinutos(b['hora_inicio']?.toString() ?? '00:00');
+        return horaA.compareTo(horaB);
+      });
+
+      var trabajoDia = 0;
+      for (final orden in ordenesDelDia) {
+        trabajoDia += _duracionMinOrden(orden);
+      }
+      tiempoTrabajoTotal += trabajoDia;
+
+      final primeraHora =
+          _parseHoraAMinutos(ordenesDelDia.first['hora_inicio']?.toString() ?? '00:00');
+      final ultimaHora =
+          _parseHoraAMinutos(ordenesDelDia.last['hora_fin']?.toString() ?? '00:00');
+      final ultimaHoraStr = ordenesDelDia.last['hora_fin']?.toString() ?? '';
+
+      if (primeraHora > horaInicioJornada && primeraHora < 660) {
+        final retraso = primeraHora - horaInicioJornada;
+        tiempoInicioTardioTotal += retraso;
+        detalleInicioTardio.add({
+          'fecha': fechaStr,
+          'horaInicio': ordenesDelDia.first['hora_inicio']?.toString() ?? '00:00',
+          'retraso': retraso,
+          'esSabado': esSabado,
+        });
+      }
+
+      if (ultimaHora < horaFinJornada) {
+        tiempoFinTempranoTotal += (horaFinJornada - ultimaHora);
+      }
+
+      // Extra desde 17:46 (fin jornada 17:45 = minuto 1065)
+      if (ultimaHora > horaFinJornada) {
+        final extrasMin = ultimaHora - horaFinJornada;
+        horasExtrasTotal += extrasMin;
+        final diaNum = int.tryParse(partesFecha[0]) ?? 0;
+        var semNum = 1;
+        if (diaNum > 28) {
+          semNum = 5;
+        } else if (diaNum > 21) {
+          semNum = 4;
+        } else if (diaNum > 14) {
+          semNum = 3;
+        } else if (diaNum > 7) {
+          semNum = 2;
+        }
+        overtimePorSemana.putIfAbsent('semana_$semNum', () => []).add({
+          'fecha': fechaStr,
+          'horasExtrasMin': extrasMin,
+          'esSabado': esSabado,
+          'horaFin': ultimaHoraStr,
+          'dia': diaNum,
+          'mes': int.tryParse(partesFecha[1]) ?? 0,
+          'anno': _parseAnnoFechaTrabajo(partesFecha[2]),
+        });
+      }
+
+      final tiempoEnTerreno = ultimaHora - primeraHora;
+      if (tiempoEnTerreno > trabajoDia) {
+        tiempoTrayectoTotal += (tiempoEnTerreno - trabajoDia);
+      }
+    }
+
+    for (final entry in overtimePorSemana.entries) {
+      final diasEntry = entry.value;
+      final totalSemana =
+          diasEntry.fold<int>(0, (s, d) => s + (d['horasExtrasMin'] as int));
+      diasEntry.sort((a, b) => (a['dia'] as int).compareTo(b['dia'] as int));
+      final primerDia = diasEntry.first;
+      final mesSemana = primerDia['mes'] as int;
+      final annoSemana = primerDia['anno'] as int;
+      final semNum = int.tryParse(entry.key.split('_').last) ?? 1;
+      final inicioSemana = semNum == 1 ? 1 : (semNum - 1) * 7 + 1;
+      final finSemana = semNum == 5
+          ? DateTime(annoSemana, mesSemana + 1, 0).day
+          : semNum * 7;
+      detalleHorasExtras.add({
+        'tipo': 'semana',
+        'inicioSemana': inicioSemana,
+        'finSemana': finSemana,
+        'mes': mesSemana,
+        'anno': annoSemana,
+        'totalMinutos': totalSemana,
+        'dias': diasEntry,
+      });
+    }
+
+    if (_aplicaJornadaJunio2026(mesConsulta, annoConsulta)) {
+      for (final semanaAnio in semanasConTrabajo) {
+        horasExtrasTotal += _minutosBodegaExtra;
+        detalleHorasExtras.add({
+          'tipo': 'bodega',
+          'semanaAnio': semanaAnio,
+          'anno': annoConsulta,
+          'totalMinutos': _minutosBodegaExtra,
+          'horario': '08:45 – 09:45',
+          'label': 'Hora extra bodega semana $semanaAnio del año',
+        });
+      }
+    }
+
+    detalleHorasExtras.sort((a, b) {
+      final ta = a['tipo']?.toString() ?? '';
+      final tb = b['tipo']?.toString() ?? '';
+      if (ta != tb) return ta == 'bodega' ? -1 : 1;
+      if (ta == 'bodega') {
+        return (b['semanaAnio'] as int? ?? 0).compareTo(a['semanaAnio'] as int? ?? 0);
+      }
+      return (b['inicioSemana'] as int? ?? 0).compareTo(a['inicioSemana'] as int? ?? 0);
+    });
+
+    final tiempoSinActividad = tiempoInicioTardioTotal + tiempoFinTempranoTotal;
+    final totalOrdenes =
+        porDia.values.fold<int>(0, (s, list) => s + list.length);
+    final tiempoPromedioOrden =
+        totalOrdenes > 0 ? (tiempoTrabajoTotal / totalOrdenes).round() : 0;
+    final ordenesPorDia = diasTrabajados > 0 ? totalOrdenes / diasTrabajados : 0.0;
+    final productividad = tiempoProductivoEsperado > 0
+        ? (tiempoTrabajoTotal / tiempoProductivoEsperado) * 100
+        : 0.0;
+    final promedioInicioTardio =
+        diasTrabajados > 0 ? (tiempoInicioTardioTotal / diasTrabajados).round() : 0;
+
+    return {
+      'tiempoTrabajoTotal': tiempoTrabajoTotal,
+      'tiempoTrayectoTotal': tiempoTrayectoTotal,
+      'tiempoInicioTardio': tiempoInicioTardioTotal,
+      'tiempoFinTemprano': tiempoFinTempranoTotal,
+      'tiempoSinActividad': tiempoSinActividad,
+      'tiempoPromedioOrden': tiempoPromedioOrden,
+      'promedioInicioTardio': promedioInicioTardio,
+      'productividad': productividad,
+      'diasTrabajados': diasTrabajados,
+      'diasSemana': diasSemana,
+      'diasSabado': diasSabado,
+      'ordenesPorDia': ordenesPorDia,
+      'tiempoProductivoEsperado': tiempoProductivoEsperado,
+      'detalleInicioTardio': detalleInicioTardio,
+      'horasExtrasTotal': horasExtrasTotal,
+      'detalleHorasExtras': detalleHorasExtras,
+    };
+  }
 
   /// Obtener métricas de tiempo del técnico en el mes
   Future<Map<String, dynamic>> obtenerMetricasTiempo(
@@ -1486,233 +1973,37 @@ class ProduccionService {
     final annoConsulta = anno ?? now.year;
 
     try {
-      // Incluir órdenes Completadas, Suspendidas, Canceladas y No realizadas para el cálculo de inicio tardío
-      final response = await _supabase
-          .from('produccion_crea')
-          .select('fecha_trabajo, hora_inicio, hora_fin, duracion_min, estado')
-          .eq('rut_tecnico', rutTecnico)
-          .inFilter('estado', ['Completado', 'Suspendido', 'Cancelado', 'No realizado']);
+      final ordenesMes = (await _cargarOrdenesProduccionCreacionesMes(
+        mes: mesConsulta,
+        anno: annoConsulta,
+        rutTecnico: rutTecnico,
+      ))
+          .where(_ordenCuentaParaMetricasTiempo)
+          .toList();
 
-      final todasOrdenes = List<Map<String, dynamic>>.from(response as List);
+      if (ordenesMes.isEmpty) return _metricasTiempoVacias();
 
-      // Filtrar por mes y año
-      final ordenesMes = todasOrdenes.where((orden) {
-        final fechaStr = orden['fecha_trabajo']?.toString() ?? '';
-        final partes = fechaStr.split('/');
-        if (partes.length != 3) return false;
-
-        final mesOrden = int.tryParse(partes[1]) ?? 0;
-        final annoOrden = int.tryParse(partes[2]) ?? 0;
-
-        return mesOrden == mesConsulta && annoOrden == annoConsulta;
-      }).toList();
-
-      if (ordenesMes.isEmpty) {
-        return _metricasTiempoVacias();
-      }
-
-      // Agrupar por día
-      Map<String, List<Map<String, dynamic>>> porDia = {};
-      for (var orden in ordenesMes) {
+      final porDia = <String, List<Map<String, dynamic>>>{};
+      for (final orden in ordenesMes) {
         final fecha = orden['fecha_trabajo']?.toString() ?? '';
         porDia.putIfAbsent(fecha, () => []).add(orden);
       }
 
-      int tiempoTrabajoTotal = 0;
-      int tiempoTrayectoTotal = 0;
-      int tiempoInicioTardioTotal = 0;
-      int tiempoFinTempranoTotal = 0;
-      int tiempoProductivoEsperado = 0;
-      int diasTrabajados = porDia.length;
-      int diasSemana = 0;
-      int diasSabado = 0;
-      List<Map<String, dynamic>> detalleInicioTardio = [];
-      List<Map<String, dynamic>> detalleHorasExtras = [];
-      int horasExtrasTotal = 0;
-      final Map<String, List<Map<String, dynamic>>> overtimePorSemana = {};
+      final resultado = _calcularMetricasTiempoDesdePorDia(
+        rutTecnico: rutTecnico,
+        porDia: porDia,
+        mesConsulta: mesConsulta,
+        annoConsulta: annoConsulta,
+      );
 
-      for (var entry in porDia.entries) {
-        final fechaStr = entry.key;
-        var ordenesDelDia = entry.value;
+      print('⏱️ [Tiempo] Días L-V: ${resultado['diasSemana']}, Sábados: ${resultado['diasSabado']}');
+      print(
+        '⏱️ [Tiempo] Productividad: '
+        '${(resultado['productividad'] as num).toStringAsFixed(1)}% · '
+        'Extras: ${resultado['horasExtrasTotal']} min',
+      );
 
-        // Parsear fecha para determinar día de la semana
-        final partesFecha = fechaStr.split('/');
-        DateTime? fecha;
-        if (partesFecha.length == 3) {
-          final dia = int.tryParse(partesFecha[0]) ?? 1;
-          final mes = int.tryParse(partesFecha[1]) ?? 1;
-          final anno = int.tryParse(partesFecha[2]) ?? 2025;
-          fecha = DateTime(anno, mes, dia);
-        }
-
-        // Determinar parámetros según día de la semana y turno del técnico
-        final esSabado = fecha?.weekday == DateTime.saturday;
-        final int horaInicioJornada;
-        final int horaFinJornada;
-        if (_rutsTurnoRotativo.contains(rutTecnico)) {
-          // L/J/S: 9:45–17:15  |  M/X/V: 9:45–18:15
-          final wd = fecha?.weekday ?? DateTime.monday;
-          horaInicioJornada = 585; // 9:45 todos los días
-          horaFinJornada = (esSabado || wd == DateTime.monday || wd == DateTime.thursday)
-              ? 1035  // 17:15
-              : 1095; // 18:15
-        } else {
-          horaInicioJornada = esSabado ? 600 : 585; // 10:00 o 9:45
-          horaFinJornada = esSabado ? 900
-              : (_rutsTurnoAntiguo.contains(rutTecnico) ? 1125 : 1065); // 15:00 | 18:45 | 17:45
-        }
-        final tiempoProductivoDia = esSabado ? 240 : 480; // 4h o 8h
-
-        if (esSabado) {
-          diasSabado++;
-        } else {
-          diasSemana++;
-        }
-
-        tiempoProductivoEsperado += tiempoProductivoDia;
-
-        // Ordenar por hora de inicio
-        ordenesDelDia.sort((a, b) {
-          final horaA = _parseHoraAMinutos(a['hora_inicio']?.toString() ?? '00:00');
-          final horaB = _parseHoraAMinutos(b['hora_inicio']?.toString() ?? '00:00');
-          return horaA.compareTo(horaB);
-        });
-
-        // Sumar tiempo de trabajo del día
-        int trabajoDia = 0;
-        for (var orden in ordenesDelDia) {
-          final duracion = (orden['duracion_min'] as num?)?.toInt() ?? 0;
-          trabajoDia += duracion;
-        }
-        tiempoTrabajoTotal += trabajoDia;
-
-        // Primera y última orden del día
-        final primeraHora = _parseHoraAMinutos(ordenesDelDia.first['hora_inicio']?.toString() ?? '00:00');
-        final ultimaHora = _parseHoraAMinutos(ordenesDelDia.last['hora_fin']?.toString() ?? '00:00');
-        final ultimaHoraStr = ordenesDelDia.last['hora_fin']?.toString() ?? '';
-
-        // Inicio tardío (si empieza después de la hora esperada pero antes de las 11:00)
-        // No contar como atraso si pasa las 11:00 (660 minutos)
-        if (primeraHora > horaInicioJornada && primeraHora < 660) {
-          final retraso = primeraHora - horaInicioJornada;
-          tiempoInicioTardioTotal += retraso;
-          // Guardar detalle por día
-          detalleInicioTardio.add({
-            'fecha': fechaStr,
-            'horaInicio': ordenesDelDia.first['hora_inicio']?.toString() ?? '00:00',
-            'retraso': retraso,
-            'esSabado': esSabado,
-          });
-        }
-
-        // Fin temprano (si termina antes de la hora esperada)
-        if (ultimaHora < horaFinJornada) {
-          tiempoFinTempranoTotal += (horaFinJornada - ultimaHora);
-        }
-
-        // Horas extra: si la última orden termina después del fin de jornada
-        if (ultimaHora > horaFinJornada && partesFecha.length == 3) {
-          final extrasMin = ultimaHora - horaFinJornada;
-          horasExtrasTotal += extrasMin;
-          final diaNum = int.tryParse(partesFecha[0]) ?? 0;
-          int semNum = 1;
-          if (diaNum > 28) semNum = 5;
-          else if (diaNum > 21) semNum = 4;
-          else if (diaNum > 14) semNum = 3;
-          else if (diaNum > 7) semNum = 2;
-          overtimePorSemana.putIfAbsent('semana_$semNum', () => []).add({
-            'fecha': fechaStr,
-            'horasExtrasMin': extrasMin,
-            'esSabado': esSabado,
-            'horaFin': ultimaHoraStr,
-            'dia': diaNum,
-            'mes': int.tryParse(partesFecha[1]) ?? 0,
-            'anno': int.tryParse(partesFecha[2]) ?? 0,
-          });
-        }
-
-        // Tiempo en terreno del día
-        final tiempoEnTerreno = ultimaHora - primeraHora;
-
-        // Trayecto/Espera = Tiempo en terreno - Trabajo efectivo
-        if (tiempoEnTerreno > trabajoDia) {
-          tiempoTrayectoTotal += (tiempoEnTerreno - trabajoDia);
-        }
-      }
-
-      // Construir detalleHorasExtras desde cálculo Dart (basado en horaFinJornada por RUT)
-      for (final entry in overtimePorSemana.entries) {
-        final diasEntry = entry.value;
-        final totalSemana = diasEntry.fold<int>(0, (s, d) => s + (d['horasExtrasMin'] as int));
-        diasEntry.sort((a, b) => (a['dia'] as int).compareTo(b['dia'] as int));
-        final primerDia = diasEntry.first;
-        final mesSemana  = primerDia['mes']  as int;
-        final annoSemana = primerDia['anno'] as int;
-        final semNum     = int.tryParse(entry.key.split('_').last) ?? 1;
-        final inicioSemana = semNum == 1 ? 1 : (semNum - 1) * 7 + 1;
-        final finSemana    = semNum == 5
-            ? DateTime(annoSemana, mesSemana + 1, 0).day
-            : semNum * 7;
-        detalleHorasExtras.add({
-          'tipo':         'semana',
-          'inicioSemana': inicioSemana,
-          'finSemana':    finSemana,
-          'mes':          mesSemana,
-          'anno':         annoSemana,
-          'totalMinutos': totalSemana,
-          'dias':         diasEntry,
-        });
-      }
-      detalleHorasExtras.sort((a, b) =>
-          (b['inicioSemana'] as int).compareTo(a['inicioSemana'] as int));
-
-      // Tiempo sin actividad = Inicio tardío + Fin temprano
-      final tiempoSinActividad = tiempoInicioTardioTotal + tiempoFinTempranoTotal;
-
-      // Promedios
-      final tiempoPromedioOrden = ordenesMes.isNotEmpty
-          ? (tiempoTrabajoTotal / ordenesMes.length).round()
-          : 0;
-
-      final ordenesPorDia = diasTrabajados > 0
-          ? ordenesMes.length / diasTrabajados
-          : 0.0;
-
-      // Productividad = Trabajo efectivo / Tiempo productivo esperado
-      final productividad = tiempoProductivoEsperado > 0
-          ? (tiempoTrabajoTotal / tiempoProductivoEsperado) * 100
-          : 0.0;
-
-      // Promedio de inicio tardío por día
-      final promedioInicioTardio = diasTrabajados > 0
-          ? (tiempoInicioTardioTotal / diasTrabajados).round()
-          : 0;
-
-      print('⏱️ [Tiempo] Días L-V: $diasSemana, Sábados: $diasSabado');
-      print('⏱️ [Tiempo] Trabajo: ${tiempoTrabajoTotal}min (${(tiempoTrabajoTotal/60).toStringAsFixed(1)}h)');
-      print('⏱️ [Tiempo] Esperado: ${tiempoProductivoEsperado}min (${(tiempoProductivoEsperado/60).toStringAsFixed(1)}h)');
-      print('⏱️ [Tiempo] Trayecto/Espera: ${tiempoTrayectoTotal}min');
-      print('⏱️ [Tiempo] Inicio tardío: ${tiempoInicioTardioTotal}min, Fin temprano: ${tiempoFinTempranoTotal}min');
-      print('⏱️ [Tiempo] Productividad: ${productividad.toStringAsFixed(1)}%');
-
-      return {
-        'tiempoTrabajoTotal': tiempoTrabajoTotal,
-        'tiempoTrayectoTotal': tiempoTrayectoTotal,
-        'tiempoInicioTardio': tiempoInicioTardioTotal,
-        'tiempoFinTemprano': tiempoFinTempranoTotal,
-        'tiempoSinActividad': tiempoSinActividad,
-        'tiempoPromedioOrden': tiempoPromedioOrden,
-        'promedioInicioTardio': promedioInicioTardio,
-        'productividad': productividad,
-        'diasTrabajados': diasTrabajados,
-        'diasSemana': diasSemana,
-        'diasSabado': diasSabado,
-        'ordenesPorDia': ordenesPorDia,
-        'tiempoProductivoEsperado': tiempoProductivoEsperado,
-        'detalleInicioTardio': detalleInicioTardio,
-        'horasExtrasTotal': horasExtrasTotal,
-        'detalleHorasExtras': detalleHorasExtras,
-      };
+      return resultado;
     } catch (e) {
       print('❌ [Produccion] Error obteniendo métricas de tiempo: $e');
       return _metricasTiempoVacias();
@@ -2507,24 +2798,111 @@ class ProduccionService {
     return fecha;
   }
 
-  /// Obtener ranking de calidad para un período específico
+  /// Ranking de calidad para un período de pago (YYYY-MM).
+  /// Misma lógica que [obtenerCalidadPorPeriodo]: reiterados en calidad_api_crea
+  /// y completadas en produccion_creaciones del mes de medición (mes pago − 1).
   Future<Map<String, dynamic>> obtenerRankingCalidad(String periodo) async {
     try {
       print('🏆 [Calidad] Obteniendo ranking para período: $periodo');
-      
-      final response = await _supabase
-          .from('v_calidad_tecnicos')
-          .select()
-          .eq('periodo', periodo)
-          .order('porcentaje_reiteracion', ascending: true);
 
-      final List<Map<String, dynamic>> tecnicos = List<Map<String, dynamic>>.from(response as List);
-      
-      // Asignar posiciones
-      for (int i = 0; i < tecnicos.length; i++) {
+      final partes = periodo.split('-');
+      if (partes.length != 2) {
+        return {'ranking': [], 'totalTecnicos': 0};
+      }
+
+      final periodoCalidad = periodoAFormatoCalidad(periodo);
+      final partesCalidad = periodoCalidad.split('-');
+      final mesPago = int.parse(partesCalidad[0]);
+      final annoPago = int.parse(partesCalidad[1]);
+      final fechaMedicion = DateTime(annoPago, mesPago - 1, 1);
+      final mesAnt = fechaMedicion.month;
+      final yearAnt = fechaMedicion.year;
+      final filtroMes = _filtroFechaMesIlike(mesAnt, yearAnt);
+
+      print(
+        '🏆 [Calidad] Ranking: calidad_api_crea=$periodoCalidad, '
+        'medición=$mesAnt/$yearAnt ($filtroMes)',
+      );
+
+      final reiteradosPorKey = <String, int>{};
+      final rutDisplayPorKey = <String, String>{};
+      var offset = 0;
+      const pageSize = 1000;
+      while (true) {
+        final page = (await _supabase
+                .from('calidad_api_crea')
+                .select('rut_o_bucket')
+                .eq('es_reiterado', true)
+                .eq('periodo', periodoCalidad)
+                .range(offset, offset + pageSize - 1))
+            as List;
+        for (final r in page) {
+          final rut = r['rut_o_bucket']?.toString() ?? '';
+          if (rut.isEmpty) continue;
+          final key = _normalizarRutKey(rut);
+          reiteradosPorKey[key] = (reiteradosPorKey[key] ?? 0) + 1;
+          rutDisplayPorKey.putIfAbsent(key, () => rut);
+        }
+        if (page.length < pageSize) break;
+        offset += pageSize;
+      }
+
+      final completadasPorKey = <String, int>{};
+      final nombresPorKey = <String, String>{};
+      offset = 0;
+      while (true) {
+        final page = (await _supabase
+                .from('produccion_creaciones')
+                .select('rut_tecnico, tecnico, estado, area_derivacion')
+                .ilike('fecha_trabajo', filtroMes)
+                .range(offset, offset + pageSize - 1))
+            as List;
+        for (final o in page) {
+          if (!cuentaComoProduccion(o)) continue;
+          final rut = o['rut_tecnico']?.toString() ?? '';
+          if (rut.isEmpty) continue;
+          final key = _normalizarRutKey(rut);
+          completadasPorKey[key] = (completadasPorKey[key] ?? 0) + 1;
+          final nombre = o['tecnico']?.toString() ?? '';
+          if (nombre.isNotEmpty) nombresPorKey[key] = nombre;
+          rutDisplayPorKey[key] = rut;
+        }
+        if (page.length < pageSize) break;
+        offset += pageSize;
+      }
+
+      final tecnicos = <Map<String, dynamic>>[];
+      for (final key in completadasPorKey.keys) {
+        final completadas = completadasPorKey[key] ?? 0;
+        if (completadas <= 0) continue;
+        final reiterados = reiteradosPorKey[key] ?? 0;
+        final porcentaje = (reiterados / completadas * 100 * 100).roundToDouble() /
+            100.0;
+        tecnicos.add({
+          'rut_tecnico': rutDisplayPorKey[key] ?? key,
+          'tecnico': nombresPorKey[key] ?? '',
+          'total_reiterados': reiterados,
+          'total_completadas': completadas,
+          'porcentaje_reiteracion': porcentaje,
+          'promedio_dias': 0.0,
+          'periodo': periodo,
+        });
+      }
+
+      tecnicos.sort((a, b) {
+        final pa = (a['porcentaje_reiteracion'] as num).toDouble();
+        final pb = (b['porcentaje_reiteracion'] as num).toDouble();
+        final cmp = pa.compareTo(pb);
+        if (cmp != 0) return cmp;
+        final ra = (a['total_reiterados'] as num).toInt();
+        final rb = (b['total_reiterados'] as num).toInt();
+        return ra.compareTo(rb);
+      });
+
+      for (var i = 0; i < tecnicos.length; i++) {
         tecnicos[i]['posicion'] = i + 1;
       }
-      
+
       print('🏆 [Calidad] Ranking tiene ${tecnicos.length} técnicos');
 
       return {
@@ -2551,10 +2929,10 @@ class ProduccionService {
       final rankingData = await obtenerRankingCalidad(periodo);
       final ranking = List<Map<String, dynamic>>.from(rankingData['ranking'] as List);
       
-      // Buscar al técnico
+      // Buscar al técnico (RUT puede venir con distinto formato)
       Map<String, dynamic>? tecnicoEncontrado;
       for (var t in ranking) {
-        if (t['rut_tecnico'] == rutTecnico) {
+        if (rutsCoinciden(t['rut_tecnico']?.toString() ?? '', rutTecnico)) {
           tecnicoEncontrado = t;
           break;
         }

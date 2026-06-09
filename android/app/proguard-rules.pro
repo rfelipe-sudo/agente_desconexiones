@@ -11,3 +11,11 @@
 
 # ── WorkManager ──────────────────────────────────────────────────────────────
 -keep class androidx.work.** { *; }
+
+# ── Gson (flutter_local_notifications usa TypeToken para notificaciones programadas) ──
+-keepattributes Signature
+-keepattributes *Annotation*
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep class * extends com.google.gson.reflect.TypeToken
+-keep class com.dexterous.flutterlocalnotifications.** { *; }
+-dontwarn com.google.gson.**

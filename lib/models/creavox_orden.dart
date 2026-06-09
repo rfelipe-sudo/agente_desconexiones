@@ -71,4 +71,24 @@ class CreavoxOrden {
   }
 
   bool get tieneCoordenadas => coordX != 0.0 && coordY != 0.0;
+
+  /// Orden mínima para AST de prueba cuando no hay OT activa en TOA.
+  factory CreavoxOrden.desdeUltimaOt({
+    required String ordenDeTrabajo,
+    String? rutTecnico,
+    String? tipoActividad,
+  }) {
+    return CreavoxOrden(
+      ordenDeTrabajo: ordenDeTrabajo,
+      nombreCompletoCliente: 'Última orden registrada',
+      direccion: 'Modo prueba — sin OT activa en TOA',
+      zonaDeTrabajo: '',
+      tipoActividad: tipoActividad ?? 'Actividad de campo',
+      coordX: 0,
+      coordY: 0,
+      telefonoInternacional: '',
+      rutTecnico: rutTecnico,
+      estado: 'ultima_ot',
+    );
+  }
 }

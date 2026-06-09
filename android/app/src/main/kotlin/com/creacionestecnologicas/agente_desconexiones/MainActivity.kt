@@ -20,17 +20,20 @@ class MainActivity : FlutterActivity() {
     private val CTO_CHANNEL      = "com.creacionestecnologicas.agente_desconexiones/cto_scan"
     private val LAUNCHER_CHANNEL = "com.creacionestecnologicas.agente_desconexiones/app_launcher"
     private val SOUND_CHANNEL    = "com.creacionestecnologicas.agente_desconexiones/sound"
+    private val NAV_CHANNEL      = "com.creacionestecnologicas.agente_desconexiones/navigation"
+
+    private var navChannel: MethodChannel? = null
 
     // Result de Flutter pendiente: se responde en onResume cuando el scanner cierre.
     private var pendingCtoResult: MethodChannel.Result? = null
 
-    // MediaPlayer activo para poder pararlo desde Flutter
-    private var alertaPlayer: MediaPlayer? = null
-    private var ayudaPlayer: MediaPlayer? = null
     private var llegadaPlayer: MediaPlayer? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        navChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NAV_CHANNEL)
+        deliverNotificationRoute(intent)
 
         // ── Canal CTO Scan (turing) ──────────────────────────────────────────
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CTO_CHANNEL)
@@ -102,39 +105,19 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "playAlerta" -> {
-                        try {
-                            alertaPlayer?.stop()
-                            alertaPlayer?.release()
-                            val mp = MediaPlayer.create(this, R.raw.alerta_urgente)
-                            alertaPlayer = mp
-                            mp?.setOnCompletionListener {
-                                it.release()
-                                if (alertaPlayer === it) alertaPlayer = null
-                            }
-                            mp?.start()
-                        } catch (_: Exception) {}
+                        MaterialAlertNotifier.playAlertaFromDart(this)
                         result.success(null)
                     }
                     "stopAlerta" -> {
-                        try {
-                            alertaPlayer?.stop()
-                            alertaPlayer?.release()
-                            alertaPlayer = null
-                        } catch (_: Exception) {}
+                        MaterialAlertNotifier.stopAlerta()
+                        result.success(null)
+                    }
+                    "cancelMaterialNotificacion" -> {
+                        MaterialAlertNotifier.cancelMaterialNotification(this)
                         result.success(null)
                     }
                     "playAyuda" -> {
-                        try {
-                            ayudaPlayer?.stop()
-                            ayudaPlayer?.release()
-                            val mp = MediaPlayer.create(this, R.raw.ayuda_supervisor)
-                            ayudaPlayer = mp
-                            mp?.setOnCompletionListener {
-                                it.release()
-                                if (ayudaPlayer === it) ayudaPlayer = null
-                            }
-                            mp?.start()
-                        } catch (_: Exception) {}
+                        MaterialAlertNotifier.playAyudaFromDart(this)
                         result.success(null)
                     }
                     "playMaterialLlegada" -> {
@@ -149,6 +132,10 @@ class MainActivity : FlutterActivity() {
                             }
                             mp?.start()
                         } catch (_: Exception) {}
+                        result.success(null)
+                    }
+                    "playComunicado" -> {
+                        MaterialAlertNotifier.playComunicadoFromDart(this)
                         result.success(null)
                     }
                     "isBatteryOptimizationIgnored" -> {
@@ -182,15 +169,54 @@ class MainActivity : FlutterActivity() {
     // aquí para que onResume() no lo procese como un scan completado.
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         if (intent.getBooleanExtra("CTO_CANCELLED", false)) {
             pendingCtoResult?.error("CTO_CANCELLED", "Scan cancelado por el usuario", null)
             pendingCtoResult = null
         }
+        deliverNotificationRoute(intent)
+    }
+
+    private fun deliverNotificationRoute(intent: android.content.Intent?) {
+        if (intent == null) return
+
+        val accion = intent.getStringExtra("creabox_accion")
+        if (accion == "comunicado_creabox") {
+            val comunicadoId = intent.getStringExtra("creabox_comunicado_id")
+            intent.removeExtra("creabox_accion")
+            intent.removeExtra("creabox_comunicado_id")
+            navChannel?.invokeMethod(
+                "openComunicado",
+                mapOf("comunicado_id" to (comunicadoId ?: "")),
+            )
+            return
+        }
+
+        val route = intent.getStringExtra("creabox_route") ?: return
+        val solicitudId = intent.getStringExtra("creabox_solicitud_id")
+        val ticketId = intent.getStringExtra("creabox_ticket_id")
+        intent.removeExtra("creabox_route")
+        intent.removeExtra("creabox_solicitud_id")
+        intent.removeExtra("creabox_ticket_id")
+        val extras = mutableMapOf<String, String>("route" to route)
+        solicitudId?.let { extras["solicitud_id"] = it }
+        ticketId?.let { extras["ticket_id"] = it }
+        if (extras.size > 1) {
+            navChannel?.invokeMethod("openRoute", extras)
+        } else {
+            navChannel?.invokeMethod("openRoute", route)
+        }
+    }
+
+    override fun onPause() {
+        AppVisibility.activityResumed = false
+        super.onPause()
     }
 
     // Cuando MainActivity vuelve al primer plano (scanner cerrado), notificamos a Flutter.
     override fun onResume() {
         super.onResume()
+        AppVisibility.activityResumed = true
         val res = pendingCtoResult ?: return
         pendingCtoResult = null
         // Buscar la imagen que el scanner haya guardado en los últimos 5 min.

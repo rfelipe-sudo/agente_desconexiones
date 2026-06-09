@@ -43,25 +43,63 @@ class CreaboxApplication : MultiDexApplication() {
         manager.deleteNotificationChannel("mat_alertas_3")
         manager.deleteNotificationChannel("mat_alertas_4")
         manager.deleteNotificationChannel("mat_alertas_5")
+        manager.deleteNotificationChannel("mat_alertas_6")
 
-        // ── Canal material v6 (permanente) ────────────────────────────────────
+        // ── Canal material v7 (permanente) ────────────────────────────────────
         // USAGE_ALARM: el sonido suena incluso con el teléfono en modo vibración.
+        // Nuevo ID para evitar canales congelados sin sonido en dispositivos viejos.
         val audioAttrAlarma = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ALARM)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
 
         val canalMaterial = NotificationChannel(
-            "mat_alertas_6",
+            "mat_alertas_7",
             "Alertas de material",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Alertas de solicitudes de material entre técnicos"
+            description = "Alertas de solicitudes de material y traspasos de bodega"
             setSound(soundUri, audioAttrAlarma)
             enableVibration(true)
             vibrationPattern = longArrayOf(0, 300, 200, 300)
+            setBypassDnd(true)
+            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
         }
         manager.createNotificationChannel(canalMaterial)
+
+        val mushroomUri = Uri.parse(
+            "android.resource://$packageName/raw/comunicado_mushroom"
+        )
+        val canalComunicados = NotificationChannel(
+            "comunicados_creabox_1",
+            "Comunicados CREABOX",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Comunicados masivos y personalizados con confirmación de lectura"
+            setSound(mushroomUri, audioAttrAlarma)
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 200, 150, 200)
+            setBypassDnd(true)
+            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+        }
+        manager.createNotificationChannel(canalComunicados)
+
+        val ayudaMarioUri = Uri.parse(
+            "android.resource://$packageName/raw/ayuda_supervisor_mario"
+        )
+        val canalAyudaSupervisor = NotificationChannel(
+            "ayuda_supervisor_1",
+            "Ayuda en terreno — supervisor",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Solicitudes de ayuda de técnicos en terreno"
+            setSound(ayudaMarioUri, audioAttrAlarma)
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 400, 200, 400)
+            setBypassDnd(true)
+            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+        }
+        manager.createNotificationChannel(canalAyudaSupervisor)
 
         // ── Canal alertas operacionales ───────────────────────────────────────
         val canalAlertas = NotificationChannel(

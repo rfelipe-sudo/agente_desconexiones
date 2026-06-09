@@ -6,7 +6,9 @@ import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:agente_desconexiones/models/solicitud_ayuda.dart';
+import 'package:agente_desconexiones/services/ayuda_alerta_estado.dart';
 import 'package:agente_desconexiones/services/estado_supervisor_service.dart';
+import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/services/notification_service.dart';
 
 /// Servicio de Ayuda en Terreno con Supabase Realtime.
@@ -36,11 +38,48 @@ class AyudaService extends ChangeNotifier {
   // de respuesta cuando la actualización es solo de GPS (no de estado)
   EstadoSolicitud? _estadoAnteriorTecnico;
 
+  /// Evita doble sonido cuando el canal global y el de pantalla disparan a la vez.
+  final Set<String> _ticketsEnAlerta = {};
+
   SolicitudAyuda? get solicitudActual => _solicitudActual;
   List<SolicitudAyuda> get solicitudesSupervisor =>
       List.unmodifiable(_solicitudesSupervisor);
   // Compatibilidad con código existente
   List<SolicitudAyuda> get historial => [];
+
+  static bool mismoRut(String? a, String? b) {
+    if (a == null || b == null || a.isEmpty || b.isEmpty) return false;
+    final na = a.replaceAll(RegExp(r'[.\-\s]'), '').toUpperCase();
+    final nb = b.replaceAll(RegExp(r'[.\-\s]'), '').toUpperCase();
+    return na == nb;
+  }
+
+  /// RUT del supervisor en sesión — misma prioridad en toda la app.
+  static Future<String> resolverRutSupervisorSesion() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('rut_supervisor') ??
+        prefs.getString('rut_tecnico') ??
+        prefs.getString('user_rut') ??
+        prefs.getString('rut') ??
+        '';
+  }
+
+  bool _tecnicoEnEquipo(String? rutTecnico, List<String> rutsEquipo) {
+    if (rutTecnico == null || rutTecnico.isEmpty) return false;
+    return rutsEquipo.any((r) => mismoRut(r, rutTecnico));
+  }
+
+  bool _solicitudParaSupervisor({
+    required String rutSupervisor,
+    required String? rutTecnico,
+    required String? rutSupAsignado,
+    required List<String> rutsEquipo,
+  }) {
+    if (mismoRut(rutSupAsignado, rutSupervisor)) return true;
+    if (_tecnicoEnEquipo(rutTecnico, rutsEquipo)) return true;
+    return rutsEquipo.isEmpty &&
+        (rutSupAsignado == null || rutSupAsignado.isEmpty);
+  }
 
   // ─────────────────────────────────────────────────────────────
   // GPS
@@ -123,6 +162,10 @@ class AyudaService extends ChangeNotifier {
       final solicitud = SolicitudAyuda.fromJson(resp);
       _solicitudActual = solicitud;
       notifyListeners();
+
+      // Respaldo FCM al supervisor (el trigger SQL también dispara).
+      unawaited(_notificarSupervisorAyudaFcm(solicitud.ticketId));
+
       return {'ok': true, 'solicitud': solicitud};
     } catch (e) {
       debugPrint('❌ [AyudaService] Error al insertar solicitud: $e');
@@ -202,10 +245,42 @@ class AyudaService extends ChangeNotifier {
     }
   }
 
-  /// Expone la reproducción de sonido para uso externo (ej: alerta de carga).
-  /// Usa just_audio + vibración. No muestra notificación del sistema
-  /// para no duplicar cuando ya hay cards pendientes en pantalla.
+  /// Expone la reproducción de sonido para uso externo (ej: banner manual).
   Future<void> reproducirAlerta() => _reproducirSonido();
+
+  /// Detiene sonido nativo y just_audio (al abrir la pantalla de solicitudes).
+  Future<void> detenerAlerta() async {
+    try {
+      if (_player.playing) await _player.stop();
+    } catch (_) {}
+    await FcmService.stopAlerta();
+  }
+
+  Future<bool> _debeAlertarTicket(String ticketId) async {
+    if (ticketId.isEmpty) return false;
+    if (_ticketsEnAlerta.contains(ticketId)) return false;
+    return !(await AyudaAlertaEstado.wasSeen(ticketId));
+  }
+
+  Future<void> _alertarNuevaSolicitudSupervisor(SolicitudAyuda solicitud) async {
+    final tid = solicitud.ticketId;
+    if (tid.isEmpty || _ticketsEnAlerta.contains(tid)) return;
+    if (await AyudaAlertaEstado.wasSeen(tid)) return;
+
+    _ticketsEnAlerta.add(tid);
+    try {
+      NotificationService().vibrarParaAlerta();
+      await NotificationService().alertaSupervisorNuevaSolicitud(
+        tecnicoNombre: solicitud.tecnicoNombre,
+        tipoAyuda: solicitud.tipo.displayName,
+      );
+      await _reproducirSonido();
+      await AyudaAlertaEstado.markSeen(tid);
+      debugPrint('🔔 [AyudaService] Alerta supervisor ticket=$tid');
+    } finally {
+      _ticketsEnAlerta.remove(tid);
+    }
+  }
 
   /// Recupera un ticket activo desde Supabase por su ticket_id
   Future<SolicitudAyuda?> obtenerSolicitudPorTicket(String ticketId) async {
@@ -247,42 +322,54 @@ class AyudaService extends ChangeNotifier {
   // ─────────────────────────────────────────────────────────────
 
   /// Devuelve los RUTs de los técnicos asignados a este supervisor
+  /// (supervisor_tecnicos_crea + equipos_crea).
   Future<List<String>> obtenerRutsEquipo(String rutSupervisor) async {
+    final ruts = <String>{};
     try {
-      // 1. Obtener el número de equipo del supervisor en equipos_crea
-      final supRow = await _supabase
-          .from('equipos_crea')
-          .select('equipo')
-          .eq('rut_tecnico', rutSupervisor)
-          .eq('rol', 'supervisor')
-          .maybeSingle();
-
-      if (supRow == null) {
-        debugPrint('⚠️ [AyudaService] Supervisor $rutSupervisor no encontrado en equipos_crea');
-        return [];
+      final asigs = await _supabase
+          .from('supervisor_tecnicos_crea')
+          .select('rut_tecnico, rut_supervisor');
+      for (final row in asigs as List) {
+        final sup = row['rut_supervisor'] as String?;
+        if (!mismoRut(sup, rutSupervisor)) continue;
+        final tec = row['rut_tecnico'] as String?;
+        if (tec != null && tec.isNotEmpty) ruts.add(tec);
       }
-
-      final equipo = supRow['equipo'] as int;
-
-      // 2. Obtener todos los técnicos de ese equipo
-      final resp = await _supabase
-          .from('equipos_crea')
-          .select('rut_tecnico')
-          .eq('equipo', equipo)
-          .eq('rol', 'tecnico')
-          .not('rut_tecnico', 'is', null);
-
-      final lista = resp as List;
-      debugPrint('👥 [AyudaService] Equipo $equipo de $rutSupervisor: ${lista.length} técnicos');
-      return lista
-          .map((e) => e['rut_tecnico'] as String?)
-          .where((r) => r != null && r.isNotEmpty)
-          .cast<String>()
-          .toList();
     } catch (e) {
-      debugPrint('❌ [AyudaService] Error obteniendo equipo: $e');
-      return [];
+      debugPrint('⚠️ [AyudaService] supervisor_tecnicos_crea: $e');
     }
+
+    try {
+      final supRows = await _supabase
+          .from('equipos_crea')
+          .select('equipo, rut_tecnico')
+          .eq('rol', 'supervisor');
+      int? equipo;
+      for (final row in supRows as List) {
+        if (mismoRut(row['rut_tecnico'] as String?, rutSupervisor)) {
+          equipo = row['equipo'] as int?;
+          break;
+        }
+      }
+      if (equipo != null) {
+        final resp = await _supabase
+            .from('equipos_crea')
+            .select('rut_tecnico')
+            .eq('equipo', equipo)
+            .eq('rol', 'tecnico')
+            .not('rut_tecnico', 'is', null);
+        for (final row in resp as List) {
+          final tec = row['rut_tecnico'] as String?;
+          if (tec != null && tec.isNotEmpty) ruts.add(tec);
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ [AyudaService] equipos_crea: $e');
+    }
+
+    debugPrint(
+        '👥 [AyudaService] ${ruts.length} técnicos para supervisor $rutSupervisor');
+    return ruts.toList();
   }
 
   /// Marca una ayuda como completada (supervisor llegó y terminó)
@@ -427,16 +514,61 @@ class AyudaService extends ChangeNotifier {
   /// Cancela una solicitud activa (lado técnico)
   Future<bool> cancelarSolicitud(String ticketId) async {
     try {
-      await _supabase
+      final rows = await _supabase
           .from('ayuda_terreno_crea')
-          .update({'estado': 'cancelada'})
-          .eq('ticket_id', ticketId);
+          .update({
+            'estado': 'cancelada',
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('ticket_id', ticketId)
+          .inFilter('estado', [
+            EstadoSolicitud.pendiente.value,
+            EstadoSolicitud.aceptada.value,
+            EstadoSolicitud.aceptadaConTiempo.value,
+          ])
+          .select('ticket_id');
+      if ((rows as List).isEmpty) {
+        debugPrint(
+            '⚠️ [AyudaService] Solicitud $ticketId no cancelable (ya cerrada)');
+        return false;
+      }
       debugPrint('🗑️ [AyudaService] Solicitud $ticketId cancelada');
+
+      // Respaldo FCM al supervisor (el trigger SQL también dispara).
+      unawaited(_notificarSupervisorAyudaFcm(
+        ticketId,
+        evento: 'cancelacion',
+      ));
       return true;
     } catch (e) {
       debugPrint('❌ [AyudaService] Error cancelando solicitud: $e');
       return false;
     }
+  }
+
+  bool _esCancelacionAyuda(Map<String, dynamic> oldRaw, SolicitudAyuda nueva) {
+    final estadoAnterior = oldRaw['estado']?.toString() ?? '';
+    return estadoAnterior != 'cancelada' &&
+        nueva.estado == EstadoSolicitud.cancelada;
+  }
+
+  /// Callback opcional (p. ej. pantalla de solicitudes) para mostrar aviso en UI.
+  void Function(SolicitudAyuda solicitud)? onSolicitudCancelada;
+
+  void setOnSolicitudCancelada(
+    void Function(SolicitudAyuda solicitud)? handler,
+  ) {
+    onSolicitudCancelada = handler;
+  }
+
+  Future<void> _notificarCancelacionSupervisor(SolicitudAyuda solicitud) async {
+    await AyudaAlertaEstado.unmarkSeen(solicitud.ticketId);
+    NotificationService().vibrarParaAlerta();
+    await NotificationService().alertaSupervisorCancelacion(
+      tecnicoNombre: solicitud.tecnicoNombre,
+      tipoAyuda: solicitud.tipo.displayName,
+    );
+    onSolicitudCancelada?.call(solicitud);
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -445,19 +577,40 @@ class AyudaService extends ChangeNotifier {
 
   Future<void> cargarSolicitudesSupervisor(String rutSupervisor) async {
     try {
-      // Consultar por rut_supervisor: cubre tickets originales del equipo
-      // Y tickets traspasados a este supervisor, excluyendo los traspasados a otro.
       final hoy = DateTime.now().subtract(const Duration(hours: 24));
-      final resp = await _supabase
-          .from('ayuda_terreno_crea')
-          .select()
-          .eq('rut_supervisor', rutSupervisor)
-          .neq('tipo', 'movimiento_material')
-          .gte('created_at', hoy.toIso8601String())
-          .order('created_at', ascending: false);
+      final hoyIso = hoy.toIso8601String();
+      final rutsEquipo = await obtenerRutsEquipo(rutSupervisor);
 
-      _solicitudesSupervisor =
-          (resp as List).map((e) => SolicitudAyuda.fromJson(e as Map<String, dynamic>)).toList();
+      Future<List<dynamic>> consulta({
+        required void Function(dynamic q) aplicar,
+      }) async {
+        var q = _supabase
+            .from('ayuda_terreno_crea')
+            .select()
+            .neq('tipo', 'movimiento_material')
+            .gte('created_at', hoyIso);
+        aplicar(q);
+        return await q.order('created_at', ascending: false) as List;
+      }
+
+      final todas = await consulta(aplicar: (_) {});
+
+      final unicos = <String, Map<String, dynamic>>{};
+      for (final row in todas) {
+        final map = row as Map<String, dynamic>;
+        final tid = map['ticket_id'] as String?;
+        if (tid == null) continue;
+        final rutSup = map['rut_supervisor'] as String?;
+        final rutTec = map['rut_tecnico'] as String?;
+        final esMia = mismoRut(rutSup, rutSupervisor) ||
+            _tecnicoEnEquipo(rutTec, rutsEquipo);
+        if (esMia) unicos[tid] = map;
+      }
+
+      _solicitudesSupervisor = unicos.values
+          .map((e) => SolicitudAyuda.fromJson(e))
+          .toList()
+        ..sort((a, b) => b.fechaCreacion.compareTo(a.fechaCreacion));
       debugPrint(
           '📋 [AyudaService] Solicitudes cargadas: ${_solicitudesSupervisor.length}');
       notifyListeners();
@@ -492,10 +645,14 @@ class AyudaService extends ChangeNotifier {
                 '📡 [AyudaService] Nueva solicitud recibida de: ${nueva.rutTecnico}');
 
             final rutsEquipo = await obtenerRutsEquipo(rutSupervisor);
-            final esMiEquipo = rutsEquipo.contains(nueva.rutTecnico) ||
-                nueva.rutSupervisor == rutSupervisor;
+            final esMiEquipo = _solicitudParaSupervisor(
+              rutSupervisor: rutSupervisor,
+              rutTecnico: nueva.rutTecnico,
+              rutSupAsignado: nueva.rutSupervisor,
+              rutsEquipo: rutsEquipo,
+            );
 
-            if (!esMiEquipo && nueva.rutSupervisor != rutSupervisor) {
+            if (!esMiEquipo) {
               debugPrint(
                   '📡 [AyudaService] Solicitud ignorada — técnico no pertenece al equipo');
               return;
@@ -506,9 +663,9 @@ class AyudaService extends ChangeNotifier {
             if (!yaExiste) {
               _solicitudesSupervisor = [nueva, ..._solicitudesSupervisor];
               notifyListeners();
-              // NO reproducir sonido aquí: el canal GLOBAL ya lo hace
-              onNuevaSolicitud();
             }
+            // Sonido: solo el canal GLOBAL (evita doble disparo con esta pantalla).
+            onNuevaSolicitud();
           },
         )
         // UPDATE sin filtro: recibe todos los updates y filtra manualmente
@@ -516,21 +673,24 @@ class AyudaService extends ChangeNotifier {
           event: PostgresChangeEvent.update,
           schema: 'public',
           table: 'ayuda_terreno_crea',
-          callback: (payload) {
+          callback: (payload) async {
             final raw = payload.newRecord as Map<String, dynamic>;
             if (raw['tipo'] == 'movimiento_material') return;
             final solicitud = SolicitudAyuda.fromJson(raw);
+            final oldRaw = payload.oldRecord as Map<String, dynamic>;
 
             final idx = _solicitudesSupervisor
                 .indexWhere((s) => s.ticketId == solicitud.ticketId);
 
-            if (idx == -1 && solicitud.rutSupervisor == rutSupervisor) {
+            if (idx == -1 &&
+                mismoRut(solicitud.rutSupervisor, rutSupervisor)) {
               // Traspaso entrante: nueva para este supervisor
               debugPrint('📡 [AyudaService] Traspaso recibido — ticket ${solicitud.ticketId}');
               _solicitudesSupervisor = [solicitud, ..._solicitudesSupervisor];
               notifyListeners();
               onNuevaSolicitud();
-            } else if (idx != -1 && solicitud.rutSupervisor != rutSupervisor) {
+            } else if (idx != -1 &&
+                !mismoRut(solicitud.rutSupervisor, rutSupervisor)) {
               // Traspaso saliente: ya no es de este supervisor → remover
               debugPrint('📡 [AyudaService] Traspaso saliente — ticket ${solicitud.ticketId}');
               _solicitudesSupervisor = List.from(_solicitudesSupervisor)..removeAt(idx);
@@ -540,6 +700,13 @@ class AyudaService extends ChangeNotifier {
               _solicitudesSupervisor = List.from(_solicitudesSupervisor)
                 ..[idx] = solicitud;
               notifyListeners();
+              if (_esCancelacionAyuda(oldRaw, solicitud) &&
+                  mismoRut(solicitud.rutSupervisor, rutSupervisor)) {
+                await _notificarCancelacionSupervisor(solicitud);
+              }
+            } else if (_esCancelacionAyuda(oldRaw, solicitud) &&
+                mismoRut(solicitud.rutSupervisor, rutSupervisor)) {
+              await _notificarCancelacionSupervisor(solicitud);
             }
           },
         )
@@ -599,9 +766,12 @@ class AyudaService extends ChangeNotifier {
               if (equipo.isNotEmpty) rutsEquipo.addAll(equipo);
             }
 
-            final esMiEquipo = equipo.contains(nueva.rutTecnico) ||
-                nueva.rutSupervisor == rutSupervisor ||
-                (equipo.isEmpty && nueva.rutSupervisor == null);
+            final esMiEquipo = _solicitudParaSupervisor(
+              rutSupervisor: rutSupervisor,
+              rutTecnico: nueva.rutTecnico,
+              rutSupAsignado: nueva.rutSupervisor,
+              rutsEquipo: equipo,
+            );
 
             debugPrint('🔔 [AyudaService][GLOBAL] esMiEquipo=$esMiEquipo');
 
@@ -614,12 +784,7 @@ class AyudaService extends ChangeNotifier {
               notifyListeners();
             }
 
-            NotificationService().vibrarParaAlerta();
-            await NotificationService().alertaSupervisorNuevaSolicitud(
-              tecnicoNombre: nueva.tecnicoNombre,
-              tipoAyuda: nueva.tipo.displayName,
-            );
-            await _reproducirSonido();
+            await _alertarNuevaSolicitudSupervisor(nueva);
           },
         )
         // UPDATE sin filtro: recibe todos los updates y filtra manualmente
@@ -631,25 +796,22 @@ class AyudaService extends ChangeNotifier {
             final raw = payload.newRecord as Map<String, dynamic>;
             if (raw['tipo'] == 'movimiento_material') return;
             final solicitud = SolicitudAyuda.fromJson(raw);
+            final oldRaw = payload.oldRecord as Map<String, dynamic>;
             debugPrint(
                 '🔔 [AyudaService][GLOBAL] UPDATE ticket=${solicitud.ticketId} rut_supervisor=${solicitud.rutSupervisor}');
 
             final idx = _solicitudesSupervisor
                 .indexWhere((s) => s.ticketId == solicitud.ticketId);
 
-            if (idx == -1 && solicitud.rutSupervisor == rutSupervisor) {
+            if (idx == -1 &&
+                mismoRut(solicitud.rutSupervisor, rutSupervisor)) {
               // Traspaso entrante: nueva para este supervisor
               debugPrint('🔔 [AyudaService][GLOBAL] Traspaso recibido — ticket ${solicitud.ticketId}');
               _solicitudesSupervisor = [solicitud, ..._solicitudesSupervisor];
               notifyListeners();
-
-              NotificationService().vibrarParaAlerta();
-              await NotificationService().alertaSupervisorNuevaSolicitud(
-                tecnicoNombre: solicitud.tecnicoNombre,
-                tipoAyuda: solicitud.tipo.displayName,
-              );
-              await _reproducirSonido();
-            } else if (idx != -1 && solicitud.rutSupervisor != rutSupervisor) {
+              await _alertarNuevaSolicitudSupervisor(solicitud);
+            } else if (idx != -1 &&
+                !mismoRut(solicitud.rutSupervisor, rutSupervisor)) {
               // Traspaso saliente: remover de la lista
               debugPrint('🔔 [AyudaService][GLOBAL] Traspaso saliente — ticket ${solicitud.ticketId}');
               _solicitudesSupervisor = List.from(_solicitudesSupervisor)..removeAt(idx);
@@ -659,6 +821,13 @@ class AyudaService extends ChangeNotifier {
               _solicitudesSupervisor = List.from(_solicitudesSupervisor)
                 ..[idx] = solicitud;
               notifyListeners();
+              if (_esCancelacionAyuda(oldRaw, solicitud) &&
+                  mismoRut(solicitud.rutSupervisor, rutSupervisor)) {
+                await _notificarCancelacionSupervisor(solicitud);
+              }
+            } else if (_esCancelacionAyuda(oldRaw, solicitud) &&
+                mismoRut(solicitud.rutSupervisor, rutSupervisor)) {
+              await _notificarCancelacionSupervisor(solicitud);
             }
           },
         )
@@ -880,16 +1049,29 @@ class AyudaService extends ChangeNotifier {
   // Audio
   // ─────────────────────────────────────────────────────────────
 
-  Future<void> _reproducirSonido() async {
-    // Intentar reproducir via just_audio (app en primer plano)
+  Future<void> _notificarSupervisorAyudaFcm(
+    String ticketId, {
+    String? evento,
+  }) async {
+    if (ticketId.isEmpty) return;
     try {
-      if (_player.playing) await _player.stop();
-      await _player.setAsset('assets/sounds/alerta_supervisor.mp3');
-      await _player.play();
-      debugPrint('🔊 [AyudaService] Sonido reproducido via just_audio');
+      await _supabase.functions.invoke(
+        'notificar-supervisor-ayuda',
+        body: {
+          'ticket_id': ticketId,
+          if (evento != null) 'evento': evento,
+        },
+      );
+      debugPrint(
+          '📲 [AyudaService] FCM supervisor disparado ticket=$ticketId evento=$evento');
     } catch (e) {
-      debugPrint('⚠️ [AyudaService] just_audio falló: $e — usando notificación sistema');
+      debugPrint('⚠️ [AyudaService] FCM supervisor falló: $e');
     }
+  }
+
+  Future<void> _reproducirSonido() async {
+    await FcmService.playAyuda();
+    debugPrint('🔊 [AyudaService] Sonido Mario supervisor (nativo)');
   }
 
   /// Refresca la solicitud actual desde Supabase (tracking / mapa).

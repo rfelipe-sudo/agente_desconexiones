@@ -1,16 +1,15 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:agente_desconexiones/config/constants.dart';
 import 'package:agente_desconexiones/models/solicitud_material.dart';
+import 'package:agente_desconexiones/services/fcm_service.dart';
+import 'package:agente_desconexiones/services/material_solicitud_service.dart';
+import 'package:agente_desconexiones/services/solicitud_estado_monitor.dart';
 
 /// Pantalla que muestra B (entregador) para ingresar el PIN de 6 dígitos
-/// que el solicitante (A) recibió por notificación.
-/// Al validar el PIN llama a Kepler POST /traspaso/api/solicitar.
+/// que el solicitante (A) recibió en su pantalla.
 class PinEntryScreen extends StatefulWidget {
   final SolicitudMaterial solicitud;
 
@@ -32,8 +31,108 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
   bool   _cargando    = false;
   String? _error;
   bool   _exito       = false;
-  String? _folio;
   bool   _sinIntentos = false;
+  bool   _pinVerificado = false;
+  String? _avisoRenovacion;
+
+  final SolicitudEstadoMonitor _estadoMonitor = SolicitudEstadoMonitor();
+  bool _transaccionCerrada = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _renovarPinSiExpirado();
+    _estadoMonitor.start(
+      solicitudId: widget.solicitud.id,
+      onEstado: (estado) {
+        if (!mounted || _transaccionCerrada || _exito) return;
+        if (estado == 'cancelada') {
+          _transaccionCerrada = true;
+          _estadoMonitor.stop();
+          unawaited(_cerrarPorCancelacionRemota());
+        } else if (estado == 'completada' && !_exito) {
+          _transaccionCerrada = true;
+          _estadoMonitor.stop();
+          unawaited(_cerrarPorCompletadaRemota());
+        }
+      },
+    );
+  }
+
+  Future<void> _cerrarPorCancelacionRemota() async {
+    if (!mounted) return;
+    await MaterialTransaccionUi.mostrarCancelada(context);
+    if (!mounted) return;
+    MaterialTransaccionUi.cerrarFlujoEntregador(context);
+  }
+
+  Future<void> _cerrarPorCompletadaRemota() async {
+    if (!mounted) return;
+    await MaterialTransaccionUi.mostrarCompletada(context);
+    if (!mounted) return;
+    MaterialTransaccionUi.cerrarFlujoEntregador(context);
+  }
+
+  @override
+  void dispose() {
+    _estadoMonitor.stop();
+    super.dispose();
+  }
+
+  Future<void> _renovarPinSiExpirado() async {
+    try {
+      final row = await _db
+          .from('solicitudes_material')
+          .select('pin_codigo, pin_expira_en')
+          .eq('id', widget.solicitud.id)
+          .maybeSingle();
+      if (row == null) return;
+
+      final pin = row['pin_codigo'] as String?;
+      final expiraRaw = row['pin_expira_en'] as String?;
+      if (pin == null || pin.isEmpty) return;
+
+      final expirado = expiraRaw != null &&
+          DateTime.parse(expiraRaw).isBefore(DateTime.now());
+      if (!expirado) return;
+
+      await _db.functions.invoke('generar-pin', body: {
+        'solicitud_id': widget.solicitud.id,
+      });
+      await FcmService.limpiarPinMostrado(widget.solicitud.id);
+      if (mounted) {
+        setState(() {
+          _avisoRenovacion =
+              'El PIN anterior expiró. Se generó uno nuevo — pídeselo al solicitante.';
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _regenerarPinTrasExpiracion() async {
+    setState(() { _cargando = true; _error = null; });
+    try {
+      await _db.functions.invoke('generar-pin', body: {
+        'solicitud_id': widget.solicitud.id,
+      });
+      await FcmService.limpiarPinMostrado(widget.solicitud.id);
+      if (mounted) {
+        setState(() {
+          _cargando = false;
+          _pin = '';
+          _avisoRenovacion =
+              'PIN renovado. Pide al solicitante el código nuevo en su pantalla.';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _cargando = false;
+          _error = 'No se pudo renovar el PIN. Intenta nuevamente.';
+        });
+      }
+    }
+  }
 
   void _presionar(String digito) {
     if (_pin.length >= 6 || _cargando || _exito || _sinIntentos) return;
@@ -50,21 +149,42 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
   }
 
   Future<void> _verificar() async {
+    if (_pinVerificado) return;
     setState(() { _cargando = true; _error = null; });
 
-    try {
-      final result = await _db.rpc('verificar_pin', params: {
-        'p_solicitud_id': widget.solicitud.id,
-        'p_pin':          _pin,
-      }) as Map<String, dynamic>;
+    debugPrint('[PIN] verificar solicitud=${widget.solicitud.id} pin=$_pin');
 
-      if (result['ok'] == true) {
-        await _llamarKepler();
+    try {
+      final result = await _confirmarEnServidor();
+      debugPrint('[PIN] resultado servidor: $result');
+
+      final ok = result['ok'] == true;
+
+      if (ok) {
+        _pinVerificado = true;
+        await FcmService.instance.detenerPinMonitor();
+        setState(() {
+          _cargando = false;
+          _exito    = true;
+        });
       } else {
         final motivo   = result['error'] as String? ?? 'error';
         final intentos = result['intentos_restantes'] as int?;
+
+        if (motivo == 'expirado') {
+          await _regenerarPinTrasExpiracion();
+          return;
+        }
+
         final agotados = motivo == 'sin_intentos' ||
+            motivo == 'cancelada' ||
             (intentos != null && intentos <= 0);
+        if (agotados) {
+          unawaited(MaterialSolicitudService().notificarCancelacion(
+            solicitudId:  widget.solicitud.id,
+            tipoMaterial: widget.solicitud.tipoMaterial,
+          ));
+        }
         setState(() {
           _cargando    = false;
           _pin         = '';
@@ -73,93 +193,88 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
         });
       }
     } catch (e) {
+      debugPrint('[PIN] error verificar: $e');
+      final msg = e.toString();
+      final corto = msg.contains('pin_intentos')
+          ? 'Error interno al confirmar. Intenta de nuevo en unos segundos.'
+          : (msg.length > 120 ? '${msg.substring(0, 120)}…' : msg);
       setState(() {
         _cargando = false;
         _pin      = '';
-        _error    = 'Error de conexión. Intenta nuevamente.';
+        _error    = 'No se pudo confirmar: $corto';
       });
     }
   }
 
+  Future<Map<String, dynamic>> _confirmarEnServidor() async {
+    try {
+      final res = await _db.functions.invoke('confirmar-pin', body: {
+        'solicitud_id': widget.solicitud.id,
+        'pin':          _pin,
+      });
+      final data = res.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+    } catch (e) {
+      debugPrint('[PIN] edge confirmar-pin falló: $e');
+    }
+
+    return await _db.rpc('confirmar_traspaso_pin', params: {
+      'p_solicitud_id': widget.solicitud.id,
+      'p_pin':          _pin,
+    }) as Map<String, dynamic>;
+  }
+
   String _mensajeError(String motivo, int? intentos) {
     switch (motivo) {
-      case 'expirado':    return 'El PIN expiró. Solicita uno nuevo.';
-      case 'sin_intentos': return 'Sin intentos restantes. Contacta a tu supervisor.';
+      case 'expirado':
+        return 'El PIN expiró. Se generó uno nuevo — pídeselo al solicitante.';
+      case 'pin_ya_usado':
+        return 'PIN ya utilizado. Si no ves confirmación, contacta a soporte.';
+      case 'cancelada':
+        return 'La solicitud fue cancelada.';
+      case 'sin_intentos':
+        return 'Sin intentos restantes. Contacta a tu supervisor.';
       case 'incorrecto':
         if (intentos != null && intentos > 0) {
           return 'PIN incorrecto. Quedan $intentos intento${intentos == 1 ? '' : 's'}.';
         }
         return 'PIN incorrecto. Sin intentos restantes.';
-      default: return 'Error inesperado ($motivo).';
-    }
-  }
-
-  // PIN correcto → crea registro en bodega + notifica por email.
-  // Kepler se llama cuando bodega aprueba (edge function aprobar-traspaso).
-  Future<void> _llamarKepler() async {
-    final sol = widget.solicitud;
-    try {
-      // Si las series no llegaron propagadas, leerlas directamente de
-      // solicitudes_material (guía las guarda al firmar el entregador).
-      List<String> series = sol.series;
-      if (series.isEmpty && sol.esSeriado) {
-        final row = await _db
-            .from('solicitudes_material')
-            .select('series')
-            .eq('id', sol.id)
-            .single();
-        series = ((row as Map)['series'] as List?)
-                ?.map((e) => e.toString())
-                .toList() ??
-            [];
-      }
-
-      // Crear registro de trazabilidad en bodega
-      await _db.from('traspasos_bodega').insert({
-        'solicitud_material_id': sol.id,
-        'rut_tecnico_b':         sol.rutEntregador ?? '',
-        'nombre_tecnico_b':      sol.nombreEntregador ?? '',
-        'rut_tecnico_a':         sol.rutSolicitante,
-        'nombre_tecnico_a':      sol.nombreSolicitante,
-        'tipo_material':         sol.tipoMaterial,
-        'cantidad':              sol.cantidad,
-        'series':                series,
-        'id_material':           sol.idMaterial,
-        'estado':                'pendiente',
-      });
-
-      // Notificar a bodegueros por FCM (fire-and-forget)
-      unawaited(_db.functions.invoke('notificar-bodega-traspaso'));
-
-      setState(() {
-        _cargando = false;
-        _exito    = true;
-        _folio    = null; // folio llega cuando bodega apruebe
-      });
-    } catch (e) {
-      setState(() {
-        _cargando = false;
-        _error    = 'Error al registrar en bodega. Intenta nuevamente.';
-        _pin      = '';
-      });
+      default:
+        return 'Error inesperado ($motivo).';
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _bg,
-      appBar: AppBar(
-        backgroundColor: _card,
-        title: const Text('Confirmar traspaso',
-            style: TextStyle(color: Colors.white, fontSize: 16)),
-        iconTheme: const IconThemeData(color: Colors.white),
+    return PopScope(
+      canPop: _exito,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _exito) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Debes confirmar el PIN para cerrar el traspaso. '
+              'Si sales, usa el banner naranja para volver.',
+            ),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      },
+      child: Scaffold(
+        backgroundColor: _bg,
+        appBar: AppBar(
+          backgroundColor: _card,
+          title: const Text('Confirmar traspaso',
+              style: TextStyle(color: Colors.white, fontSize: 16)),
+          iconTheme: const IconThemeData(color: Colors.white),
+        ),
+        body: _sinIntentos
+            ? _buildSinIntentos()
+            : _exito
+                ? _buildExito()
+                : _buildForm(),
       ),
-      body: _sinIntentos
-          ? _buildSinIntentos()
-          : _exito
-              ? _buildExito()
-              : _buildForm(),
     );
   }
 
@@ -177,13 +292,9 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
                     fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center),
             const SizedBox(height: 12),
-            Text(
-              _folio != null
-                  ? 'Folio Kepler: $_folio'
-                  : 'Pendiente de aprobación por bodega.\nRecibirás una notificación cuando sea aprobado.',
-              style: TextStyle(
-                  color: _folio != null ? _accent : Colors.white70,
-                  fontSize: 14),
+            const Text(
+              'Pendiente de aprobación por bodega.\nRecibirás una notificación cuando sea aprobado.',
+              style: TextStyle(color: Colors.white70, fontSize: 14),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 40),
@@ -247,21 +358,29 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
   }
 
   Future<void> _cancelarYVolver() async {
+    final rutEnt = widget.solicitud.rutEntregador;
+    if (rutEnt == null || rutEnt.isEmpty) return;
     try {
-      await _db
-          .from('solicitudes_material')
-          .update({'estado': 'cancelada'})
-          .eq('id', widget.solicitud.id);
+      await MaterialSolicitudService().cancelarSolicitud(
+        solicitudId:   widget.solicitud.id,
+        rutCancelador: rutEnt,
+      );
     } catch (_) {}
+    _transaccionCerrada = true;
+    _estadoMonitor.stop();
     if (mounted) {
-      Navigator.of(context).popUntil((r) => r.isFirst);
+      await MaterialTransaccionUi.mostrarCancelada(
+        context,
+        detalle: 'Cancelaste la solicitud. El solicitante fue notificado.',
+      );
+      if (!mounted) return;
+      MaterialTransaccionUi.cerrarFlujoEntregador(context);
     }
   }
 
   Widget _buildForm() {
     return Column(
       children: [
-        // Instrucción
         Container(
           color: _card,
           padding: const EdgeInsets.all(16),
@@ -271,7 +390,7 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Pide al solicitante el PIN de 6 dígitos que recibió en su notificación.',
+                  'Pide al solicitante el PIN de 6 dígitos que ve en su pantalla (no el de una notificación antigua).',
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.85),
                       fontSize: 13),
                 ),
@@ -280,9 +399,35 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
           ),
         ),
 
+        if (_avisoRenovacion != null) ...[
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _accent.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _accent.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.refresh, color: _accent, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _avisoRenovacion!,
+                      style: const TextStyle(color: _accent, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+
         const SizedBox(height: 40),
 
-        // Puntos del PIN
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(6, (i) {
@@ -303,7 +448,6 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
           }),
         ),
 
-        // Error
         if (_error != null) ...[
           const SizedBox(height: 16),
           Padding(
@@ -316,7 +460,6 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
 
         const Spacer(),
 
-        // Teclado numérico
         if (_cargando)
           const Padding(
             padding: EdgeInsets.only(bottom: 60),

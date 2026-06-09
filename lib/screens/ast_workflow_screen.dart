@@ -5,8 +5,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:agente_desconexiones/models/creavox_orden.dart';
 import 'package:agente_desconexiones/models/creavox_tecnico.dart';
+import 'package:agente_desconexiones/services/ast_service.dart';
+import 'package:agente_desconexiones/services/ast_pdf_service.dart';
 import 'package:agente_desconexiones/services/creavox_api_service.dart';
 import 'package:agente_desconexiones/services/creavox_session_service.dart';
+import 'package:agente_desconexiones/services/logistica_service.dart';
+import 'package:agente_desconexiones/utils/session_manager.dart';
+import 'package:printing/printing.dart';
 import 'ast_form_screen.dart';
 import 'ast_login_screen.dart';
 
@@ -31,9 +36,13 @@ class AstWorkflowScreen extends StatefulWidget {
 class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
   final _session = CreavoxSessionService();
   final _api = CreavoxApiService();
+  final _astSvc = AstService();
 
   CreavoxTecnico? _tecnico;
+  String _nombreSesion = '';
+  String _rutSesion = '';
   CreavoxOrden? _orden;
+  bool _ordenEsActiva = false;
   Position? _posicion;
   double? _distanciaMetros;
 
@@ -59,14 +68,25 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
       await _session.inicializar();
       _tecnico = _session.getTecnico();
 
+      final id = await SessionManager.identidadSesionMaterial();
+      _rutSesion = id.rut;
+      _nombreSesion = id.nombre;
+
       // Si la sesión Creavox no corresponde al usuario activo en la app, forzar re-login
       final prefs = await SharedPreferences.getInstance();
       final rutApp = prefs.getString('rut_tecnico') ??
-                     prefs.getString('user_rut') ??
-                     prefs.getString('rut');
-      if (rutApp != null && _tecnico != null && _tecnico!.rutTecnico != rutApp) {
+          prefs.getString('user_rut') ??
+          prefs.getString('rut') ??
+          '';
+      if (rutApp.isNotEmpty &&
+          _tecnico != null &&
+          !LogisticaService.sameRut(_tecnico!.rutTecnico, rutApp)) {
         await _session.cerrarSesion();
         _tecnico = null;
+      } else if (_tecnico != null &&
+          _nombreSesion.isNotEmpty &&
+          LogisticaService.sameRut(_tecnico!.rutTecnico, _rutSesion)) {
+        _tecnico = _tecnico!.copyWith(nombreTecnico: _nombreSesion);
       }
 
       if (_tecnico == null && mounted) {
@@ -77,9 +97,10 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
       }
 
       _tienePermisos = await _pedirPermisos();
-      await Future.wait([_cargarOrden(), _cargarHistorial()]);
+      await _cargarHistorial();
+      await _cargarOrden();
 
-      if (_tienePermisos && _orden != null) {
+      if (_orden != null && _ordenEsActiva && _tienePermisos) {
         await _actualizarGps();
         _iniciarGpsAutomatico();
       }
@@ -121,11 +142,47 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
 
   Future<void> _cargarOrden() async {
     if (_tecnico == null) return;
+    final rut = _tecnico!.rutTecnico;
+
+    CreavoxOrden? activa;
     try {
-      final orden = await _api.getOrdenActiva(_tecnico!.rutTecnico);
-      setState(() => _orden = orden);
-      if (orden != null) await _session.guardarOrden(orden);
+      activa = await _api.getOrdenActiva(rut);
     } catch (_) {}
+
+    if (activa != null && activa.ordenDeTrabajo.isNotEmpty) {
+      await _session.guardarOrden(activa);
+      if (mounted) {
+        setState(() {
+          _orden = activa;
+          _ordenEsActiva = true;
+          _estaEnRango = false;
+        });
+      }
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _orden = null;
+        _ordenEsActiva = false;
+        _estaEnRango = false;
+      });
+    }
+  }
+
+  void _actualizarRangoDesdeGps() {
+    if (_orden == null || !_orden!.tieneCoordenadas || _posicion == null) {
+      _estaEnRango = false;
+      return;
+    }
+    final dist = Geolocator.distanceBetween(
+      _posicion!.latitude,
+      _posicion!.longitude,
+      _orden!.coordY,
+      _orden!.coordX,
+    );
+    _distanciaMetros = dist;
+    _estaEnRango = dist <= _distanciaMaxMetros;
   }
 
   Future<void> _actualizarGps() async {
@@ -136,19 +193,10 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
         ),
       );
       if (!mounted) return;
-      setState(() => _posicion = pos);
-      if (_orden != null && _orden!.tieneCoordenadas) {
-        final dist = Geolocator.distanceBetween(
-          pos.latitude,
-          pos.longitude,
-          _orden!.coordY,
-          _orden!.coordX,
-        );
-        setState(() {
-          _distanciaMetros = dist;
-          _estaEnRango = true; // TODO: restaurar validación de 300m tras pruebas
-        });
-      }
+      setState(() {
+        _posicion = pos;
+        _actualizarRangoDesdeGps();
+      });
     } catch (_) {}
   }
 
@@ -163,22 +211,16 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
       ),
     ).listen((pos) {
       if (!mounted) return;
-      setState(() => _posicion = pos);
-      if (_orden != null && _orden!.tieneCoordenadas) {
-        final dist = Geolocator.distanceBetween(
-          pos.latitude, pos.longitude,
-          _orden!.coordY, _orden!.coordX,
-        );
-        setState(() {
-          _distanciaMetros = dist;
-          _estaEnRango = true; // TODO: restaurar validación de 300m tras pruebas
-        });
-      }
+      setState(() {
+        _posicion = pos;
+        _actualizarRangoDesdeGps();
+      });
     });
   }
 
   Future<void> _refrescar() async {
-    await Future.wait([_actualizarGps(), _cargarOrden(), _cargarHistorial()]);
+    await _cargarHistorial();
+    await Future.wait([_actualizarGps(), _cargarOrden()]);
   }
 
   void _abrirAST() {
@@ -197,6 +239,31 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const AstLoginScreen()),
       );
+    }
+  }
+
+  Future<void> _exportarPdf(String id, String ot) async {
+    try {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Generando PDF…'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      final row = await _astSvc.obtenerPorId(id);
+      final bytes = await AstPdfService.generarDesdeMap(row);
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: AstPdfService.nombreArchivoDesdeMap(row),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error PDF: $e'), backgroundColor: _red),
+        );
+      }
     }
   }
 
@@ -247,7 +314,7 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
                     if (_error != null) _buildError(),
                     _buildTecnicoCard(),
                     const SizedBox(height: 16),
-                    if (_orden != null) ...[
+                    if (_orden != null && _ordenEsActiva) ...[
                       _buildOrdenCard(),
                       const SizedBox(height: 16),
                       _buildUbicacionCard(),
@@ -293,7 +360,11 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
             radius: 26,
             backgroundColor: _primary.withOpacity(0.2),
             child: Text(
-              (_tecnico?.nombreTecnico ?? 'T').substring(0, 1).toUpperCase(),
+              (_nombreSesion.isNotEmpty
+                      ? _nombreSesion
+                      : (_tecnico?.nombreTecnico ?? 'T'))
+                  .substring(0, 1)
+                  .toUpperCase(),
               style: const TextStyle(
                 color: _primary,
                 fontSize: 22,
@@ -307,7 +378,9 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _tecnico?.nombreTecnico ?? '',
+                  _nombreSesion.isNotEmpty
+                      ? _nombreSesion
+                      : (_tecnico?.nombreTecnico ?? ''),
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -316,7 +389,7 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'RUT: ${_tecnico?.rutTecnico ?? ''}',
+                  'RUT: ${_rutSesion.isNotEmpty ? _rutSesion : (_tecnico?.rutTecnico ?? '')}',
                   style: const TextStyle(color: _textDim, fontSize: 13),
                 ),
                 Text(
@@ -335,23 +408,26 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _primary.withOpacity(0.08),
+        color: _primary.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _primary.withOpacity(0.3)),
+        border: Border.all(
+          color: _primary.withValues(alpha: 0.3),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
-              const Icon(Icons.assignment_rounded, color: _primary, size: 20),
-              const SizedBox(width: 8),
-              const Text(
-                'Orden Activa',
+              Icon(Icons.assignment_rounded, color: _primary, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'Orden iniciada',
                 style: TextStyle(
-                    color: _primary,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15),
+                  color: _primary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
               ),
             ],
           ),
@@ -374,7 +450,12 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
     String titulo;
     String detalle;
 
-    if (!_tienePermisos) {
+    if (!_orden!.tieneCoordenadas) {
+      color = _red;
+      icon = Icons.map_outlined;
+      titulo = 'Sin coordenadas del trabajo';
+      detalle = 'La orden no tiene ubicación para validar la geocerca';
+    } else if (!_tienePermisos) {
       color = _red; icon = Icons.location_off;
       titulo = 'Sin permisos de ubicación';
       detalle = 'Habilita el GPS en ajustes';
@@ -428,7 +509,7 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
   }
 
   Widget _buildBotonAST() {
-    final habilitado = _estaEnRango && _orden != null;
+    final habilitado = _orden != null && _ordenEsActiva && _estaEnRango;
     return SizedBox(
       height: 56,
       child: ElevatedButton.icon(
@@ -463,13 +544,14 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
           Icon(Icons.assignment_late_rounded, size: 48, color: _orange),
           SizedBox(height: 16),
           Text(
-            'No tienes órdenes asignadas',
+            'Sin orden iniciada',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
           SizedBox(height: 8),
           Text(
-            'Sin una orden activa no es posible completar el AST.',
+            'Inicia la orden en TOA y acércate a la dirección del cliente '
+            '(máx. 300 m) para habilitar el AST.',
             style: TextStyle(color: _textDim, fontSize: 13),
             textAlign: TextAlign.center,
           ),
@@ -543,7 +625,13 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
       } catch (_) {}
     }
 
-    return Container(
+    return InkWell(
+      onTap: () {
+        final id = ast['id'] as String?;
+        if (id != null) _exportarPdf(id, ot);
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -580,14 +668,24 @@ class _AstWorkflowScreenState extends State<AstWorkflowScreen> {
                       style: const TextStyle(
                           color: Colors.orangeAccent, fontSize: 11)),
                 ],
+                const SizedBox(height: 4),
+                const Text('Toca para exportar PDF',
+                    style: TextStyle(color: _accent, fontSize: 10)),
               ],
             ),
           ),
-          Text(hora,
-              style: const TextStyle(
-                  color: _textDim, fontSize: 11, fontFamily: 'monospace')),
+          Column(
+            children: [
+              Text(hora,
+                  style: const TextStyle(
+                      color: _textDim, fontSize: 11, fontFamily: 'monospace')),
+              const SizedBox(height: 4),
+              const Icon(Icons.picture_as_pdf, color: _accent, size: 18),
+            ],
+          ),
         ],
       ),
+    ),
     );
   }
 }

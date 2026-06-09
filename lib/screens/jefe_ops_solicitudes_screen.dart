@@ -92,13 +92,20 @@ class _JefeOpsSolicitudesScreenState extends State<JefeOpsSolicitudesScreen> {
   }
 
   void _suscribir() {
+    _sub?.cancel();
+    unawaited(_cargar());
     _sub = Supabase.instance.client
         .from('sol_comb_adicional')
         .stream(primaryKey: ['id'])
-        .eq('estado', 'aprobado_supervisor')
         .listen((rows) {
       if (!mounted) return;
-      setState(() => _pendientes = rows.cast());
+      final pend = rows
+          .where((r) =>
+              r['estado'] == 'aprobado_supervisor' ||
+              r['estado'] == 'pendiente_jefe_ops')
+          .cast<Map<String, dynamic>>()
+          .toList();
+      setState(() => _pendientes = pend);
     });
   }
 
@@ -120,7 +127,7 @@ class _JefeOpsSolicitudesScreenState extends State<JefeOpsSolicitudesScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Técnico: ${sol['nombre_solicitante'] ?? sol['rut_solicitante']}',
+              '${_rolSolicitante(sol)}: ${sol['nombre_solicitante'] ?? sol['rut_solicitante']}',
               style: const TextStyle(color: Colors.white70, fontSize: 13),
             ),
             const SizedBox(height: 16),
@@ -201,7 +208,7 @@ class _JefeOpsSolicitudesScreenState extends State<JefeOpsSolicitudesScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Técnico: ${sol['nombre_solicitante'] ?? sol['rut_solicitante']}',
+              '${_rolSolicitante(sol)}: ${sol['nombre_solicitante'] ?? sol['rut_solicitante']}',
               style: const TextStyle(color: Colors.white70, fontSize: 13),
             ),
             const SizedBox(height: 16),
@@ -483,7 +490,15 @@ class _JefeOpsSolicitudesScreenState extends State<JefeOpsSolicitudesScreen> {
     return DateFormat('dd/MM HH:mm').format(dt);
   }
 
+  String _rolSolicitante(Map<String, dynamic> sol) {
+    final tipo = sol['tipo_solicitante']?.toString() ?? '';
+    if (tipo == 'supervisor') return 'Supervisor';
+    if (sol['estado'] == 'pendiente_jefe_ops') return 'Supervisor';
+    return 'Técnico';
+  }
+
   Color _estadoColor(String estado) => switch (estado) {
+        'pendiente_jefe_ops'   => _orange,
         'aprobado_supervisor'  => _orange,
         'pendiente_flota'      => const Color(0xFF60A5FA),
         'completada'           => _green,
@@ -492,7 +507,8 @@ class _JefeOpsSolicitudesScreenState extends State<JefeOpsSolicitudesScreen> {
       };
 
   String _estadoLabel(String estado) => switch (estado) {
-        'aprobado_supervisor' => 'Pendiente',
+        'pendiente_jefe_ops'  => 'Supervisor — pendiente',
+        'aprobado_supervisor' => 'Técnico — aprobada sup.',
         'pendiente_flota'     => 'En Flota',
         'completada'          => 'Completada',
         'rechazado_jefe_ops'  => 'Rechazada',

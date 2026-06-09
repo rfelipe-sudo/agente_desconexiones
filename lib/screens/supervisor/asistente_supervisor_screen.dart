@@ -10,9 +10,13 @@ import '../../services/fcm_service.dart';
 import '../../services/nyquist_service.dart';
 import 'dart:async';
 
+import 'package:agente_desconexiones/constants/app_colors.dart';
 import 'package:agente_desconexiones/models/solicitud_material.dart';
+import 'package:agente_desconexiones/models/usuario.dart';
+import 'package:agente_desconexiones/widgets/flota_supervisor_card.dart';
+import 'package:agente_desconexiones/widgets/perfil_tecnico_sheet.dart';
 import 'auditoria_prl_screen.dart';
-import 'mi_equipo_screen.dart';
+import 'mi_equipo_nyquist_screen.dart';
 import 'solicitudes_ayuda_screen.dart';
 import 'solicitudes_comb_supervisor_screen.dart';
 import 'solicitudes_material_supervisor_screen.dart';
@@ -104,7 +108,7 @@ class _AsistenteSupervisorScreenState
   final _ayudaService = AyudaService();
   String _rutSupervisor = '';
 
-  // ── Material: badge de solicitudes vencidas (>5 min sin atender) ──────────
+  // ── Material: badge de solicitudes vencidas (>10 min sin atender) ─────────
   int _materialVencidas = 0;
   StreamSubscription<List<Map<String, dynamic>>>? _subMaterial;
   Timer? _clockMaterial;
@@ -144,13 +148,32 @@ class _AsistenteSupervisorScreenState
     _cargarActividades();
     _cargarNombre();
     _ayudaService.addListener(_onAyudaChanged);
+    _ayudaService.setOnSolicitudCancelada(_mostrarSnackCancelacionAyuda);
     _iniciarMonitoreoAyuda();
     _iniciarMonitoreoMaterial();
     _iniciarMonitoreoComb();
   }
 
+  void _mostrarSnackCancelacionAyuda(SolicitudAyuda s) {
+    if (!mounted) return;
+    final nombre = s.tecnicoNombre.trim().isNotEmpty
+        ? s.tecnicoNombre
+        : 'Un técnico';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      backgroundColor: const Color(0xFFEF4444),
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 6),
+      margin: const EdgeInsets.all(12),
+      content: Text(
+        '$nombre canceló la solicitud de ${s.tipo.displayName}',
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+    ));
+  }
+
   @override
   void dispose() {
+    _ayudaService.setOnSolicitudCancelada(null);
     _ayudaService.removeListener(_onAyudaChanged);
     _otController.dispose();
     _subMaterial?.cancel();
@@ -173,7 +196,7 @@ class _AsistenteSupervisorScreenState
       final ahora = DateTime.now();
       final vencidas = rows
           .map((r) => SolicitudMaterial.fromMap(r as Map<String, dynamic>))
-          .where((s) => ahora.difference(s.createdAt).inMinutes >= 5)
+          .where((s) => ahora.difference(s.createdAt).inMinutes >= 10)
           .length;
       setState(() => _materialVencidas = vencidas);
     });
@@ -196,14 +219,12 @@ class _AsistenteSupervisorScreenState
   }
 
   Future<void> _iniciarMonitoreoAyuda() async {
-    final prefs = await SharedPreferences.getInstance();
-    final rut = prefs.getString('rut_tecnico') ??
-        prefs.getString('user_rut') ??
-        prefs.getString('rut') ?? '';
+    final rut = await AyudaService.resolverRutSupervisorSesion();
     if (rut.isEmpty) return;
     if (mounted) setState(() => _rutSupervisor = rut);
     await _ayudaService.iniciarMonitoreoGlobalSupervisor(rut);
-    // Guardar FCM token en supervisores_crea para notificaciones en background
+    unawaited(FcmService.instance.syncFcmTokenDispositivo());
+    unawaited(FcmService.instance.initSupervisorAyudaMonitor());
     _guardarTokenFcm(rut);
   }
 
@@ -225,8 +246,34 @@ class _AsistenteSupervisorScreenState
   Future<void> _cargarNombre() async {
     final prefs = await SharedPreferences.getInstance();
     final n = prefs.getString('user_nombre') ??
-        prefs.getString('nombre_tecnico') ?? '';
-    if (mounted) setState(() => _nombre = n);
+        prefs.getString('nombre_tecnico') ??
+        '';
+    final rut = prefs.getString('rut_tecnico') ??
+        prefs.getString('user_rut') ??
+        prefs.getString('rut') ??
+        '';
+    if (mounted) {
+      setState(() {
+        _nombre = n;
+        if (rut.isNotEmpty) _rutSupervisor = rut;
+      });
+    }
+  }
+
+  void _mostrarPerfil() {
+    final nombre = _nombre.isNotEmpty ? _nombre : 'Supervisor';
+    final usuario = Usuario(
+      id: _rutSupervisor.isNotEmpty ? _rutSupervisor : 'supervisor',
+      nombre: nombre,
+      telefono: '',
+      email: '',
+      rol: RolUsuario.supervisor,
+    );
+    PerfilTecnicoSheet.mostrar(
+      context,
+      usuario: usuario,
+      rut: _rutSupervisor,
+    );
   }
 
   // ── Actividades ────────────────────────────────────────────────────────────
@@ -382,7 +429,7 @@ class _AsistenteSupervisorScreenState
             ? _nombre
             : null;
 
-    return Column(
+    final tituloColumn = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -398,7 +445,34 @@ class _AsistenteSupervisorScreenState
           Text(
             subtitulo,
             style: const TextStyle(color: Colors.white54, fontSize: 12),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
           ),
+      ],
+    );
+
+    if (_vista != _Vista.inicio) return tituloColumn;
+
+    return Row(
+      children: [
+        InkWell(
+          onTap: _mostrarPerfil,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              gradient: AppColors.creaGradient,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.supervisor_account,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(child: tituloColumn),
       ],
     );
   }
@@ -439,7 +513,12 @@ class _AsistenteSupervisorScreenState
   Widget _buildInicio() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: GridView.count(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const FlotaSupervisorCard(),
+          const SizedBox(height: 16),
+          GridView.count(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         crossAxisCount: 2,
@@ -490,7 +569,7 @@ class _AsistenteSupervisorScreenState
             colores: [_colorAzul, const Color(0xFF1565C0)],
             onTap: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const MiEquipoScreen()),
+              MaterialPageRoute(builder: (_) => const MiEquipoNyquistScreen()),
             ),
           ),
           _buildCard(
@@ -518,6 +597,8 @@ class _AsistenteSupervisorScreenState
                     const SolicitudesCombSupervisorScreen(),
               ),
             ),
+          ),
+        ],
           ),
         ],
       ),

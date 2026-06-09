@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PREVENCIÓN — Panel AST</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<style>
+:root{
+  --bg:#07090f;--bg2:#0d1117;--bg3:#131a24;--bg4:#1a2336;
+  --border:rgba(56,139,253,.08);--border2:rgba(56,139,253,.18);
+  --text:#cdd9e5;--muted:#4d6175;
+  --blue:#388bfd;--green:#3fb950;--yellow:#d29922;--red:#f85149;--purple:#bc8cff;--orange:#f0883e;
+  --font:'Syne',sans-serif;--mono:'JetBrains Mono',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse 80% 60% at 50% -10%,rgba(56,139,253,.05) 0%,transparent 60%);}
+.shell{display:flex;height:100vh;overflow:hidden;}
+
+/* ─── SIDEBAR ─────────────────────────────────────── */
+.sidebar{width:220px;flex-shrink:0;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:10;}
+.sidebar-top{padding:20px 16px 16px;}
+.logo{display:flex;align-items:center;gap:10px;margin-bottom:28px;}
+.logo-icon{width:34px;height:34px;border-radius:8px;flex-shrink:0;
+  background:linear-gradient(135deg,#f0883e,#f85149);
+  display:flex;align-items:center;justify-content:center;font-size:16px;}
+.logo-text{font-size:13px;font-weight:800;letter-spacing:1.5px;}
+.logo-text span{color:var(--orange);}
+.nav-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;padding:0 8px;margin-bottom:6px;}
+.nav-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;margin-bottom:2px;
+  font-size:12px;font-weight:600;cursor:pointer;color:var(--muted);transition:all .15s;
+  border:none;background:none;width:100%;text-align:left;}
+.nav-item:hover{color:var(--text);background:var(--bg3);}
+.nav-item.on{color:var(--orange);background:rgba(240,136,62,.1);}
+.nav-icon{font-size:14px;width:18px;text-align:center;}
+.sidebar-bottom{margin-top:auto;padding:16px;border-top:1px solid var(--border);}
+.live-row{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:bl 2s infinite;}
+@keyframes bl{0%,100%{opacity:1;}50%{opacity:.3;}}
+.upd{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:4px;}
+
+/* ─── MAIN ────────────────────────────────────────── */
+.main{flex:1;overflow-y:auto;display:flex;flex-direction:column;}
+.topbar{padding:14px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;
+  justify-content:space-between;background:rgba(7,9,15,.8);backdrop-filter:blur(12px);
+  position:sticky;top:0;z-index:5;}
+.page-title{font-size:15px;font-weight:700;}
+.page-sub{font-size:11px;color:var(--muted);margin-top:1px;}
+.topbar-right{display:flex;gap:8px;align-items:center;}
+.btn{padding:6px 14px;border-radius:7px;font-size:11px;font-weight:700;font-family:var(--font);
+  cursor:pointer;border:none;letter-spacing:.5px;transition:all .15s;text-transform:uppercase;}
+.btn-ghost{background:var(--bg3);color:var(--muted);border:1px solid var(--border2);}
+.btn-ghost:hover{color:var(--text);}
+.btn-sm{padding:4px 10px;font-size:10px;}
+.content{padding:24px 28px;flex:1;position:relative;z-index:1;}
+
+/* ─── CARDS ───────────────────────────────────────── */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px;}
+.card-h{padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.card-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);}
+.card-title b{color:var(--text);}
+.card-body{padding:18px;}
+
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
+
+/* ─── KPI NÚMEROS ─────────────────────────────────── */
+.kpi-row{display:flex;gap:12px;margin-bottom:18px;}
+.kpi-box{flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px 16px;}
+.kpi-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;}
+.kpi-val{font-size:28px;font-weight:800;font-family:var(--mono);line-height:1;}
+.kpi-sub{font-size:10px;color:var(--muted);margin-top:4px;}
+.kv-blue{color:var(--blue);}.kv-green{color:var(--green);}.kv-yellow{color:var(--yellow);}
+.kv-red{color:var(--red);}.kv-orange{color:var(--orange);}
+
+/* ─── PROGRESS BAR ────────────────────────────────── */
+.prog-wrap{margin-bottom:18px;}
+.prog-labels{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:6px;}
+.prog-track{height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;}
+.prog-fill{height:100%;border-radius:4px;transition:width .5s ease;}
+
+/* ─── ALERT LIST (30 min) ─────────────────────────── */
+.alert-section-title{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;
+  display:flex;align-items:center;gap:6px;margin-bottom:10px;}
+.alert-badge{background:rgba(248,81,73,.12);color:var(--red);border:1px solid rgba(248,81,73,.2);
+  font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;font-family:var(--mono);}
+.alert-badge-ok{background:rgba(63,185,80,.1);color:var(--green);border:1px solid rgba(63,185,80,.2);
+  font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;}
+.alert-badge-warn{background:rgba(240,136,62,.1);color:var(--orange);border:1px solid rgba(240,136,62,.2);
+  font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;font-family:var(--mono);}
+.alert-list{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;}
+.alert-row{display:flex;align-items:center;gap:10px;padding:8px 12px;
+  background:rgba(248,81,73,.05);border:1px solid rgba(248,81,73,.1);border-radius:8px;}
+.alert-ot{font-family:var(--mono);font-size:11px;color:var(--red);font-weight:600;flex-shrink:0;}
+.alert-tec{font-size:11px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.alert-min{font-family:var(--mono);font-size:10px;color:var(--orange);flex-shrink:0;}
+.empty-msg{font-size:12px;color:var(--muted);text-align:center;padding:20px 0;}
+
+/* ─── SECURITY ALERTS ─────────────────────────────── */
+.sec-block{margin-bottom:16px;}
+.sec-block:last-child{margin-bottom:0;}
+.sec-list{display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto;}
+.sec-row{display:flex;align-items:flex-start;gap:10px;padding:8px 12px;
+  background:var(--bg3);border:1px solid var(--border);border-radius:8px;}
+.sec-icon{font-size:14px;flex-shrink:0;margin-top:1px;}
+.sec-info{flex:1;min-width:0;}
+.sec-tec{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sec-det{font-size:10px;color:var(--muted);margin-top:2px;}
+.sec-tag{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700;
+  font-family:var(--mono);text-transform:uppercase;margin-top:3px;}
+.sec-tag-crit{background:rgba(248,81,73,.1);color:var(--red);border:1px solid rgba(248,81,73,.15);}
+.sec-tag-warn{background:rgba(240,136,62,.1);color:var(--orange);border:1px solid rgba(240,136,62,.15);}
+
+/* ─── SUPERVISOR GRID ─────────────────────────────── */
+.sup-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:0;}
+.sup-card{padding:24px 16px 20px;display:flex;flex-direction:column;align-items:center;
+  cursor:pointer;transition:background .15s;border-right:1px solid var(--border);}
+.sup-card:last-child{border-right:none;}
+.sup-card:hover{background:var(--bg3);}
+.gauge-wrap{margin-bottom:12px;}
+.sup-name{font-size:12px;font-weight:700;text-align:center;line-height:1.3;margin-bottom:4px;}
+.sup-sub{font-size:10px;color:var(--muted);text-align:center;}
+.sup-click-hint{font-size:9px;color:var(--blue);margin-top:6px;opacity:.7;}
+
+/* ─── MODAL ───────────────────────────────────────── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);
+  backdrop-filter:blur(4px);z-index:100;align-items:center;justify-content:center;}
+.modal-overlay.open{display:flex;}
+.modal-box{background:var(--bg2);border:1px solid var(--border2);border-radius:14px;
+  width:92vw;max-width:920px;max-height:86vh;display:flex;flex-direction:column;overflow:hidden;}
+.modal-h{padding:16px 20px;border-bottom:1px solid var(--border);
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-shrink:0;}
+.modal-title{font-size:14px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;}
+.modal-sub{font-size:11px;color:var(--muted);margin-top:3px;}
+.modal-close{background:var(--bg3);border:1px solid var(--border);color:var(--muted);
+  width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:13px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;}
+.modal-close:hover{color:var(--text);}
+.modal-search{padding:10px 20px;border-bottom:1px solid var(--border);flex-shrink:0;}
+.modal-search input{width:100%;background:var(--bg3);border:1px solid var(--border);
+  color:var(--text);padding:7px 12px 7px 30px;border-radius:7px;font-size:12px;
+  font-family:var(--font);outline:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%234d6175' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:10px center;}
+.modal-search input::placeholder{color:var(--muted);}
+.modal-search input:focus{border-color:var(--blue);}
+.modal-body{overflow-y:auto;flex:1;}
+.modal-table{width:100%;border-collapse:collapse;}
+.modal-table thead th{padding:9px 16px;font-size:9px;color:var(--muted);text-transform:uppercase;
+  letter-spacing:1.2px;border-bottom:1px solid var(--border);text-align:left;
+  position:sticky;top:0;background:var(--bg2);z-index:1;white-space:nowrap;}
+.modal-table tbody tr{border-bottom:1px solid var(--border);transition:background .1s;}
+.modal-table tbody tr:hover{background:var(--bg3);}
+.modal-table tbody tr:last-child{border-bottom:none;}
+.modal-table td{padding:9px 16px;font-size:12px;vertical-align:middle;}
+.tec-name{font-weight:600;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ot-code{font-family:var(--mono);font-size:11px;color:var(--blue);}
+.tick-ok{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;
+  font-size:10px;font-weight:700;background:rgba(63,185,80,.08);color:var(--green);
+  border:1px solid rgba(63,185,80,.15);}
+.tick-no{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;
+  font-size:10px;font-weight:700;background:rgba(248,81,73,.08);color:var(--red);
+  border:1px solid rgba(248,81,73,.15);}
+.tick-alert{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;
+  font-size:10px;font-weight:700;background:rgba(240,136,62,.08);color:var(--orange);
+  border:1px solid rgba(240,136,62,.15);}
+.crit-tag{font-size:9px;color:var(--red);font-family:var(--mono);max-width:160px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.hora-cell{font-family:var(--mono);font-size:11px;color:var(--muted);}
+.st-iniciado{background:rgba(56,139,253,.08);color:var(--blue);border:1px solid rgba(56,139,253,.15);
+  display:inline-block;padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700;font-family:var(--mono);}
+.st-pendiente{background:rgba(77,97,117,.1);color:var(--muted);border:1px solid rgba(77,97,117,.2);
+  display:inline-block;padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700;font-family:var(--mono);}
+.st-completado{background:rgba(63,185,80,.08);color:var(--green);border:1px solid rgba(63,185,80,.15);
+  display:inline-block;padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700;font-family:var(--mono);}
+.st-otro{background:var(--bg4);color:var(--muted);border:1px solid var(--border);
+  display:inline-block;padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700;font-family:var(--mono);}
+
+/* ─── LOADING ─────────────────────────────────────── */
+.loading-wrap{display:flex;align-items:center;justify-content:center;min-height:200px;
+  color:var(--muted);font-size:12px;gap:10px;}
+.spin{width:18px;height:18px;border:2px solid var(--border2);border-top-color:var(--blue);
+  border-radius:50%;animation:spin .6s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ─── SCROLLBAR ───────────────────────────────────── */
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px;}
+
+/* ─── REGISTROS AST ───────────────────────────────── */
+.btn-view{padding:4px 10px;border-radius:5px;font-size:10px;font-weight:700;cursor:pointer;
+  border:1px solid rgba(56,139,253,.25);background:rgba(56,139,253,.1);color:var(--blue);font-family:var(--font);}
+.btn-view:hover{background:rgba(56,139,253,.2);}
+.btn-pdf{padding:4px 10px;border-radius:5px;font-size:10px;font-weight:700;cursor:pointer;
+  border:1px solid rgba(240,136,62,.25);background:rgba(240,136,62,.1);color:var(--orange);font-family:var(--font);margin-left:6px;}
+.btn-pdf:hover{background:rgba(240,136,62,.2);}
+.reg-table{width:100%;border-collapse:collapse;}
+.reg-table thead th{padding:9px 14px;font-size:9px;color:var(--muted);text-transform:uppercase;
+  letter-spacing:1.2px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;}
+.reg-table tbody tr{border-bottom:1px solid var(--border);transition:background .1s;}
+.reg-table tbody tr:hover{background:var(--bg3);}
+.reg-table td{padding:9px 14px;font-size:12px;vertical-align:middle;}
+.reg-actions{white-space:nowrap;}
+
+/* ─── VISTA DOCUMENTO AST (como PDF) ──────────────── */
+.ast-doc-wrap{display:flex;justify-content:center;padding:20px 16px 28px;background:#3d4449;}
+.ast-doc{width:210mm;min-height:297mm;background:#fff;color:#1a1a1a;padding:14mm 16mm;
+  font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.45;
+  box-shadow:0 8px 32px rgba(0,0,0,.45);}
+.doc-h1{text-align:center;font-size:16px;font-weight:700;margin:0 0 4px;color:#111;}
+.doc-sub{text-align:center;font-size:10px;color:#607080;margin:0 0 16px;}
+.doc-section{margin-top:12px;}
+.doc-section-title{background:#e8eef5;color:#3a4a5c;font-size:10px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.5px;padding:5px 8px;margin-bottom:6px;}
+.doc-row{display:flex;margin-bottom:4px;font-size:10px;}
+.doc-lbl{width:118px;flex-shrink:0;font-weight:700;color:#333;}
+.doc-val{flex:1;color:#111;}
+.doc-list{margin:0;padding-left:16px;font-size:10px;}
+.doc-list li{margin-bottom:2px;}
+.doc-img-block{margin-top:10px;}
+.doc-img-title{font-size:10px;font-weight:700;margin-bottom:6px;color:#333;}
+.doc-img{max-width:100%;max-height:220px;display:block;border:1px solid #ccc;border-radius:2px;}
+.doc-firma{max-height:80px;max-width:280px;display:block;border:1px solid #ccc;background:#fff;}
+.doc-2col{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;}
+.doc-table{width:100%;border-collapse:collapse;margin-bottom:8px;font-size:10px;}
+.doc-table td,.doc-table th{border:1px solid #888;padding:4px 6px;vertical-align:top;text-align:left;}
+.doc-table th{background:#e8eef5;font-weight:700;}
+.doc-page2{page-break-before:always;margin-top:0;padding-top:8px;}
+.doc-foto-page{max-width:100%;max-height:720px;display:block;margin:12px auto;}
+.doc-firma-inline{max-height:48px;max-width:200px;display:block;margin:8px 0 4px;}
+.doc-firma-line{width:180px;border-bottom:1px solid #111;height:14px;margin:8px 0 6px;}
+.doc-footer{text-align:center;font-size:9px;color:#607080;margin-top:16px;}
+#ast-detail-body{padding:0!important;background:var(--bg);}
+#ast-detail-modal .modal-box{max-width:980px;}
+.modal-actions{display:flex;gap:8px;flex-shrink:0;}
+.btn-primary{background:linear-gradient(135deg,var(--orange),#e85d04);color:#fff;
+  padding:7px 16px;border-radius:7px;font-size:11px;font-weight:700;border:none;cursor:pointer;font-family:var(--font);}
+.btn-primary:hover{opacity:.9;}
+.btn-primary:disabled{opacity:.5;cursor:wait;}
+.sec-row{cursor:pointer;}
+.sec-row:hover{background:var(--bg4);}
+@media print{.ast-doc-wrap{background:#fff;padding:0;}.ast-doc{box-shadow:none;}}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <div class="logo">
+        <div class="logo-icon">🦺</div>
+        <div class="logo-text">PREV<span>BOX</span></div>
+      </div>
+      <div class="nav-lbl">Módulos</div>
+      <button class="nav-item on">
+        <span class="nav-icon">🦺</span> Panel AST
+      </button>
+      <button class="nav-item" onclick="document.getElementById('seccion-registros')?.scrollIntoView({behavior:'smooth'})">
+        <span class="nav-icon">📋</span> Registros AST
+      </button>
+    </div>
+    <div class="sidebar-bottom">
+      <div class="live-row">
+        <div class="dot"></div>
+        <span>Live · 60s refresh</span>
+      </div>
+      <div class="upd" id="last-upd">—</div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="page-title">🦺 Panel AST — Prevención</div>
+        <div class="page-sub" id="fecha-label">Análisis de Seguridad en el Trabajo</div>
+      </div>
+      <div class="topbar-right">
+        <button class="btn btn-ghost btn-sm" onclick="cargar()">⟳ Actualizar</button>
+      </div>
+    </div>
+
+    <div class="content">
+      <div id="loading-wrap" class="loading-wrap">
+        <div class="spin"></div> Cargando datos AST…
+      </div>
+
+      <div id="panel-content" style="display:none">
+
+        <!-- ROW 1 -->
+        <div class="row2">
+          <!-- CARD: Cumplimiento AST -->
+          <div class="card">
+            <div class="card-h">
+              <span class="card-title">Cumplimiento <b>AST</b></span>
+              <span id="pct-badge" class="alert-badge-ok">0%</span>
+            </div>
+            <div class="card-body">
+              <div class="kpi-row">
+                <div class="kpi-box">
+                  <div class="kpi-lbl">Órdenes iniciadas</div>
+                  <div class="kpi-val kv-blue" id="kpi-total">—</div>
+                  <div class="kpi-sub">con hora de inicio hoy</div>
+                </div>
+                <div class="kpi-box">
+                  <div class="kpi-lbl">Con AST realizada</div>
+                  <div class="kpi-val kv-green" id="kpi-con-ast">—</div>
+                  <div class="kpi-sub">registradas en Supabase</div>
+                </div>
+                <div class="kpi-box">
+                  <div class="kpi-lbl">Sin AST</div>
+                  <div class="kpi-val kv-red" id="kpi-sin-ast">—</div>
+                  <div class="kpi-sub">pendientes de registro</div>
+                </div>
+              </div>
+
+              <div class="prog-wrap">
+                <div class="prog-labels">
+                  <span>Avance del día</span>
+                  <span id="prog-label">0 / 0</span>
+                </div>
+                <div class="prog-track">
+                  <div class="prog-fill" id="prog-fill" style="width:0%;background:var(--red)"></div>
+                </div>
+              </div>
+
+              <div class="alert-section-title">
+                ⏰ Sin AST hace más de 30 min
+                <span class="alert-badge" id="badge-alertas30">0</span>
+              </div>
+              <div class="alert-list" id="list-alertas30">
+                <div class="empty-msg">Sin alertas activas</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CARD: Alertas de Seguridad -->
+          <div class="card">
+            <div class="card-h">
+              <span class="card-title">Alertas de <b>Seguridad</b></span>
+              <span id="badge-total-seg" class="alert-badge">0</span>
+            </div>
+            <div class="card-body">
+              <div class="sec-block">
+                <div class="alert-section-title">
+                  ⚠️ Condiciones críticas
+                  <span class="alert-badge-warn" id="badge-criticas">0</span>
+                </div>
+                <div class="sec-list" id="list-criticas">
+                  <div class="empty-msg">Sin condiciones críticas registradas</div>
+                </div>
+              </div>
+
+              <div style="height:1px;background:var(--border);margin:16px 0;"></div>
+
+              <div class="sec-block">
+                <div class="alert-section-title">
+                  🔧 Herramientas defectuosas
+                  <span class="alert-badge-warn" id="badge-herr">0</span>
+                </div>
+                <div class="sec-list" id="list-herr">
+                  <div class="empty-msg">Todas las herramientas en buen estado</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ROW 2: Supervisores -->
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Cumplimiento por <b>Supervisor</b></span>
+            <span style="font-size:10px;color:var(--muted);">Haz clic para ver el detalle del equipo</span>
+          </div>
+          <div class="sup-grid" id="sup-grid">
+            <!-- Renderizado por JS -->
+          </div>
+        </div>
+
+        <!-- ROW 3: Registros AST -->
+        <div class="card" id="seccion-registros">
+          <div class="card-h">
+            <span class="card-title">Registros <b>AST</b> del día</span>
+            <span style="font-size:10px;color:var(--muted);" id="reg-count">0 registros</span>
+          </div>
+          <div class="card-body" style="padding:0;overflow-x:auto;">
+            <div id="registros-wrap">
+              <div class="empty-msg" style="padding:24px">Sin registros AST</div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /panel-content -->
+    </div><!-- /content -->
+  </main>
+</div><!-- /shell -->
+
+<!-- ─── MODAL ──────────────────────────────────── -->
+<div class="modal-overlay" id="modal" onclick="cerrarModalClick(event)">
+  <div class="modal-box">
+    <div class="modal-h">
+      <div>
+        <div class="modal-title" id="modal-title">Supervisor</div>
+        <div class="modal-sub" id="modal-sub">—</div>
+      </div>
+      <button class="modal-close" onclick="cerrarModal()">✕</button>
+    </div>
+    <div class="modal-search">
+      <input type="text" id="modal-search" placeholder="Buscar técnico u OT…" oninput="filtrarModal()">
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<!-- ─── MODAL DETALLE AST ──────────────────────── -->
+<div class="modal-overlay" id="ast-detail-modal" onclick="cerrarAstModalClick(event)">
+  <div class="modal-box" style="max-width:960px;">
+    <div class="modal-h">
+      <div>
+        <div class="modal-title" id="ast-detail-title">Detalle AST</div>
+        <div class="modal-sub" id="ast-detail-sub">—</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-primary" id="btn-pdf-ast" onclick="descargarPdfAst()">⬇ Descargar PDF</button>
+        <button class="modal-close" onclick="cerrarAstModal()">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" id="ast-detail-body" style="padding:20px;"></div>
+  </div>
+</div>
+
+<script>
+const SUPA_URL = 'https://efvicvqffvxocnrqjxrs.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmdmljdnFmZnZ4b2NucnFqeHJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0Mzc4MjMsImV4cCI6MjA4MTAxMzgyM30._RIVNg4_FoMKDJWbdi8QuS6LSsjjaAapwkTa_9Gb0Cc';
+const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+
+// ─── Estado global ────────────────────────────────
+let gOrdenes      = [];   // todas las órdenes de hoy con hora_inicio
+let gAsts         = [];   // ast_registros de hoy
+let gAstByOT      = {};   // { orden_trabajo: ast_record }
+let gAstById      = {};   // { id: ast_record resumen }
+let gAstDetalle   = null; // registro completo con fotos
+let gSupMaps      = {};   // { rut_supervisor: Set<rut_tecnico> }
+let gSupervisores = [];   // [{ rut, nombre }]
+let gSupActual    = null; // rut supervisor modal abierto
+let gModalRows    = [];   // filas para el modal (para filtrar)
+let gRefreshTimer = null;
+
+// ─── Utilidades de fecha ─────────────────────────
+function fechaHoyStr() {
+  const opts = { timeZone:'America/Santiago', day:'2-digit', month:'2-digit', year:'2-digit' };
+  const parts = new Intl.DateTimeFormat('es-CL', opts).formatToParts(new Date());
+  const d  = parts.find(p => p.type === 'day').value;
+  const mo = parts.find(p => p.type === 'month').value;
+  const y  = parts.find(p => p.type === 'year').value;
+  return `${d}/${mo}/${y}`; // "27/05/26"
+}
+
+function hace20hISO() {
+  return new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
+}
+
+// Retorna minutos transcurridos desde hora tipo "13:45" (hora Chile)
+function minutosDesdeInicio(horaStr) {
+  if (!horaStr) return 0;
+  const ahora = new Date();
+  // Convertir a hora Chile para comparar con hora_inicio
+  const chilaStr = ahora.toLocaleString('en-US', { timeZone: 'America/Santiago' });
+  const chilaDate = new Date(chilaStr);
+  const [h, m] = horaStr.split(':').map(Number);
+  const inicio = new Date(chilaDate);
+  inicio.setHours(h, m, 0, 0);
+  const diff = Math.floor((chilaDate - inicio) / 60000);
+  return diff < 0 ? 0 : diff;
+}
+
+function horaChile() {
+  return new Date().toLocaleTimeString('es-CL', {
+    timeZone: 'America/Santiago', hour:'2-digit', minute:'2-digit'
+  });
+}
+
+function nombreCorto(nombre) {
+  if (!nombre) return '—';
+  const p = nombre.trim().split(/\s+/);
+  if (p.length <= 2) return nombre;
+  return `${p[0]} ${p[p.length - 1]}`;
+}
+
+function fmtFecha(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('es-CL', {
+    timeZone: 'America/Santiago',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
+function csvLista(str) {
+  if (!str) return [];
+  return str.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function parsePayload(v) {
+  if (!v) return null;
+  if (typeof v === 'string') {
+    try { return JSON.parse(v); } catch { return null; }
+  }
+  return v;
+}
+
+function imgFromPayload(payload) {
+  const p = parsePayload(payload);
+  if (!p || !p.data_base64) return null;
+  const mime = p.mime || 'image/jpeg';
+  return `data:${mime};base64,${p.data_base64}`;
+}
+
+async function blobToDataUrl(blob) {
+  return await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = reject;
+    fr.readAsDataURL(blob);
+  });
+}
+
+async function urlToDataUrl(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return blobToDataUrl(await res.blob());
+}
+
+async function storageUrlToDataUrl(url) {
+  try {
+    return await urlToDataUrl(url);
+  } catch (_) {
+    const m = url.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/([^?]+)/);
+    if (!m) throw new Error('No se pudo cargar imagen');
+    const bucket = m[1];
+    const path = decodeURIComponent(m[2]);
+    const { data, error } = await sb.storage.from(bucket).download(path);
+    if (error) throw error;
+    return blobToDataUrl(data);
+  }
+}
+
+async function resolverImagenesAst(r) {
+  let fotoSrc = imgFromPayload(r.foto_area);
+  let firmaSrc = imgFromPayload(r.firma);
+  if (!fotoSrc && r.url_foto_area) {
+    try { fotoSrc = await storageUrlToDataUrl(r.url_foto_area); } catch (e) { console.warn('foto', e); }
+  }
+  if (!firmaSrc && r.url_firma) {
+    try { firmaSrc = await storageUrlToDataUrl(r.url_firma); } catch (e) { console.warn('firma', e); }
+  }
+  return { fotoSrc, firmaSrc };
+}
+
+function waitImages(root) {
+  const imgs = root.querySelectorAll('img');
+  return Promise.all([...imgs].map(img => {
+    if (img.complete && img.naturalWidth) return Promise.resolve();
+    return new Promise(resolve => {
+      img.onload = resolve;
+      img.onerror = resolve;
+      setTimeout(resolve, 8000);
+    });
+  }));
+}
+
+function docRow(lbl, val) {
+  return `<div class="doc-row"><div class="doc-lbl">${escHtml(lbl)}</div><div class="doc-val">${val}</div></div>`;
+}
+
+function docList(items) {
+  if (!items.length) return '—';
+  return `<ul class="doc-list">${items.map(i => `<li>${escHtml(i)}</li>`).join('')}</ul>`;
+}
+
+function joinComma(v) {
+  const items = csvLista(v);
+  return items.length ? items.join(', ') : '—';
+}
+
+function fechaIsoPdf(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  const p = n => String(n).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0') + '000';
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${ms}`;
+}
+
+function lugarPdf(lugar) {
+  if (!lugar) return '—';
+  if (/edificio/i.test(lugar)) return 'Edificio';
+  return lugar;
+}
+
+function herramientaMalEstado(estado) {
+  const s = (estado || '').trim();
+  if (!s || /todas en buen/i.test(s) || s.toLowerCase() === 'no') return { mal: 'No', cual: '' };
+  return { mal: 'Sí', cual: s };
+}
+
+function condCriticasPdf(v) {
+  const s = (v || '').trim();
+  if (!s || s.toLowerCase() === 'ninguna') return 'No existen observaciones asociadas';
+  return s;
+}
+
+function condClimaticasPdf(v) {
+  const s = (v || '').trim();
+  if (!s || s.toLowerCase() === 'despejado' || s.toLowerCase() === 'nublado') {
+    return 'No se identifican restricciones climáticas para continuar con la actividad.';
+  }
+  return s;
+}
+
+function docTable(rows) {
+  return `<table class="doc-table"><tbody>${rows.join('')}</tbody></table>`;
+}
+
+function docRowCells(cells, header) {
+  const tag = header ? 'th' : 'td';
+  return `<tr>${cells.map(c => `<${tag}>${escHtml(c)}</${tag}>`).join('')}</tr>`;
+}
+
+function buildAstDocumentInner(r, fotoSrc, firmaSrc) {
+  const empresa = (r.empresa || 'Creaciones Tecnologicas SPA').trim();
+  const tagline = empresa.toLowerCase();
+  const gps = (r.latitud || r.longitud)
+    ? `${Number(r.latitud || 0)}, ${Number(r.longitud || 0)}`
+    : null;
+  const herr = herramientaMalEstado(r.estado_herramientas);
+
+  const pagina1 = `
+    <h1 class="doc-h1">ANÁLISIS DE TRABAJO SEGURO</h1>
+    <p class="doc-sub">— ${escHtml(tagline)}</p>
+    <p class="doc-sub" style="margin-top:-10px">Análisis de trabajo seguro - ${escHtml(empresa)}</p>
+
+    <div class="doc-section">
+      <div class="doc-section-title" style="background:none;padding-left:0;text-transform:none;font-size:10px">Información del trabajo</div>
+      ${docTable([
+        docRowCells(['Tecnico','Rut','Empresa'], true),
+        docRowCells([r.nombre_tecnico||'—', r.rut_tecnico||'—', r.empresa||'—']),
+        docRowCells(['Orden de trabajo','Actividad','Lugar Actividad'], true),
+        docRowCells([r.orden_trabajo||'—', r.actividad||'—', lugarPdf(r.lugar_actividad)]),
+        docRowCells(['Tareas a realizar','Fecha'], true),
+        docRowCells([joinComma(r.tareas_realizar), fechaIsoPdf(r.fecha_hora)]),
+      ])}
+    </div>
+
+    <div class="doc-section">
+      <div class="doc-section-title" style="background:none;padding-left:0;text-transform:none;font-size:10px">Identificación de riesgos y medidas según tareas A realizar</div>
+      ${docTable([
+        docRowCells(['Riesgos identificados','Medidas de control'], true),
+        docRowCells([joinComma(r.riesgos_identificados), joinComma(r.medidas_control)]),
+      ])}
+      ${docTable([
+        docRowCells(['Equipos de protección','Dispositivos de seguridad'], true),
+        docRowCells([joinComma(r.equipos_proteccion), joinComma(r.dispositivos_seguridad)]),
+      ])}
+      ${docTable([
+        docRowCells(['Herramientas a utilizar','Herramienta en mal estado','¿Cuál?'], true),
+        docRowCells([joinComma(r.herramientas_utilizar), herr.mal, herr.cual]),
+      ])}
+      ${docTable([
+        docRowCells(['Condiciones críticas','Condiciones climáticas'], true),
+        docRowCells([condCriticasPdf(r.condiciones_criticas), condClimaticasPdf(r.condiciones_climaticas)]),
+      ])}
+    </div>
+
+    <div class="doc-section">
+      <div class="doc-img-title">Observaciones:</div>
+      <p style="font-size:10px;margin:4px 0 10px;min-height:14px">${escHtml(r.observaciones || ' ')}</p>
+      ${firmaSrc ? `<img class="doc-firma-inline" src="${firmaSrc}" alt="Firma" crossorigin="anonymous">` : ''}
+      <div class="doc-firma-line"></div>
+      <div style="font-size:10px;line-height:1.5">
+        ${escHtml(r.nombre_tecnico || '')}<br>
+        ${escHtml(r.rut_tecnico || '')}<br>
+        ${escHtml(r.empresa || '')}<br>
+        ${gps ? escHtml(gps) : ''}
+      </div>
+    </div>`;
+
+  const pagina2 = fotoSrc ? `
+    <div class="doc-page2 doc-section">
+      <div class="doc-img-title">Imagen del lugar de trabajo</div>
+      <img class="doc-foto-page" src="${fotoSrc}" alt="Foto área de trabajo" crossorigin="anonymous">
+      <div class="doc-footer">Análisis de trabajo seguro - ${escHtml(empresa)}</div>
+    </div>` : '';
+
+  return pagina1 + pagina2;
+}
+
+function mountAstDocument(r, fotoSrc, firmaSrc, docId = 'ast-document') {
+  return `
+    <div class="ast-doc-wrap">
+      <div class="ast-doc" id="${docId}">
+        ${buildAstDocumentInner(r, fotoSrc, firmaSrc)}
+      </div>
+    </div>`;
+}
+
+async function exportarPdfElement(el, filename) {
+  await waitImages(el);
+  await html2pdf().set({
+    margin: [0, 0, 0, 0],
+    filename,
+    image: { type: 'jpeg', quality: 0.95 },
+    html2canvas: {
+      scale: 2,
+      useCORS: true,
+      allowTaint: false,
+      backgroundColor: '#ffffff',
+      logging: false,
+    },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    pagebreak: { mode: ['css', 'legacy'] },
+  }).from(el).save();
+}
+
+function pdfFilename(r) {
+  const ot = (r.orden_trabajo || 'registro').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const ts = fechaIsoPdf(r.fecha_hora).replace(/[:.]/g, '-');
+  return `AST_${ot}_${ts}.pdf`;
+}
+
+// ─── Carga de datos ───────────────────────────────
+async function cargar() {
+  document.getElementById('loading-wrap').style.display  = 'flex';
+  document.getElementById('panel-content').style.display = 'none';
+
+  const fechaHoy = fechaHoyStr();
+  document.getElementById('fecha-label').textContent =
+    `AST del ${fechaHoy} · ${horaChile()} · actualiza cada 60s`;
+
+  const [rOrd, rAst, rMaps, rSups] = await Promise.all([
+    sb.from('produccion_creaciones')
+      .select('orden_trabajo,rut_tecnico,tecnico,estado,hora_inicio,tipo_actividad')
+      .eq('fecha_trabajo', fechaHoy)
+      .not('hora_inicio', 'is', null)
+      .neq('hora_inicio', ''),
+
+    sb.from('ast_registros')
+      .select('id,orden_trabajo,rut_tecnico,nombre_tecnico,condiciones_criticas,estado_herramientas,fecha_hora,lugar_actividad,observaciones,cargo,empresa')
+      .gte('fecha_hora', hace20hISO())
+      .order('fecha_hora', { ascending: false }),
+
+    sb.from('supervisor_tecnicos_crea')
+      .select('rut_supervisor,rut_tecnico'),
+
+    sb.from('supervisores_crea')
+      .select('rut,nombre')
+      .eq('activo', true)
+  ]);
+
+  gOrdenes      = rOrd.data  || [];
+  gAsts         = rAst.data  || [];
+  gSupervisores = rSups.data || [];
+
+  // Índice AST por OT
+  gAstByOT = {};
+  gAstById = {};
+  for (const a of gAsts) {
+    if (a.id) gAstById[a.id] = a;
+    if (a.orden_trabajo && !gAstByOT[a.orden_trabajo]) gAstByOT[a.orden_trabajo] = a;
+  }
+
+  // Índice supervisor → técnicos
+  gSupMaps = {};
+  for (const row of (rMaps.data || [])) {
+    if (!gSupMaps[row.rut_supervisor]) gSupMaps[row.rut_supervisor] = new Set();
+    gSupMaps[row.rut_supervisor].add(row.rut_tecnico);
+  }
+
+  renderCards();
+  renderSupervisores();
+  renderRegistrosAst();
+
+  document.getElementById('loading-wrap').style.display  = 'none';
+  document.getElementById('panel-content').style.display = 'block';
+  document.getElementById('last-upd').textContent = 'Actualizado ' + horaChile();
+}
+
+// ─── Render Card 1: Cumplimiento ─────────────────
+function renderCards() {
+  const total  = gOrdenes.length;
+  const conAst = gOrdenes.filter(o => gAstByOT[o.orden_trabajo]).length;
+  const sinAst = total - conAst;
+  const pct    = total > 0 ? Math.round(conAst / total * 100) : 0;
+
+  document.getElementById('kpi-total').textContent   = total;
+  document.getElementById('kpi-con-ast').textContent = conAst;
+  document.getElementById('kpi-sin-ast').textContent = sinAst;
+  document.getElementById('prog-label').textContent  = `${conAst} / ${total}`;
+
+  const fill  = document.getElementById('prog-fill');
+  fill.style.width      = `${pct}%`;
+  fill.style.background = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+
+  const pctBadge = document.getElementById('pct-badge');
+  pctBadge.textContent  = `${pct}%`;
+  pctBadge.className    = pct >= 80 ? 'alert-badge-ok' : 'alert-badge-warn';
+
+  // Alertas +30 min: estado Iniciado, sin AST, >30 min desde hora_inicio
+  const alertas30 = gOrdenes.filter(o =>
+    o.estado === 'Iniciado' &&
+    !gAstByOT[o.orden_trabajo] &&
+    minutosDesdeInicio(o.hora_inicio) > 30
+  );
+  document.getElementById('badge-alertas30').textContent = alertas30.length;
+
+  const listEl = document.getElementById('list-alertas30');
+  if (alertas30.length === 0) {
+    listEl.innerHTML = '<div class="empty-msg">✓ Sin alertas activas ahora mismo</div>';
+  } else {
+    listEl.innerHTML = alertas30
+      .sort((a,b) => minutosDesdeInicio(b.hora_inicio) - minutosDesdeInicio(a.hora_inicio))
+      .map(o => {
+        const mins = minutosDesdeInicio(o.hora_inicio);
+        return `
+        <div class="alert-row">
+          <span class="alert-ot">${o.orden_trabajo}</span>
+          <span class="alert-tec">${o.tecnico || o.rut_tecnico}</span>
+          <span class="alert-min">+${mins} min</span>
+        </div>`;
+      }).join('');
+  }
+
+  // Card 2: Alertas de seguridad
+  const condCrit = gAsts.filter(a =>
+    a.condiciones_criticas && a.condiciones_criticas.toLowerCase() !== 'ninguna'
+  );
+  const herrDef = gAsts.filter(a =>
+    a.estado_herramientas && a.estado_herramientas.toLowerCase() !== 'todas en buen estado'
+  );
+
+  document.getElementById('badge-criticas').textContent  = condCrit.length;
+  document.getElementById('badge-herr').textContent      = herrDef.length;
+  document.getElementById('badge-total-seg').textContent = condCrit.length + herrDef.length;
+
+  const listCrit = document.getElementById('list-criticas');
+  if (condCrit.length === 0) {
+    listCrit.innerHTML = '<div class="empty-msg">Sin condiciones críticas registradas</div>';
+  } else {
+    listCrit.innerHTML = condCrit.map(a => `
+      <div class="sec-row" onclick="verAst('${a.id}')" title="Ver detalle AST">
+        <span class="sec-icon">⚠️</span>
+        <div class="sec-info">
+          <div class="sec-tec">${escHtml(a.nombre_tecnico || a.rut_tecnico)}</div>
+          <div class="sec-det">OT ${escHtml(a.orden_trabajo || '—')} · ${escHtml(a.lugar_actividad || '—')}</div>
+          <span class="sec-tag sec-tag-crit">${escHtml(a.condiciones_criticas)}</span>
+        </div>
+      </div>`).join('');
+  }
+
+  const listHerr = document.getElementById('list-herr');
+  if (herrDef.length === 0) {
+    listHerr.innerHTML = '<div class="empty-msg">Todas las herramientas en buen estado</div>';
+  } else {
+    listHerr.innerHTML = herrDef.map(a => `
+      <div class="sec-row" onclick="verAst('${a.id}')" title="Ver detalle AST">
+        <span class="sec-icon">🔧</span>
+        <div class="sec-info">
+          <div class="sec-tec">${escHtml(a.nombre_tecnico || a.rut_tecnico)}</div>
+          <div class="sec-det">OT ${escHtml(a.orden_trabajo || '—')} · ${escHtml(a.lugar_actividad || '—')}</div>
+          <span class="sec-tag sec-tag-warn">${escHtml(a.estado_herramientas)}</span>
+        </div>
+      </div>`).join('');
+  }
+}
+
+// ─── Render Supervisores (tacómetros) ────────────
+function renderSupervisores() {
+  const grid = document.getElementById('sup-grid');
+  grid.innerHTML = '';
+
+  if (gSupervisores.length === 0) {
+    grid.innerHTML = '<div class="empty-msg" style="grid-column:1/-1;padding:32px">Sin supervisores configurados</div>';
+    return;
+  }
+
+  for (const sup of gSupervisores) {
+    const tecnicos  = gSupMaps[sup.rut] || new Set();
+    const ordSup    = gOrdenes.filter(o => tecnicos.has(o.rut_tecnico));
+    const total     = ordSup.length;
+    const conAst    = ordSup.filter(o => gAstByOT[o.orden_trabajo]).length;
+    const pct       = total > 0 ? Math.round(conAst / total * 100) : 0;
+    const alertas   = ordSup.filter(o =>
+      o.estado === 'Iniciado' && !gAstByOT[o.orden_trabajo] && minutosDesdeInicio(o.hora_inicio) > 30
+    ).length;
+
+    const card = document.createElement('div');
+    card.className = 'sup-card';
+    card.innerHTML = `
+      ${buildGaugeSvg(pct, conAst, total)}
+      <div class="sup-name">${nombreCorto(sup.nombre)}</div>
+      <div class="sup-sub">${tecnicos.size} técnicos · ${total} órdenes</div>
+      ${alertas > 0
+        ? `<div class="alert-badge" style="margin-top:8px">⏰ ${alertas} sin AST</div>`
+        : `<div class="alert-badge-ok" style="margin-top:8px">✓ Al día</div>`
+      }
+      <div class="sup-click-hint">Ver equipo →</div>`;
+    card.onclick = () => abrirModal(sup.rut, sup.nombre);
+    grid.appendChild(card);
+  }
+}
+
+// ─── SVG Tacómetro ────────────────────────────────
+function buildGaugeSvg(pct, actual, total) {
+  const r      = 80;
+  const arcLen = Math.PI * r;          // 251.33
+  const filled = (pct / 100) * arcLen;
+  const offset = arcLen - filled;
+  const color  = pct >= 80 ? '#3fb950' : pct >= 50 ? '#d29922' : '#f85149';
+
+  return `
+  <svg viewBox="0 0 200 130" width="190" height="124" class="gauge-wrap">
+    <!-- Track -->
+    <path d="M 20,110 A 80,80 0 0,1 180,110"
+          fill="none" stroke="#1a2336" stroke-width="14" stroke-linecap="round"/>
+    <!-- Fill -->
+    <path d="M 20,110 A 80,80 0 0,1 180,110"
+          fill="none" stroke="${color}" stroke-width="14" stroke-linecap="round"
+          stroke-dasharray="${arcLen.toFixed(1)}"
+          stroke-dashoffset="${offset.toFixed(1)}"/>
+    <!-- Tick markers -->
+    ${[0,25,50,75,100].map(t => tickMark(t)).join('')}
+    <!-- Porcentaje -->
+    <text x="100" y="94" text-anchor="middle"
+          font-size="32" font-weight="800" fill="#cdd9e5"
+          font-family="JetBrains Mono,monospace">${pct}%</text>
+    <!-- Sub -->
+    <text x="100" y="114" text-anchor="middle"
+          font-size="11" fill="#4d6175"
+          font-family="Syne,sans-serif">${actual} / ${total}</text>
+  </svg>`;
+}
+
+function tickMark(pct) {
+  const r   = 80;
+  const cx  = 100, cy = 110;
+  const ang = Math.PI * (1 - pct / 100); // 180°→0° de izq a der
+  const ox  = cx + r * Math.cos(ang);
+  const oy  = cy - r * Math.sin(ang);
+  const ix  = cx + (r - 10) * Math.cos(ang);
+  const iy  = cy - (r - 10) * Math.sin(ang);
+  return `<line x1="${ox.toFixed(1)}" y1="${oy.toFixed(1)}"
+               x2="${ix.toFixed(1)}" y2="${iy.toFixed(1)}"
+               stroke="#1a2336" stroke-width="2"/>`;
+}
+
+// ─── Modal ────────────────────────────────────────
+function abrirModal(rutSup, nombreSup) {
+  gSupActual = rutSup;
+
+  const tecnicos = gSupMaps[rutSup] || new Set();
+
+  // Construir filas: una por orden, agrupadas por técnico
+  const rows = [];
+  for (const rut of tecnicos) {
+    const ords = gOrdenes.filter(o => o.rut_tecnico === rut);
+    if (ords.length === 0) {
+      // Técnico sin órdenes hoy — igual lo mostramos
+      rows.push({ rut, nombre: rut, ords: [] });
+      continue;
+    }
+    rows.push({ rut, nombre: ords[0].tecnico || rut, ords });
+  }
+
+  // Ordenar: primero los que tienen alertas, luego sin AST, luego los que están bien
+  rows.sort((a, b) => {
+    const alertA = a.ords.filter(o =>
+      o.estado === 'Iniciado' && !gAstByOT[o.orden_trabajo] && minutosDesdeInicio(o.hora_inicio) > 30
+    ).length;
+    const alertB = b.ords.filter(o =>
+      o.estado === 'Iniciado' && !gAstByOT[o.orden_trabajo] && minutosDesdeInicio(o.hora_inicio) > 30
+    ).length;
+    if (alertB !== alertA) return alertB - alertA;
+    const sinA = a.ords.filter(o => !gAstByOT[o.orden_trabajo]).length;
+    const sinB = b.ords.filter(o => !gAstByOT[o.orden_trabajo]).length;
+    return sinB - sinA;
+  });
+
+  gModalRows = rows;
+
+  const conOrdenes = rows.filter(r => r.ords.length > 0).length;
+  document.getElementById('modal-title').textContent = nombreCorto(nombreSup);
+  document.getElementById('modal-sub').textContent   =
+    `${tecnicos.size} técnicos · ${conOrdenes} con órdenes hoy`;
+  document.getElementById('modal-search').value = '';
+
+  renderModalTable(rows);
+  document.getElementById('modal').classList.add('open');
+}
+
+function renderModalTable(rows) {
+  const body = document.getElementById('modal-body');
+  if (rows.length === 0) {
+    body.innerHTML = '<div class="empty-msg" style="padding:40px">Sin datos para mostrar</div>';
+    return;
+  }
+
+  const htmlRows = [];
+  for (const r of rows) {
+    if (r.ords.length === 0) {
+      htmlRows.push(`
+        <tr>
+          <td class="tec-name">${r.nombre}</td>
+          <td class="ot-code">—</td>
+          <td><span class="st-otro">SIN OT</span></td>
+          <td>—</td>
+          <td><span class="tick-no">✗ Sin AST</span></td>
+          <td>—</td>
+        </tr>`);
+      continue;
+    }
+
+    r.ords.forEach((o, i) => {
+      const ast      = gAstByOT[o.orden_trabajo];
+      const mins     = minutosDesdeInicio(o.hora_inicio);
+      const esAlerta = o.estado === 'Iniciado' && !ast && mins > 30;
+
+      let astCell = '';
+      if (ast) {
+        astCell = `<span class="tick-ok">✓ Realizada</span>
+          <button class="btn-view" style="margin-left:8px" onclick="event.stopPropagation();verAst('${ast.id}')">Ver</button>`;
+      } else if (esAlerta) {
+        astCell = `<span class="tick-alert">⏰ +${mins}min</span>`;
+      } else {
+        astCell = `<span class="tick-no">✗ Pendiente</span>`;
+      }
+
+      const condicion = ast
+        ? (ast.condiciones_criticas && ast.condiciones_criticas.toLowerCase() !== 'ninguna'
+            ? `<span class="crit-tag">⚠ ${ast.condiciones_criticas}</span>`
+            : `<span style="color:var(--muted);font-size:10px">—</span>`)
+        : '—';
+
+      const stCls = o.estado === 'Iniciado'   ? 'st-iniciado'
+                  : o.estado === 'Completado' ? 'st-completado'
+                  : o.estado === 'Pendiente'  ? 'st-pendiente'
+                  : 'st-otro';
+
+      htmlRows.push(`
+        <tr>
+          <td class="tec-name">${i === 0 ? r.nombre : ''}</td>
+          <td class="ot-code">${o.orden_trabajo}</td>
+          <td><span class="${stCls}">${o.estado}</span></td>
+          <td class="hora-cell">${o.hora_inicio || '—'}</td>
+          <td>${astCell}</td>
+          <td>${condicion}</td>
+        </tr>`);
+    });
+  }
+
+  body.innerHTML = `
+    <table class="modal-table">
+      <thead>
+        <tr>
+          <th>Técnico</th>
+          <th>Orden de Trabajo</th>
+          <th>Estado</th>
+          <th>Hora inicio</th>
+          <th>AST</th>
+          <th>Condición crítica</th>
+        </tr>
+      </thead>
+      <tbody>${htmlRows.join('')}</tbody>
+    </table>`;
+}
+
+function filtrarModal() {
+  const q = document.getElementById('modal-search').value.toLowerCase().trim();
+  if (!q) { renderModalTable(gModalRows); return; }
+  const filtrado = gModalRows
+    .map(r => ({
+      ...r,
+      ords: r.ords.filter(o =>
+        o.orden_trabajo.toLowerCase().includes(q) ||
+        (o.tecnico || '').toLowerCase().includes(q)
+      )
+    }))
+    .filter(r =>
+      r.nombre.toLowerCase().includes(q) ||
+      r.rut.toLowerCase().includes(q) ||
+      r.ords.length > 0
+    );
+  renderModalTable(filtrado);
+}
+
+function cerrarModal() {
+  document.getElementById('modal').classList.remove('open');
+  gSupActual = null;
+}
+
+function cerrarModalClick(e) {
+  if (e.target === document.getElementById('modal')) cerrarModal();
+}
+
+// ─── Registros AST (tabla + detalle + PDF) ───────
+function renderRegistrosAst() {
+  const wrap = document.getElementById('registros-wrap');
+  document.getElementById('reg-count').textContent = `${gAsts.length} registro${gAsts.length !== 1 ? 's' : ''}`;
+
+  if (gAsts.length === 0) {
+    wrap.innerHTML = '<div class="empty-msg" style="padding:24px">Sin registros AST en las últimas 20 h</div>';
+    return;
+  }
+
+  const rows = gAsts.map(a => {
+    const crit = a.condiciones_criticas && a.condiciones_criticas.toLowerCase() !== 'ninguna';
+    return `
+      <tr>
+        <td class="hora-cell">${fmtFecha(a.fecha_hora)}</td>
+        <td class="ot-code">${escHtml(a.orden_trabajo)}</td>
+        <td class="tec-name">${escHtml(a.nombre_tecnico || a.rut_tecnico)}</td>
+        <td>${escHtml(a.lugar_actividad || '—')}</td>
+        <td>${crit ? `<span class="crit-tag">⚠ ${escHtml(a.condiciones_criticas)}</span>` : '<span style="color:var(--muted);font-size:10px">—</span>'}</td>
+        <td class="reg-actions">
+          <button class="btn-view" onclick="verAst('${a.id}')">Ver</button>
+          <button class="btn-pdf" onclick="descargarPdfAstDirecto('${a.id}', this)">PDF</button>
+        </td>
+      </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <table class="reg-table">
+      <thead>
+        <tr>
+          <th>Fecha / Hora</th>
+          <th>OT</th>
+          <th>Técnico</th>
+          <th>Lugar</th>
+          <th>Crítica</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+async function cargarAstCompleto(id) {
+  const { data, error } = await sb.from('ast_registros').select('*').eq('id', id).single();
+  if (error) throw error;
+  return data;
+}
+
+async function renderAstDetalle(r) {
+  document.getElementById('ast-detail-title').textContent = `AST · OT ${r.orden_trabajo || '—'}`;
+  document.getElementById('ast-detail-sub').textContent =
+    `${r.nombre_tecnico || r.rut_tecnico} · ${fmtFecha(r.fecha_hora)} · vista previa del PDF`;
+
+  document.getElementById('ast-detail-body').innerHTML =
+    '<div class="loading-wrap" style="min-height:200px"><div class="spin"></div> Cargando imágenes…</div>';
+
+  const { fotoSrc, firmaSrc } = await resolverImagenesAst(r);
+  document.getElementById('ast-detail-body').innerHTML =
+    mountAstDocument(r, fotoSrc, firmaSrc, 'ast-document');
+  await waitImages(document.getElementById('ast-document'));
+}
+
+async function verAst(id) {
+  if (!id) return;
+  document.getElementById('ast-detail-modal').classList.add('open');
+  document.getElementById('ast-detail-body').innerHTML =
+    '<div class="loading-wrap"><div class="spin"></div> Cargando AST…</div>';
+  gAstDetalle = null;
+  const btn = document.getElementById('btn-pdf-ast');
+  if (btn) btn.disabled = true;
+  try {
+    gAstDetalle = await cargarAstCompleto(id);
+    await renderAstDetalle(gAstDetalle);
+    if (btn) btn.disabled = false;
+  } catch (e) {
+    document.getElementById('ast-detail-body').innerHTML =
+      `<div class="empty-msg" style="color:var(--red);padding:24px">Error al cargar: ${escHtml(e.message || e)}</div>`;
+  }
+}
+
+async function descargarPdfAstDirecto(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const r = await cargarAstCompleto(id);
+    const { fotoSrc, firmaSrc } = await resolverImagenesAst(r);
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-99999px;top:0;';
+    host.innerHTML = mountAstDocument(r, fotoSrc, firmaSrc, 'ast-pdf-tmp');
+    document.body.appendChild(host);
+    const el = host.querySelector('#ast-pdf-tmp');
+    await exportarPdfElement(el, pdfFilename(r));
+    host.remove();
+  } catch (e) {
+    alert('Error al generar PDF: ' + (e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'PDF'; }
+  }
+}
+
+async function descargarPdfAst() {
+  if (!gAstDetalle) return;
+  const btn = document.getElementById('btn-pdf-ast');
+  const prev = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = 'Generando…'; }
+  try {
+    const el = document.getElementById('ast-document');
+    if (!el) throw new Error('Documento no visible');
+    await exportarPdfElement(el, pdfFilename(gAstDetalle));
+  } catch (e) {
+    alert('Error al generar PDF: ' + (e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = prev || '⬇ Descargar PDF'; }
+  }
+}
+
+function cerrarAstModal() {
+  document.getElementById('ast-detail-modal').classList.remove('open');
+  gAstDetalle = null;
+}
+
+function cerrarAstModalClick(e) {
+  if (e.target === document.getElementById('ast-detail-modal')) cerrarAstModal();
+}
+
+// ESC para cerrar modal
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    cerrarModal();
+    cerrarAstModal();
+  }
+});
+
+// ─── Auto-refresh 60s ────────────────────────────
+function iniciarAutoRefresh() {
+  if (gRefreshTimer) clearInterval(gRefreshTimer);
+  gRefreshTimer = setInterval(cargar, 60_000);
+}
+
+// ─── Init ─────────────────────────────────────────
+cargar().then(iniciarAutoRefresh);
+</script>
+</body>
+</html>

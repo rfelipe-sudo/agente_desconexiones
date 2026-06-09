@@ -765,7 +765,7 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
                 _buildInfoRow(
                   Icons.lock_clock,
                   const Color(0xFFFF9500),
-                  'La solicitud permanecerá activa hasta que un supervisor responda.',
+                  'Podrás cancelar la solicitud en cualquier momento mientras esté activa.',
                 ),
               ],
             ),
@@ -815,6 +815,10 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
   }
 
   Future<void> _confirmarCancelar() async {
+    final s = _solicitudActiva;
+    final supervisorEnCamino = s != null && s.supervisorEnCamino;
+    final nombreSup = s?.supervisorNombre;
+
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -823,9 +827,13 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Cancelar solicitud',
             style: TextStyle(color: Colors.black87, fontSize: 16)),
-        content: const Text(
-          '¿Ya resolviste el problema o no necesitas ayuda?\nEsto cerrará la solicitud activa.',
-          style: TextStyle(color: Colors.black54, height: 1.4),
+        content: Text(
+          supervisorEnCamino
+              ? '${nombreSup ?? "El supervisor"} ya fue notificado y puede estar en camino.\n\n'
+                  '¿Confirmas que ya no necesitas ayuda? Se avisará al supervisor.'
+              : '¿Ya resolviste el problema o no necesitas ayuda?\n'
+                  'Esto cerrará la solicitud activa y avisará al supervisor.',
+          style: const TextStyle(color: Colors.black54, height: 1.4),
         ),
         actions: [
           TextButton(
@@ -1033,7 +1041,7 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
               SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Selecciona el tipo de ayuda que necesitas. La solicitud permanecerá activa hasta recibir respuesta del supervisor.',
+                  'Selecciona el tipo de ayuda que necesitas. Podrás cancelarla en cualquier momento mientras esté activa.',
                   style: TextStyle(
                       color: Color(0xFF00E5FF), fontSize: 13, height: 1.4),
                 ),
@@ -1536,8 +1544,8 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
               ),
             ],
 
-            // Botón cancelar (solo cuando pendiente)
-            if (esPendiente) ...[
+            // Cancelar: disponible mientras la solicitud siga activa
+            if (s.estaActiva) ...[
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
@@ -1546,8 +1554,8 @@ class _AyudaTerrenoScreenState extends State<AyudaTerrenoScreen>
                   icon: const Icon(Icons.close, size: 16),
                   label: const Text('Cancelar solicitud'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.grey.shade600,
-                    side: BorderSide(color: Colors.grey.shade300),
+                    foregroundColor: Colors.red.shade700,
+                    side: BorderSide(color: Colors.red.shade200),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10)),

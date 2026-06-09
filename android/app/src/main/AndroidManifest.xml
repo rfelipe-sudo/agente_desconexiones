@@ -70,11 +70,30 @@
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyBY14w076XgTfwyOPjLnE-ov1I1upnp5Ak" />
-        <!-- Canal por defecto para FCM: garantiza sonido alerta_urgente incluso
-             si el canal mat_alertas_5 aún no fue creado por CreaboxApplication -->
+        <!-- Canal por defecto para FCM (notificaciones notification+data en background) -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="mat_alertas_6" />
+            android:value="mat_alertas_7" />
+
+        <!-- Servicio FCM propio: reproduce alerta_urgente en segundo plano -->
+        <service
+            android:name=".CreaboxFirebaseMessagingService"
+            android:exported="false"
+            tools:node="replace">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Prioridad alta: sonido nativo antes del handler Flutter -->
+        <receiver
+            android:name=".MaterialFcmReceiver"
+            android:exported="true"
+            android:permission="com.google.android.c2dm.permission.SEND">
+            <intent-filter android:priority="999">
+                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+            </intent-filter>
+        </receiver>
         
         <!-- Servicio en segundo plano para detección de caminata -->
         <!-- El plugin flutter_background_service_android lo declara automáticamente -->

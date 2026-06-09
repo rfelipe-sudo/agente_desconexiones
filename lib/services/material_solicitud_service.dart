@@ -1,34 +1,133 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:agente_desconexiones/config/constants.dart';
 import 'package:agente_desconexiones/services/alerta_sistema_service.dart';
 import 'package:agente_desconexiones/services/logistica_service.dart';
+import 'package:agente_desconexiones/services/ubicacion_service.dart';
+
+/// Resultado de notificar destinatarios de una solicitud de material.
+class ResultadoNotificacionDestinatarios {
+  final int cantidad;
+  final bool keplerDisponible;
+
+  const ResultadoNotificacionDestinatarios({
+    required this.cantidad,
+    required this.keplerDisponible,
+  });
+
+  bool get sinDestinatarios => cantidad == 0;
+}
 
 class MaterialSolicitudService {
   final _db = Supabase.instance.client;
 
-  /// Encuentra técnicos cercanos con stock suficiente y los notifica.
-  /// Si la API de Kepler no responde, hace bypass: aplica solo filtro de
-  /// distancia y rol (sin filtro de stock), y registra un fallo de sistema.
-  Future<void> notificarDestinatarios({
+  /// Umbral mínimo de stock para compartir un tipo de material.
+  static double umbralStock(String tipoMaterial) {
+    if (tipoMaterial.contains('ONT') || tipoMaterial.contains('Decodificador')) {
+      return 3.0;
+    }
+    if (tipoMaterial.contains('Extensor')) {
+      return 2.0;
+    }
+    return 0.0;
+  }
+
+  bool _rutExcluido(String rut, Set<String> excluirRuts) =>
+      excluirRuts.any((e) => LogisticaService.sameRut(e, rut));
+
+  (double, double)? _buscarUbicacion(
+    String rut,
+    Map<String, (double, double)> ubicMap,
+  ) {
+    final directa = ubicMap[rut];
+    if (directa != null) return directa;
+    for (final entry in ubicMap.entries) {
+      if (LogisticaService.sameRut(entry.key, rut)) return entry.value;
+    }
+    return null;
+  }
+
+  static const _fcmTimeout = Duration(seconds: 8);
+
+  Future<void> _enviarFcmAlerta({
+    required String token,
+    required String accion,
+    required String titulo,
+    required String descripcion,
+    Map<String, dynamic>? extra,
+  }) async {
+    await _enviarFcmBatch(
+      tokens: [token],
+      accion: accion,
+      titulo: titulo,
+      descripcion: descripcion,
+      extra: extra,
+    );
+  }
+
+  Future<void> _enviarFcmBatch({
+    required List<String> tokens,
+    required String accion,
+    required String titulo,
+    required String descripcion,
+    Map<String, dynamic>? extra,
+  }) async {
+    if (tokens.isEmpty) return;
+    try {
+      await _db.functions.invoke('fcm-send', body: {
+        if (tokens.length == 1) 'token': tokens.first else 'tokens': tokens,
+        'accion':      accion,
+        'tipo':        titulo,
+        'title':       titulo,
+        'body':        descripcion,
+        'descripcion': descripcion,
+        'data_only':          true,
+        'skip_notification':  true,
+        'android_channel_id': 'mat_alertas_7',
+        'android_priority':   'high',
+        if (extra != null) ...extra,
+      }).timeout(_fcmTimeout);
+      debugPrint('✅ [Material] FCM $accion → ${tokens.length} dispositivo(s)');
+    } catch (e) {
+      debugPrint('⚠️ [Material] FCM $accion falló (${tokens.length} dest.): $e');
+    }
+  }
+
+  /// Encuentra técnicos con stock suficiente en Kepler (toda la nómina, sin
+  /// filtro por equipo CREA), aplica distancia/rol y notifica.
+  /// Si Kepler no responde: bypass por GPS + rol (sin stock), alerta de sistema.
+  /// Con [soloRadio5Km] en `false` notifica a todo el plantel con stock,
+  /// ordenado del más cercano al más lejano.
+  Future<ResultadoNotificacionDestinatarios> notificarDestinatarios({
     required String solicitudId,
     required String tipoMaterial,
     required double? latSolicitante,
     required double? lngSolicitante,
     required String rutSolicitante,
     String? nombreSolicitante,
+    bool soloRadio5Km = true,
   }) async {
-    // Fetch ubicaciones (siempre necesario, independiente de Kepler)
+    final nombreSol =
+        await LogisticaService().nombreDesdeNomina(rutSolicitante);
+    nombreSolicitante = nombreSol;
+
+    // Solo técnicos con GPS activo y ubicación reciente (no apagados / sin señal).
     List<dynamic> ubicRows;
     try {
       ubicRows = await _db
-          .from('tecnicos_ubicacion')
-          .select('tecnico_id, latitud, longitud');
+          .from('ubicaciones_activas')
+          .select('rut_tecnico, lat, lng, updated_at, gps_activo')
+          .eq('gps_activo', true);
     } catch (e) {
       debugPrint('⚠️ [Material] notificarDestinatarios: error Supabase ubicaciones ($e)');
-      return;
+      return const ResultadoNotificacionDestinatarios(
+        cantidad: 0,
+        keplerDisponible: false,
+      );
     }
 
     // Intentar obtener stock de Kepler
@@ -50,55 +149,53 @@ class MaterialSolicitudService {
       );
     }
 
-    // Mapa rut → (lat, lng)
+    // Mapa rut → (lat, lng) — solo GPS vigente
     final Map<String, (double, double)> ubicMap = {};
     for (final u in ubicRows) {
-      final rut = u['tecnico_id'] as String?;
-      final lat = (u['latitud']  as num?)?.toDouble();
-      final lng = (u['longitud'] as num?)?.toDouble();
-      if (rut != null && lat != null && lng != null) {
-        ubicMap[rut] = (lat, lng);
+      final rut = u['rut_tecnico'] as String?;
+      if (rut == null || rut.isEmpty) continue;
+      if (!UbicacionService.ubicacionVigente(u['updated_at'] as String?)) {
+        debugPrint('[MatDest] $rut → GPS no vigente (apagado o sin actualizar)');
+        continue;
       }
+      final lat = (u['lat'] as num?)?.toDouble();
+      final lng = (u['lng'] as num?)?.toDouble();
+      if (lat == null || lng == null) continue;
+      if (lat.abs() < 0.0001 && lng.abs() < 0.0001) continue;
+      ubicMap[rut] = (lat, lng);
     }
-    debugPrint('[MatDest] ubicMap: ${ubicMap.length} técnicos con posición');
+    debugPrint('[MatDest] ubicMap: ${ubicMap.length} técnicos con GPS activo vigente');
 
-    // Excluir bodega, supervisores, ITOs y perfiles administrativos de flota
+    // No notificar solicitudes de material a bodega, supervisores ni flota admin.
+    // Los ITO en nomina_tecnicos se comportan como técnicos de campo.
     final excluirResults = await Future.wait<dynamic>([
       _db.from('nomina_bodega').select('rut'),
       _db.from('supervisores_crea').select('rut'),
-      _db.from('equipos_crea').select('rut_tecnico').eq('rol', 'ito'),
       _db.from('roles_flota').select('rut'),
     ]);
     Set<String> toRutSet(dynamic rows, {String key = 'rut'}) => (rows as List)
-        .map((r) => r[key] as String? ?? '')
+        .map((r) => LogisticaService.canonicalRut(r[key] as String? ?? ''))
         .where((r) => r.isNotEmpty)
         .toSet();
     final bodegaRuts     = toRutSet(excluirResults[0]);
     final supervisorRuts = toRutSet(excluirResults[1]);
-    final itoRuts        = toRutSet(excluirResults[2], key: 'rut_tecnico');
-    final flotaRuts      = toRutSet(excluirResults[3]);
-    final excluirRuts    = {...bodegaRuts, ...supervisorRuts, ...itoRuts, ...flotaRuts};
-    debugPrint('[MatDest] excluirRuts: ${excluirRuts.length} (bodega=${bodegaRuts.length} sup=${supervisorRuts.length} ito=${itoRuts.length} flota=${flotaRuts.length})');
+    final flotaRuts      = toRutSet(excluirResults[2]);
+    final excluirRuts    = {...bodegaRuts, ...supervisorRuts, ...flotaRuts};
+    debugPrint('[MatDest] excluirRuts: ${excluirRuts.length} (bodega=${bodegaRuts.length} sup=${supervisorRuts.length} flota=${flotaRuts.length})');
 
-    // Umbrales por tipo: ONT/Deco necesitan tener >3 para compartir (son costosos),
-    // Extensor >2, el resto (consumibles: grampas, pasacables, etc.) >0 es suficiente.
-    final double umbral;
-    if (tipoMaterial.contains('ONT') || tipoMaterial.contains('Decodificador')) {
-      umbral = 3.0;
-    } else if (tipoMaterial.contains('Extensor')) {
-      umbral = 2.0;
-    } else {
-      umbral = 0.0; // consumibles: grampa, pasacable, cáncamo, roseta, etc.
-    }
-    debugPrint('[MatDest] tipoMaterial=$tipoMaterial umbral=$umbral keplerFallo=$keplerFallo stock=${stock?.length ?? "null"}');
+    final umbral = umbralStock(tipoMaterial);
+    final aplicarRadio = soloRadio5Km && kMaterialFiltroDistanciaActivo;
+    debugPrint(
+        '[MatDest] tipoMaterial=$tipoMaterial umbral=$umbral keplerFallo=$keplerFallo '
+        'stock=${stock?.length ?? "null"} soloRadio5Km=$soloRadio5Km');
 
     final List<Map<String, dynamic>> destinatarios = [];
 
     if (!keplerFallo && stock != null) {
-      // Flujo normal: stock + distancia + rol
+      // Flujo normal: stock + distancia opcional + rol
       for (final tecnico in stock) {
-        if (tecnico.rut == rutSolicitante) continue;
-        if (excluirRuts.contains(tecnico.rut)) {
+        if (LogisticaService.sameRut(tecnico.rut, rutSolicitante)) continue;
+        if (_rutExcluido(tecnico.rut, excluirRuts)) {
           debugPrint('[MatDest] ${tecnico.rut} → excluido por rol');
           continue;
         }
@@ -109,18 +206,27 @@ class MaterialSolicitudService {
           continue;
         }
 
+        final pos = _buscarUbicacion(tecnico.rut, ubicMap);
+        if (pos == null) {
+          debugPrint('[MatDest] ${tecnico.rut} → sin GPS activo vigente');
+          continue;
+        }
+
+        double distOrden = double.infinity;
         if (latSolicitante != null && lngSolicitante != null) {
-          final pos = ubicMap[tecnico.rut];
-          if (pos == null) {
-            debugPrint('[MatDest] ${tecnico.rut} → sin ubicación en tecnicos_ubicacion');
+          distOrden = _distanciaKm(
+              latSolicitante, lngSolicitante, pos.$1, pos.$2);
+          if (aplicarRadio && distOrden > kMaterialRadioKm) {
+            debugPrint('[MatDest] ${tecnico.rut} → demasiado lejos (${distOrden.toStringAsFixed(1)} km)');
             continue;
           }
-          final dist = _distanciaKm(latSolicitante, lngSolicitante, pos.$1, pos.$2);
-          if (dist > 5.0) {
-            debugPrint('[MatDest] ${tecnico.rut} → demasiado lejos (${dist.toStringAsFixed(1)} km)');
-            continue;
-          }
-          debugPrint('[MatDest] ${tecnico.rut} ✓ stock=$cantidad dist=${dist.toStringAsFixed(1)}km');
+          debugPrint('[MatDest] ${tecnico.rut} ✓ stock=$cantidad dist=${distOrden.toStringAsFixed(1)}km'
+              '${aplicarRadio ? "" : " (plantel)"}');
+        } else if (aplicarRadio) {
+          debugPrint('[MatDest] ${tecnico.rut} → sin GPS del solicitante');
+          continue;
+        } else {
+          debugPrint('[MatDest] ${tecnico.rut} ✓ stock=$cantidad (plantel, sin GPS solicitante)');
         }
 
         destinatarios.add({
@@ -129,30 +235,29 @@ class MaterialSolicitudService {
           'nombre_tecnico':   tecnico.nombre,
           'stock_disponible': cantidad.toInt(),
           'estado':           'pendiente',
+          '_sort_dist':       distOrden,
         });
       }
     } else {
       // Bypass: solo distancia + rol; stock_disponible = -1 (desconocido)
       for (final entry in ubicMap.entries) {
         final rut = entry.key;
-        if (rut == rutSolicitante) continue;
-        if (excluirRuts.contains(rut)) continue;
+        if (LogisticaService.sameRut(rut, rutSolicitante)) continue;
+        if (_rutExcluido(rut, excluirRuts)) continue;
 
+        final pos = entry.value;
+        double distOrden = double.infinity;
         if (latSolicitante != null && lngSolicitante != null) {
-          final pos = entry.value;
-          final dist = _distanciaKm(latSolicitante, lngSolicitante, pos.$1, pos.$2);
-          if (dist > 5.0) continue;
+          distOrden = _distanciaKm(
+              latSolicitante, lngSolicitante, pos.$1, pos.$2);
+          if (aplicarRadio && distOrden > kMaterialRadioKm) continue;
+        } else if (aplicarRadio) {
+          continue;
         }
 
-        // Nombre del técnico: intentar obtener de nomina_tecnicos
         String nombreTecnico = rut;
         try {
-          final row = await _db
-              .from('nomina_tecnicos')
-              .select('nombres')
-              .eq('rut', rut)
-              .maybeSingle();
-          if (row != null) nombreTecnico = row['nombres'] as String? ?? rut;
+          nombreTecnico = await LogisticaService().nombreDesdeNomina(rut);
         } catch (_) {}
 
         destinatarios.add({
@@ -161,43 +266,15 @@ class MaterialSolicitudService {
           'nombre_tecnico':   nombreTecnico,
           'stock_disponible': -1,
           'estado':           'pendiente',
+          '_sort_dist':       distOrden,
         });
       }
     }
 
-    // ── Segundo pase: técnicos con GPS cercanos que Kepler no conoce ──────────
-    // Si Kepler corrió OK pero un técnico tiene posición GPS y no fue alcanzado
-    // por el primer pase (no está en supervisor_tecnicos_crea), igual lo notificamos.
-    if (!keplerFallo && latSolicitante != null && lngSolicitante != null) {
-      final yaNotificados = destinatarios.map((d) => d['rut_tecnico'] as String).toSet();
-      for (final entry in ubicMap.entries) {
-        final rut = entry.key;
-        if (rut == rutSolicitante) continue;
-        if (excluirRuts.contains(rut)) continue;
-        if (yaNotificados.contains(rut)) continue;
-
-        final dist = _distanciaKm(latSolicitante, lngSolicitante, entry.value.$1, entry.value.$2);
-        if (dist > 5.0) continue;
-
-        String nombreTecnico = rut;
-        try {
-          final row = await _db
-              .from('nomina_tecnicos')
-              .select('nombres')
-              .eq('rut', rut)
-              .maybeSingle();
-          if (row != null) nombreTecnico = row['nombres'] as String? ?? rut;
-        } catch (_) {}
-
-        debugPrint('[MatDest] $rut ✓ GPS-pase2 dist=${dist.toStringAsFixed(1)}km (sin stock Kepler)');
-        destinatarios.add({
-          'solicitud_id':     solicitudId,
-          'rut_tecnico':      rut,
-          'nombre_tecnico':   nombreTecnico,
-          'stock_disponible': -1,
-          'estado':           'pendiente',
-        });
-      }
+    destinatarios.sort((a, b) => (a['_sort_dist'] as double)
+        .compareTo(b['_sort_dist'] as double));
+    for (final d in destinatarios) {
+      d.remove('_sort_dist');
     }
 
     debugPrint('[MatDest] destinatarios finales: ${destinatarios.length}');
@@ -219,18 +296,21 @@ class MaterialSolicitudService {
           final rut      = row['rut']       as String? ?? '';
           final fcmToken = row['fcm_token'] as String?;
           if (rut.isEmpty || fcmToken == null || fcmToken.isEmpty) continue;
-          try {
-            await _db.functions.invoke('fcm-send', body: {
-              'token':       fcmToken,
-              'accion':      'solicitud_material',
-              'tipo':        'Solicitud de material',
-              'descripcion': 'Se necesita: $tipoMaterial',
-              'rut':         rut,
-            });
-          } catch (_) {}
+          await _enviarFcmAlerta(
+            token:       fcmToken,
+            accion:      'solicitud_material',
+            titulo:      '¡Solicitud de material!',
+            descripcion: 'Se necesita: $tipoMaterial',
+            extra:       {'rut': rut, 'solicitud_id': solicitudId},
+          );
         }
       } catch (_) {}
     }
+
+    return ResultadoNotificacionDestinatarios(
+      cantidad: destinatarios.length,
+      keplerDisponible: !keplerFallo && stock != null,
+    );
   }
 
   /// El primer técnico que acepta: cancela los otros destinatarios y actualiza la solicitud.
@@ -239,37 +319,168 @@ class MaterialSolicitudService {
   Future<void> aceptar({
     required String solicitudId,
     required String rutAceptador,
-    required String nombreAceptador,
     required double? lat,
     required double? lng,
     required String modalidad,
     int? idMaterial,
     String? serieEscaneada,
+    String? nombreAceptadorSesion,
   }) async {
-    await _db
-        .from('solicitudes_material_destinatarios')
-        .update({'estado': 'aceptada'})
-        .eq('solicitud_id', solicitudId)
-        .eq('rut_tecnico', rutAceptador);
+    final nombreAceptador = await LogisticaService().nombrePorRut(
+      rutAceptador,
+      fallback: nombreAceptadorSesion,
+    );
+    await Future.wait([
+      _db
+          .from('solicitudes_material_destinatarios')
+          .update({'estado': 'aceptada'})
+          .eq('solicitud_id', solicitudId)
+          .eq('rut_tecnico', rutAceptador),
+      _db
+          .from('solicitudes_material_destinatarios')
+          .update({'estado': 'cancelada'})
+          .eq('solicitud_id', solicitudId)
+          .neq('rut_tecnico', rutAceptador)
+          .eq('estado', 'pendiente'),
+    ]);
 
-    await _db
-        .from('solicitudes_material_destinatarios')
-        .update({'estado': 'cancelada'})
-        .eq('solicitud_id', solicitudId)
-        .neq('rut_tecnico', rutAceptador)
-        .eq('estado', 'pendiente');
+    // Solo actualiza si todavía está pendiente (evitar race condition).
+    final updated = await _db
+        .from('solicitudes_material')
+        .update({
+          'estado':            'aceptada',
+          'rut_entregador':    rutAceptador,
+          'nombre_entregador': nombreAceptador,
+          'lat_entregador':    lat,
+          'lng_entregador':    lng,
+          'modalidad':         modalidad,
+          if (modalidad == 'yo_te_lo_llevo' && lat != null && lng != null) ...{
+            'lat_partida': lat,
+            'lng_partida': lng,
+            'partida_at': DateTime.now().toUtc().toIso8601String(),
+          },
+          if (idMaterial != null) 'id_material': idMaterial,
+          if (serieEscaneada != null) 'series': [serieEscaneada],
+        })
+        .eq('id', solicitudId)
+        .eq('estado', 'pendiente')
+        .select('tipo_material')
+        .maybeSingle();
 
-    // Solo actualiza si todavía está pendiente (evitar race condition)
-    await _db.from('solicitudes_material').update({
-      'estado':            'aceptada',
-      'rut_entregador':    rutAceptador,
-      'nombre_entregador': nombreAceptador,
-      'lat_entregador':    lat,
-      'lng_entregador':    lng,
-      'modalidad':         modalidad,
-      if (idMaterial != null) 'id_material': idMaterial,
-      if (serieEscaneada != null) 'series': [serieEscaneada],
-    }).eq('id', solicitudId).eq('estado', 'pendiente');
+    if (updated == null) {
+      throw StateError(
+        'La solicitud ya fue atendida por otro técnico. Intenta con otra.',
+      );
+    }
+
+    final tipoMaterial =
+        updated['tipo_material'] as String? ?? 'material';
+    unawaited(notificarAtendidaPorOtro(
+      solicitudId:  solicitudId,
+      rutAceptador: rutAceptador,
+      tipoMaterial: tipoMaterial,
+    ));
+  }
+
+  /// Avisa a técnicos que no aceptaron: mensaje solo si abrieron la push.
+  Future<void> notificarAtendidaPorOtro({
+    required String solicitudId,
+    required String rutAceptador,
+    required String tipoMaterial,
+  }) async {
+    try {
+      final rows = await _db
+          .from('solicitudes_material_destinatarios')
+          .select('rut_tecnico')
+          .eq('solicitud_id', solicitudId)
+          .eq('estado', 'cancelada')
+          .neq('rut_tecnico', rutAceptador);
+
+      final ruts = (rows as List)
+          .map((d) => d['rut_tecnico'] as String? ?? '')
+          .where((r) => r.isNotEmpty)
+          .toList();
+      if (ruts.isEmpty) return;
+
+      final tokenRows = await _db
+          .from('nomina_tecnicos')
+          .select('fcm_token')
+          .inFilter('rut', ruts);
+
+      final tokens = (tokenRows as List)
+          .map((row) => row['fcm_token'] as String?)
+          .whereType<String>()
+          .where((t) => t.isNotEmpty)
+          .toList();
+      if (tokens.isEmpty) return;
+
+      await _enviarFcmBatch(
+        tokens:      tokens,
+        accion:      'solicitud_atendida',
+        titulo:      'Solicitud atendida',
+        descripcion: 'La solicitud de $tipoMaterial ya fue atendida',
+        extra:       {'solicitud_id': solicitudId},
+      );
+      debugPrint('[MatDest] FCM solicitud_atendida → ${ruts.length} técnicos');
+    } catch (e) {
+      debugPrint('⚠️ [Material] notificarAtendidaPorOtro error: $e');
+    }
+  }
+
+  /// Emite la guía en bandeja del entregador y solicitante tras OK de bodega.
+  Future<void> emitirGuiaTrasAprobacion({
+    required String solicitudId,
+    required String rutEntregador,
+    required String rutSolicitante,
+    required String detalleMaterial,
+    required String nombreEntregador,
+    required String nombreSolicitante,
+    String? folioKepler,
+  }) async {
+    try {
+      final logistica = LogisticaService();
+      final nombreEnt = await logistica.nombrePorRut(
+        rutEntregador,
+        fallback: nombreEntregador,
+      );
+      final nombreSol = await logistica.nombrePorRut(
+        rutSolicitante,
+        fallback: nombreSolicitante,
+      );
+
+      await _db
+          .from('solicitudes_bodega')
+          .update({
+            'estado': 'emitida',
+            'nombre_entregador': nombreEnt,
+            'nombre_solicitante': nombreSol,
+            if (folioKepler != null) 'folio_kepler': folioKepler,
+          })
+          .eq('solicitud_id', solicitudId)
+          .eq('estado', 'firmada');
+
+      final ruts = [rutEntregador, rutSolicitante];
+      final tokenRows = await _db
+          .from('nomina_tecnicos')
+          .select('rut, fcm_token')
+          .inFilter('rut', ruts);
+
+      final body = '$detalleMaterial · $nombreEnt → $nombreSol';
+      for (final row in (tokenRows as List)) {
+        final token = row['fcm_token'] as String?;
+        if (token == null || token.isEmpty) continue;
+        await _enviarFcmAlerta(
+          token:       token,
+          accion:      'guia_emitida',
+          titulo:      'Guía de entrega disponible',
+          descripcion: body,
+          extra:       {'solicitud_id': solicitudId},
+        );
+      }
+      debugPrint('📦 [Material] guía emitida → entregador y solicitante');
+    } catch (e) {
+      debugPrint('⚠️ [Material] emitirGuiaTrasAprobacion: $e');
+    }
   }
 
   /// Devuelve el id_material y serie (si aplica) para la categoría solicitada
@@ -290,7 +501,9 @@ class MaterialSolicitudService {
       debugPrint('⚠️ [Material] resolverIdMaterial: API logística no disponible ($e)');
       return null;
     }
-    final tecnico = stock.where((t) => t.rut == rutEntregador).firstOrNull;
+    final tecnico = stock
+        .where((t) => LogisticaService.sameRut(t.rut, rutEntregador))
+        .firstOrNull;
     if (tecnico == null) return null;
     try {
       final item = tecnico.itemParaCategoria(tipoMaterial, cantidad: cantidad);
@@ -300,15 +513,57 @@ class MaterialSolicitudService {
     }
   }
 
-  /// Notifica a todos los destinatarios pendientes que la solicitud fue cancelada.
-  /// Llama fire-and-forget desde _cancelar(); los errores individuales se ignoran.
+  /// Cancela una solicitud activa (solicitante o entregador) hasta antes de `completada`.
+  Future<void> cancelarSolicitud({
+    required String solicitudId,
+    required String rutCancelador,
+  }) async {
+    final row = await _db
+        .from('solicitudes_material')
+        .select('estado, rut_solicitante, rut_entregador, tipo_material')
+        .eq('id', solicitudId)
+        .maybeSingle();
+    if (row == null) throw StateError('Solicitud no encontrada');
+
+    final estado = row['estado'] as String? ?? '';
+    if (estado == 'completada' || estado == 'cancelada') {
+      throw StateError('Esta solicitud ya no se puede cancelar');
+    }
+
+    final rs = row['rut_solicitante'] as String? ?? '';
+    final re = row['rut_entregador'] as String?;
+    final autorizado = LogisticaService.sameRut(rutCancelador, rs) ||
+        (re != null &&
+            re.isNotEmpty &&
+            LogisticaService.sameRut(rutCancelador, re));
+    if (!autorizado) {
+      throw StateError('No tienes permiso para cancelar esta solicitud');
+    }
+
+    await _db.from('solicitudes_material').update({
+      'estado':        'cancelada',
+      'pin_codigo':    null,
+      'pin_expira_en': null,
+    }).eq('id', solicitudId);
+
+    await notificarCancelacion(
+      solicitudId:  solicitudId,
+      tipoMaterial: row['tipo_material'] as String? ?? 'material',
+    );
+  }
+
+  /// Notifica a solicitante, entregador y destinatarios que la solicitud fue cancelada.
   Future<void> notificarCancelacion({
     required String solicitudId,
     required String tipoMaterial,
   }) async {
     try {
-      // Leer destinatarios ANTES de actualizar para tener sus datos.
-      // Si aún no se insertaron (usuario canceló muy rápido), esperar hasta 3 s.
+      final solRow = await _db
+          .from('solicitudes_material')
+          .select('rut_solicitante, rut_entregador')
+          .eq('id', solicitudId)
+          .maybeSingle();
+
       List<dynamic> rows = await _db
           .from('solicitudes_material_destinatarios')
           .select()
@@ -324,32 +579,234 @@ class MaterialSolicitudService {
             .inFilter('estado', ['pendiente', 'aceptada']);
       }
 
-      // Marcar destinatarios como cancelados en DB
       await _db
           .from('solicitudes_material_destinatarios')
           .update({'estado': 'cancelada'})
           .eq('solicitud_id', solicitudId)
           .inFilter('estado', ['pendiente', 'aceptada']);
 
-      // Enviar FCM para limpiar notificación en bandeja del destinatario
+      final rutsNotificar = <String>{};
+      if (solRow != null) {
+        final rs = solRow['rut_solicitante'] as String?;
+        final re = solRow['rut_entregador'] as String?;
+        if (rs != null && rs.isNotEmpty) rutsNotificar.add(rs);
+        if (re != null && re.isNotEmpty) rutsNotificar.add(re);
+      }
       for (final d in rows) {
+        final rut = d['rut_tecnico'] as String?;
+        if (rut != null && rut.isNotEmpty) rutsNotificar.add(rut);
+      }
+
+      for (final rut in rutsNotificar) {
         try {
           final tokenRow = await _db
               .from('nomina_tecnicos')
               .select('fcm_token')
-              .eq('rut', d['rut_tecnico'] as String)
+              .eq('rut', rut)
               .maybeSingle();
           final fcmToken = tokenRow?['fcm_token'] as String?;
           if (fcmToken != null && fcmToken.isNotEmpty) {
-            await _db.functions.invoke('fcm-send', body: {
-              'token':       fcmToken,
-              'accion':      'solicitud_cancelada',
-              'descripcion': 'La solicitud de $tipoMaterial fue cancelada',
-            });
+            await _enviarFcmAlerta(
+              token:       fcmToken,
+              accion:      'solicitud_cancelada',
+              titulo:      'Transacción cancelada',
+              descripcion: 'La solicitud de $tipoMaterial fue cancelada',
+              extra:       {'solicitud_id': solicitudId},
+            );
           }
         } catch (_) {}
       }
     } catch (_) {}
+  }
+
+  /// Notifica a bodegueros que hay un traspaso pendiente (FCM data-only → sonido BG).
+  Future<void> notificarBodeguerosTraspasoNuevo({
+    required String traspasoId,
+    required String tipoMaterial,
+    required String nombreEntregador,
+    required String nombreSolicitante,
+  }) async {
+    try {
+      final rows = await _db.from('nomina_bodega').select('rut, fcm_token');
+      final body =
+          '$tipoMaterial · $nombreEntregador → $nombreSolicitante';
+      for (final row in (rows as List)) {
+        final token = row['fcm_token'] as String?;
+        if (token == null || token.isEmpty) continue;
+        await _enviarFcmAlerta(
+          token:       token,
+          accion:      'traspaso_bodega',
+          titulo:      'Nuevo traspaso en bodega',
+          descripcion: body,
+          extra:       {'traspaso_id': traspasoId},
+        );
+      }
+      debugPrint('📦 [Material] FCM traspaso_bodega → bodegueros');
+    } catch (e) {
+      debugPrint('⚠️ [Material] notificarBodeguerosTraspasoNuevo: $e');
+    }
+  }
+
+  /// Notifica a todos los bodegueros cuando una guía queda firmada (bandeja bodega).
+  Future<void> notificarBodeguerosGuiaFirmada({
+    required String guiaId,
+    required String solicitudId,
+    required String detalleMaterial,
+    required String nombreEntregador,
+    required String nombreSolicitante,
+  }) async {
+    try {
+      final rows = await _db.from('nomina_bodega').select('rut, fcm_token');
+      final body =
+          '$detalleMaterial · $nombreEntregador → $nombreSolicitante';
+      for (final row in (rows as List)) {
+        final token = row['fcm_token'] as String?;
+        if (token == null || token.isEmpty) continue;
+        await _enviarFcmAlerta(
+          token:       token,
+          accion:      'guia_firmada_bodega',
+          titulo:      'Guía firmada — revisar bodega',
+          descripcion: body,
+          extra:       {
+            'guia_id':      guiaId,
+            'solicitud_id': solicitudId,
+          },
+        );
+      }
+      debugPrint('📦 [Material] FCM guía firmada → bodegueros (${(rows as List).length})');
+    } catch (e) {
+      debugPrint('⚠️ [Material] notificarBodeguerosGuiaFirmada: $e');
+    }
+  }
+
+  /// Notifica al supervisor del solicitante si la solicitud sigue `pendiente`
+  /// tras 10 minutos sin que nadie la acepte (una sola vez por solicitud).
+  Future<bool> notificarSupervisorSinRespuesta({
+    required String solicitudId,
+    required String rutSolicitante,
+    required String tipoMaterial,
+  }) async {
+    try {
+      final row = await _db
+          .from('solicitudes_material')
+          .select(
+              'estado, alerta_supervisor_sin_respuesta_at, nombre_solicitante')
+          .eq('id', solicitudId)
+          .maybeSingle();
+      if (row == null) return false;
+
+      final estado = row['estado'] as String? ?? '';
+      if (estado != 'pendiente') return false;
+      if (row['alerta_supervisor_sin_respuesta_at'] != null) return false;
+
+      String nombreSol = row['nombre_solicitante'] as String? ?? '';
+      try {
+        nombreSol =
+            await LogisticaService().nombreDesdeNomina(rutSolicitante);
+      } catch (_) {}
+
+      final rutCanon = LogisticaService.canonicalRut(rutSolicitante);
+      List<dynamic> stcRows = await _db
+          .from('supervisor_tecnicos_crea')
+          .select('rut_supervisor, rut_tecnico')
+          .eq('rut_tecnico', rutCanon);
+      if ((stcRows).isEmpty) {
+        final todos = await _db
+            .from('supervisor_tecnicos_crea')
+            .select('rut_supervisor, rut_tecnico');
+        stcRows = (todos as List)
+            .where((r) => LogisticaService.sameRut(
+                  r['rut_tecnico'] as String? ?? '',
+                  rutCanon,
+                ))
+            .toList();
+      }
+
+      final supervisores = <String>{};
+      for (final r in stcRows) {
+        final rutSup =
+            LogisticaService.canonicalRut(r['rut_supervisor'] as String? ?? '');
+        if (rutSup.isNotEmpty) supervisores.add(rutSup);
+      }
+
+      if (supervisores.isEmpty) {
+        debugPrint(
+            '⚠️ [Material] sin supervisor en CREA para $rutCanon — no se escala');
+        return false;
+      }
+
+      var enviados = 0;
+      for (final rutSup in supervisores) {
+        final tokenRow = await _db
+            .from('supervisores_crea')
+            .select('fcm_token')
+            .eq('rut', rutSup)
+            .maybeSingle();
+        final token = tokenRow?['fcm_token'] as String?;
+        if (token == null || token.isEmpty) continue;
+
+        await _enviarFcmSupervisor(
+          token:       token,
+          accion:      'material_sin_respuesta',
+          titulo:      'Material sin atender',
+          descripcion:
+              '$nombreSol lleva 10 min sin respuesta — solicita $tipoMaterial',
+          extra:       {
+            'solicitud_id': solicitudId,
+            'rut':          rutSup,
+          },
+        );
+        enviados++;
+      }
+
+      if (enviados == 0) {
+        debugPrint(
+            '⚠️ [Material] supervisores sin FCM para solicitud $solicitudId');
+        return false;
+      }
+
+      await _db
+          .from('solicitudes_material')
+          .update({
+            'alerta_supervisor_sin_respuesta_at':
+                DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', solicitudId)
+          .eq('estado', 'pendiente')
+          .isFilter('alerta_supervisor_sin_respuesta_at', null);
+
+      debugPrint(
+          '📣 [Material] FCM material_sin_respuesta → $enviados supervisor(es)');
+      return true;
+    } catch (e) {
+      debugPrint('⚠️ [Material] notificarSupervisorSinRespuesta: $e');
+      return false;
+    }
+  }
+
+  Future<void> _enviarFcmSupervisor({
+    required String token,
+    required String accion,
+    required String titulo,
+    required String descripcion,
+    Map<String, dynamic>? extra,
+  }) async {
+    try {
+      await _db.functions.invoke('fcm-send', body: {
+        'token':              token,
+        'accion':             accion,
+        'tipo':               titulo,
+        'title':              titulo,
+        'body':               descripcion,
+        'descripcion':        descripcion,
+        'android_channel_id': 'mat_alertas_7',
+        'android_priority':   'high',
+        if (extra != null) ...extra,
+      }).timeout(_fcmTimeout);
+      debugPrint('✅ [Material] FCM supervisor $accion');
+    } catch (e) {
+      debugPrint('⚠️ [Material] FCM supervisor $accion falló: $e');
+    }
   }
 
   /// Destinatarios que siguen pendientes (para alerta de 10 minutos).
@@ -378,13 +835,22 @@ class MaterialSolicitudService {
     required String tipoMaterial,
   }) async {
     try {
-      final allStock = await LogisticaService().fetchStock();
-      final tecnico  = allStock.where((t) => t.rut == rutSolicitante).firstOrNull;
-      if (tecnico == null) return;
+      String nombreTecnico = nombreSolicitante;
+      try {
+        nombreTecnico =
+            await LogisticaService().nombreDesdeNomina(rutSolicitante);
+      } catch (_) {}
+
+      final tecnico = await LogisticaService().fetchStockTecnico(rutSolicitante);
+      if (tecnico == null || tecnico.sinStock) return;
 
       final stockOnt  = (tecnico.stock['ONT ZTE']    ?? 0) +
                         (tecnico.stock['ONT Huawei']  ?? 0);
-      final stockDeco = tecnico.stock['Decodificador'] ?? 0;
+      final stockDecoClaro =
+          tecnico.stock['Decodificador Claro'] ?? 0;
+      final stockDecoVtr =
+          tecnico.stock['Decodificador VTR'] ?? 0;
+      final stockDeco = stockDecoClaro + stockDecoVtr;
       final stockExt  = tecnico.stock['Extensor']      ?? 0;
 
       if (stockOnt <= _umbralOnt &&
@@ -392,14 +858,16 @@ class MaterialSolicitudService {
           stockExt  <= _umbralExtensor) return;
 
       await _db.from('alertas_auditoria_material').insert({
-        'solicitud_id':       solicitudId,
-        'rut_tecnico':        rutSolicitante,
-        'nombre_tecnico':     nombreSolicitante,
-        'tipo_material':      tipoMaterial,
-        'stock_ont':          stockOnt,
+        'solicitud_id':        solicitudId,
+        'rut_tecnico':         rutSolicitante,
+        'nombre_tecnico':      nombreTecnico,
+        'tipo_material':       tipoMaterial,
+        'stock_ont':           stockOnt,
         'stock_decodificador': stockDeco,
-        'stock_extensor':     stockExt,
-        'estado':             'pendiente',
+        'stock_deco_claro':    stockDecoClaro,
+        'stock_deco_vtr':      stockDecoVtr,
+        'stock_extensor':      stockExt,
+        'estado':              'pendiente',
       });
 
       debugPrint('🟠 [AlertaStock] alerta generada: $rutSolicitante '

@@ -25,6 +25,8 @@ final List<_PingResult> _endpointsBase = [
   _PingResult(nombre: 'Edge: generar-pin',       url: 'https://efvicvqffvxocnrqjxrs.supabase.co/functions/v1/generar-pin'),
   _PingResult(nombre: 'Edge: aprobar-traspaso',  url: 'https://efvicvqffvxocnrqjxrs.supabase.co/functions/v1/aprobar-traspaso'),
   _PingResult(nombre: 'Edge: notificar-bodega',  url: 'https://efvicvqffvxocnrqjxrs.supabase.co/functions/v1/notificar-bodega-traspaso'),
+  _PingResult(nombre: 'Edge: registrar-fcm', url: 'https://efvicvqffvxocnrqjxrs.supabase.co/functions/v1/registrar-fcm-dispositivo'),
+  _PingResult(nombre: 'Edge: notificar-guia-bodega', url: 'https://efvicvqffvxocnrqjxrs.supabase.co/functions/v1/notificar-bodegueros-guia'),
 ];
 
 class MonitorScreen extends StatefulWidget {

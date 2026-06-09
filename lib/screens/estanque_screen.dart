@@ -6,7 +6,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:agente_desconexiones/models/ford_ruta.dart';
 import 'package:agente_desconexiones/screens/ford_rutas_screen.dart';
 import 'package:agente_desconexiones/services/ford_api_service.dart';
+import 'package:agente_desconexiones/services/supervisor_rutas_service.dart';
 import 'package:agente_desconexiones/widgets/combustible_format.dart';
+import 'package:agente_desconexiones/widgets/sol_comb_supervisor_widget.dart';
 import 'package:agente_desconexiones/widgets/sol_comb_tecnico_widget.dart';
 
 // Fecha de inicio del historial — no se muestra nada anterior a esta fecha.
@@ -70,6 +72,7 @@ class EstanqueScreen extends StatefulWidget {
   final double initialSaldoPesos;
   final double initialSaldoLitros;
   final String? initialPatente;
+  final bool esSupervisor;
 
   const EstanqueScreen({
     super.key,
@@ -79,6 +82,7 @@ class EstanqueScreen extends StatefulWidget {
     required this.initialSaldoPesos,
     required this.initialSaldoLitros,
     this.initialPatente,
+    this.esSupervisor = false,
   });
 
   @override
@@ -144,7 +148,9 @@ class _EstanqueScreenState extends State<EstanqueScreen> {
 
       // Fetch en paralelo: rutas Ford + cargas desde _kInicio
       final results = await Future.wait<dynamic>([
-        FordApiService().getRutasDelTecnico(widget.rut),
+        widget.esSupervisor
+            ? SupervisorRutasService().getRutasDelSupervisor(widget.rut)
+            : FordApiService().getRutasDelTecnico(widget.rut),
         Supabase.instance.client
             .from('cargas_combustible')
             .select('litros, monto')
@@ -453,6 +459,7 @@ class _EstanqueScreenState extends State<EstanqueScreen> {
         nombreTecnico: widget.nombreTecnico,
         mes:           s.mesStr,
         precioLitro:   widget.precioLitroRef,
+        esSupervisor:  widget.esSupervisor,
       ),
     ));
   }
@@ -615,12 +622,20 @@ class _EstanqueScreenState extends State<EstanqueScreen> {
                       fontSize: 14)),
             ]),
             const SizedBox(height: 10),
-            SolCombTecnicoWidget(
-              rut:          widget.rut,
-              nombre:       widget.nombreTecnico,
-              saldoLitros:  _vSaldoLitros,
-              saldoPesos:   _vSaldoPesos,
-            ),
+            if (widget.esSupervisor)
+              SolCombSupervisorWidget(
+                rut: widget.rut,
+                nombre: widget.nombreTecnico,
+                saldoLitros: _vSaldoLitros,
+                saldoPesos: _vSaldoPesos,
+              )
+            else
+              SolCombTecnicoWidget(
+                rut: widget.rut,
+                nombre: widget.nombreTecnico,
+                saldoLitros: _vSaldoLitros,
+                saldoPesos: _vSaldoPesos,
+              ),
 
             const SizedBox(height: 24),
 

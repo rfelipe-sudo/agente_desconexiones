@@ -5,6 +5,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import '../models/ford_ruta.dart';
 import '../services/produccion_rutas_service.dart';
+import '../services/supervisor_rutas_service.dart';
 
 const _bg = Color(0xFF0A1628);
 const _surface = Color(0xFF0D1B2A);
@@ -24,6 +25,7 @@ class FordRutasScreen extends StatefulWidget {
   final String mes;
   final double precioLitro;
   final double rendimientoKmL;
+  final bool esSupervisor;
 
   const FordRutasScreen({
     super.key,
@@ -32,6 +34,7 @@ class FordRutasScreen extends StatefulWidget {
     required this.mes,
     this.precioLitro = 1500.0,
     this.rendimientoKmL = 12.0,
+    this.esSupervisor = false,
   });
 
   @override
@@ -83,7 +86,11 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
   Future<void> _cargar() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final rutas = await _svc.getRutasDelTecnico(widget.rutTecnico);
+      final rutas = widget.esSupervisor
+          ? await SupervisorRutasService().getRutasDelSupervisor(
+              widget.rutTecnico,
+            )
+          : await _svc.getRutasDelTecnico(widget.rutTecnico);
 
       final grupos = <DateTime, List<FordDiaRuta>>{};
       for (final dia in rutas) {
@@ -759,8 +766,13 @@ class _FordRutasScreenState extends State<FordRutasScreen> {
       );
 
   Widget _buildTraslado(FordDiaRuta dia, FordTraslado t) {
+    final esMaterial = t.tipoLeg.startsWith('material');
     final esBase = t.tipoLeg == 'bodega_ida' || t.tipoLeg == 'bodega_vuelta';
-    final color = esBase ? _orange : _accent;
+    final color = esMaterial
+        ? const Color(0xFF22C55E)
+        : esBase
+            ? _orange
+            : _accent;
     final litros = t.kmOsrm / widget.rendimientoKmL;
     final isSelected = _trasladoSeleccionado == t;
 

@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'bodega_screen.dart';
 import 'configuracion_screen.dart';
 import 'guias_entrega_bodeguero_screen.dart';
+
+import 'package:agente_desconexiones/services/comunicado_service.dart';
+import 'package:agente_desconexiones/services/fcm_service.dart';
 
 class BodegueroMenuScreen extends StatefulWidget {
   const BodegueroMenuScreen({super.key});
@@ -22,6 +27,13 @@ class _BodegueroMenuScreenState extends State<BodegueroMenuScreen> {
   void initState() {
     super.initState();
     _cargarPendientes();
+    unawaited(FcmService.instance.syncFcmTokenDispositivo());
+    unawaited(FcmService.instance.initBodegaGuiaMonitor());
+    unawaited(FcmService.instance.initBodegaTraspasoMonitor());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(ComunicadoService.instance.processPendingComunicado(context));
+    });
   }
 
   Future<void> _cargarPendientes() async {

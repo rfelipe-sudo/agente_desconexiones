@@ -20,6 +20,10 @@ class AppConstants {
   
   // API Key para Kepler
   static const String keplerApiKey = 'F2ZFFWfwpVKVmT9XaJiFYigZInFYoeEBZfDPTKjyu3IZJcTG1vIUb3ccu7rQUOGT';
+
+  /// Token panel coordinación Nyquist (`/api/v1/datos_panel_coord`).
+  static const String nyquistPanelCoordToken =
+      '5de53e7b5f89b6b547c5c93d635f162ae2594756';
   
   /// Headers para requests a Kepler con Authorization Bearer
   static Map<String, String> get keplerHeaders => {

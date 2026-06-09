@@ -37,4 +37,20 @@ class CreavoxTecnico {
 
   factory CreavoxTecnico.fromJsonString(String s) =>
       CreavoxTecnico.fromJson(jsonDecode(s) as Map<String, dynamic>);
+
+  CreavoxTecnico copyWith({
+    String? rutTecnico,
+    String? nombreTecnico,
+    String? nombreSupervisor,
+    String? rutSupervisor,
+    bool? active,
+  }) {
+    return CreavoxTecnico(
+      rutTecnico: rutTecnico ?? this.rutTecnico,
+      nombreTecnico: nombreTecnico ?? this.nombreTecnico,
+      nombreSupervisor: nombreSupervisor ?? this.nombreSupervisor,
+      rutSupervisor: rutSupervisor ?? this.rutSupervisor,
+      active: active ?? this.active,
+    );
+  }
 }

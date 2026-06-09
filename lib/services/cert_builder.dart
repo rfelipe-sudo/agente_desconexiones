@@ -27,6 +27,7 @@ class CertContext {
     this.tecnicoNombre,
     this.tecnicoRut,
     this.fechaIso,
+    this.recomendacionExtensor,
   });
 
   final List<OntDevice> devices;
@@ -45,6 +46,9 @@ class CertContext {
   final String? tecnicoNombre;
   final String? tecnicoRut;
   final String? fechaIso;
+
+  /// Texto de recomendación de extensor (p. ej. distancia y motivo).
+  final String? recomendacionExtensor;
 }
 
 String buildCertificadoHtml(CertContext c) {
@@ -128,6 +132,9 @@ body{background:linear-gradient(135deg,#dee5ee 0%,#c0cad8 100%);font-family:-app
 .alert{background:linear-gradient(135deg,#fef2f2 0%,#fef2f2 100%);border:1px solid #fecaca;border-left:4px solid #ef4444;padding:12px 14px;border-radius:10px;margin-bottom:10px;color:#7f1d1d}
 .alert-title{font-size:12px;font-weight:800;margin-bottom:5px;display:flex;align-items:center;gap:6px}
 .alert-body{font-size:11px;line-height:1.55}
+.rec{background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%);border:1px solid #93c5fd;border-left:4px solid #3b82f6;padding:12px 14px;border-radius:10px;margin-bottom:10px;color:#1e3a8a}
+.rec-title{font-size:12px;font-weight:800;margin-bottom:5px;display:flex;align-items:center;gap:6px}
+.rec-body{font-size:11px;line-height:1.55}
 .foot{padding:18px 28px;background:linear-gradient(135deg,#04091a,#0a1628);color:#94a3b8;font-size:10px;text-align:center;border-top:2px solid #1e3a5f}
 .foot strong{color:#7dd3fc;font-weight:700;letter-spacing:0.5px}
 .empty{font-size:12px;color:#94a3b8;font-style:italic;padding:14px;text-align:center;background:#f8fafc;border-radius:8px}
@@ -324,7 +331,13 @@ String _observacionesHtml(CertContext c) {
   if (criticos.isNotEmpty) {
     obs.add('<div class="alert"><div class="alert-title">⚠ Señal crítica</div>'
         '<div class="alert-body">${criticos.map((d) => '"${_esc(d.name.isEmpty ? d.mac : d.name)}" (${d.rssi} dBm)').join(', ')} '
-        'tiene${criticos.length == 1 ? '' : 'n'} RSSI por debajo de −75 dBm. Considerar reubicar el dispositivo o agregar un repetidor.</div></div>');
+        'tiene${criticos.length == 1 ? '' : 'n'} RSSI por debajo de −75 dBm por debilitamiento de señal a distancia. Considerar reubicar el dispositivo o agregar un repetidor.</div></div>');
+  }
+
+  final rec = c.recomendacionExtensor?.trim() ?? '';
+  if (rec.isNotEmpty) {
+    obs.add('<div class="rec"><div class="rec-title">💡 Recomendación de extensor</div>'
+        '<div class="rec-body">${_esc(rec)}</div></div>');
   }
 
   if (obs.isEmpty) return '';

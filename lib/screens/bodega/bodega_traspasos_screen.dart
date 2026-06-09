@@ -10,6 +10,10 @@ import 'package:agente_desconexiones/screens/bodega/bodega_guia_screen.dart';
 import 'package:agente_desconexiones/services/alerta_sistema_service.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/services/guia_pdf_service.dart';
+import 'package:agente_desconexiones/services/logistica_service.dart';
+import 'package:agente_desconexiones/services/material_solicitud_service.dart';
+import 'package:agente_desconexiones/utils/fecha_chile.dart';
+import 'package:agente_desconexiones/utils/session_manager.dart';
 
 class BodegaTraspassosScreen extends StatefulWidget {
   const BodegaTraspassosScreen({super.key});
@@ -38,6 +42,7 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
   String _nombreBodega = '';
 
   final Set<String> _sapEnProceso = {};
+  final Set<String> _aprobarEnProceso = {};
   // IDs ya conocidos para detectar nuevas entradas
   final Set<String> _idsConocidos = {};
   bool _primerasCarga = true;
@@ -60,18 +65,11 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
   }
 
   Future<void> _cargarDatosUsuario() async {
-    final prefs = await SharedPreferences.getInstance();
-    final rut   = prefs.getString('rut_tecnico') ??
-                  prefs.getString('user_rut') ?? '';
-    final row   = await _db
-        .from('nomina_bodega')
-        .select('nombre')
-        .eq('rut', rut)
-        .maybeSingle();
+    final id = await SessionManager.identidadBodeguero();
     if (mounted) {
       setState(() {
-        _rutBodega    = rut;
-        _nombreBodega = row?['nombre'] as String? ?? rut;
+        _rutBodega    = id.rut;
+        _nombreBodega = id.nombre.isNotEmpty ? id.nombre : id.rut;
       });
     }
   }
@@ -133,13 +131,32 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
       ),
     );
     if (confirm != true || !mounted) return;
+    if (_aprobarEnProceso.contains(tr.id)) return;
+
+    final bodeguero = await SessionManager.identidadBodeguero();
+    if (bodeguero.rut.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        backgroundColor: Colors.red,
+        content: Text('No se pudo identificar al bodeguero. Vuelve a iniciar sesión.'),
+      ));
+      return;
+    }
+
+    setState(() {
+      _aprobarEnProceso.add(tr.id);
+      _rutBodega    = bodeguero.rut;
+      _nombreBodega = bodeguero.nombre;
+    });
 
     try {
-      final res = await _db.functions.invoke('aprobar-traspaso', body: {
-        'traspaso_id':      tr.id,
-        'aprobado_por':     _rutBodega,
-        'nombre_aprobador': _nombreBodega,
-      });
+      final res = await _db.functions
+          .invoke('aprobar-traspaso', body: {
+            'traspaso_id':      tr.id,
+            'aprobado_por':     bodeguero.rut,
+            'nombre_aprobador': bodeguero.nombre,
+          })
+          .timeout(const Duration(seconds: 60));
 
       final data  = res.data as Map<String, dynamic>?;
       final folio = data?['folio_kepler'] as String?;
@@ -150,8 +167,8 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
             if (t.id != tr.id) return t;
             return t.copyWith(
               estado:          'aprobado',
-              nombreAprobador: _nombreBodega,
-              aprobadoPor:     _rutBodega,
+              nombreAprobador: bodeguero.nombre,
+              aprobadoPor:     bodeguero.rut,
               aprobadoEn:      DateTime.now(),
               folioKepler:     folio,
             );
@@ -167,7 +184,27 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
         if (folio != null && tr.solicitudMaterialId != null) {
           _enviarPdfKepler(tr, folio);
         }
-        _recargar();
+        if (tr.solicitudMaterialId != null) {
+          final logistica = LogisticaService();
+          final nombreEnt = await logistica.nombrePorRut(
+            tr.rutTecnicoB,
+            fallback: tr.nombreTecnicoB,
+          );
+          final nombreSol = await logistica.nombrePorRut(
+            tr.rutTecnicoA,
+            fallback: tr.nombreTecnicoA,
+          );
+          unawaited(MaterialSolicitudService().emitirGuiaTrasAprobacion(
+            solicitudId:       tr.solicitudMaterialId!,
+            rutEntregador:     tr.rutTecnicoB,
+            rutSolicitante:    tr.rutTecnicoA,
+            detalleMaterial:   '${tr.cantidad}× ${tr.tipoMaterial}',
+            nombreEntregador:  nombreEnt,
+            nombreSolicitante: nombreSol,
+            folioKepler:       folio,
+          ));
+        }
+        unawaited(_recargar());
       }
     } catch (e) {
       unawaited(AlertaSistemaService().registrarFallo(
@@ -180,8 +217,16 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           backgroundColor: Colors.red.shade700,
-          content: Text('Error al aprobar: $e'),
+          content: Text(
+            e is TimeoutException
+                ? 'Kepler tardó demasiado. Revisa si se aprobó en la lista.'
+                : 'Error al aprobar: $e',
+          ),
         ));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _aprobarEnProceso.remove(tr.id));
       }
     }
   }
@@ -213,14 +258,26 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
     );
     if (confirm != true || !mounted) return;
 
+    final bodeguero = await SessionManager.identidadBodeguero();
+    if (bodeguero.rut.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        backgroundColor: Colors.red,
+        content: Text('No se pudo identificar al bodeguero. Vuelve a iniciar sesión.'),
+      ));
+      return;
+    }
+
     setState(() => _sapEnProceso.add(tr.id));
 
     try {
-      await _db.functions.invoke('confirmar-sap', body: {
-        'traspaso_id':        tr.id,
-        'confirmado_por':     _rutBodega,
-        'nombre_confirmador': _nombreBodega,
-      });
+      await _db.functions
+          .invoke('confirmar-sap', body: {
+            'traspaso_id':        tr.id,
+            'confirmado_por':     bodeguero.rut,
+            'nombre_confirmador': bodeguero.nombre,
+          })
+          .timeout(const Duration(seconds: 45));
       if (mounted) {
         setState(() {
           _traspasos = _traspasos.map((t) {
@@ -231,14 +288,18 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
         });
         // Ir al historial donde quedará el traspaso completado
         _tabController.animateTo(1);
-        _recargar();
+        unawaited(_recargar());
       }
     } catch (e) {
       if (mounted) {
         setState(() => _sapEnProceso.remove(tr.id));
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           backgroundColor: Colors.red.shade700,
-          content: Text('Error al confirmar SAP: $e'),
+          content: Text(
+            e is TimeoutException
+                ? 'SAP tardó demasiado. Revisa si quedó confirmado.'
+                : 'Error al confirmar SAP: $e',
+          ),
         ));
       }
     }
@@ -454,11 +515,7 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
   // ── Card ─────────────────────────────────────────────────────────────────
 
   Widget _buildTraspasoCard(TraspassoBodega tr) {
-    final fecha = '${tr.createdAt.day.toString().padLeft(2, '0')}/'
-        '${tr.createdAt.month.toString().padLeft(2, '0')}/'
-        '${tr.createdAt.year}  '
-        '${tr.createdAt.hour.toString().padLeft(2, '0')}:'
-        '${tr.createdAt.minute.toString().padLeft(2, '0')}';
+    final fecha = FechaChile.corto(tr.createdAt);
 
     return Card(
       color: _surface,
@@ -500,12 +557,7 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
           if (!tr.pendiente && tr.nombreAprobador != null)
             _fila('Aprobado por', tr.nombreAprobador!),
           if (tr.sapConfirmadoEn != null)
-            _fila('SAP confirmado',
-                '${tr.sapConfirmadoEn!.day.toString().padLeft(2, '0')}/'
-                '${tr.sapConfirmadoEn!.month.toString().padLeft(2, '0')}/'
-                '${tr.sapConfirmadoEn!.year}  '
-                '${tr.sapConfirmadoEn!.hour.toString().padLeft(2, '0')}:'
-                '${tr.sapConfirmadoEn!.minute.toString().padLeft(2, '0')}'),
+            _fila('SAP confirmado', FechaChile.corto(tr.sapConfirmadoEn!)),
 
           // Botón Ver guía
           if (!tr.pendiente && tr.solicitudMaterialId != null) ...[
@@ -531,21 +583,40 @@ class _BodegaTraspassosScreenState extends State<BodegaTraspassosScreen>
           // Botón Aprobar KRP
           if (tr.pendiente) ...[
             const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _green,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                ),
-                icon: const Icon(Icons.check_rounded, size: 18),
-                label: const Text('Aprobar transferencia en KRP',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                onPressed: () => _aprobar(tr),
-              ),
+            StatefulBuilder(
+              builder: (_, __) {
+                final enProceso = _aprobarEnProceso.contains(tr.id);
+                return SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          enProceso ? const Color(0xFF1E3A5F) : _green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                    ),
+                    icon: enProceso
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.check_rounded, size: 18),
+                    label: Text(
+                      enProceso
+                          ? 'Aprobando en Kepler…'
+                          : 'Aprobar transferencia en KRP',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    onPressed: enProceso ? null : () => _aprobar(tr),
+                  ),
+                );
+              },
             ),
           ],
 

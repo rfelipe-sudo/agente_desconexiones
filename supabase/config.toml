@@ -1,0 +1,3 @@
+# confirmar-sap: enlace GET desde correo (sin JWT de Supabase).
+[functions.confirmar-sap]
+verify_jwt = false

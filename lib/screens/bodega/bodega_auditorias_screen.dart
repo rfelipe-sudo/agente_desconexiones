@@ -347,9 +347,12 @@ class _AlertaPendienteCard extends StatelessWidget {
     final tecnico   = data['nombre_tecnico'] as String? ?? '—';
     final rut       = data['rut_tecnico']    as String? ?? '';
     final tipo      = data['tipo_material']  as String? ?? '—';
-    final stockOnt  = (data['stock_ont']          as num? ?? 0).toDouble();
-    final stockDeco = (data['stock_decodificador'] as num? ?? 0).toDouble();
-    final stockExt  = (data['stock_extensor']      as num? ?? 0).toDouble();
+    final stockOnt       = (data['stock_ont']          as num? ?? 0).toDouble();
+    final stockDecoClaro = (data['stock_deco_claro'] as num?)?.toDouble();
+    final stockDecoVtr   = (data['stock_deco_vtr']   as num?)?.toDouble();
+    final stockDecoTotal =
+        (data['stock_decodificador'] as num? ?? 0).toDouble();
+    final stockExt = (data['stock_extensor'] as num? ?? 0).toDouble();
 
     return Container(
       decoration: BoxDecoration(
@@ -426,9 +429,22 @@ class _AlertaPendienteCard extends StatelessWidget {
             const Text('Stock al momento de la solicitud:',
                 style: TextStyle(color: _textDim, fontSize: 11)),
             const SizedBox(height: 4),
-            _StockRow(label: 'ONT',           valor: stockOnt,  umbral: 3),
-            _StockRow(label: 'Decodificador', valor: stockDeco, umbral: 5),
-            _StockRow(label: 'Extensor',      valor: stockExt,  umbral: 2),
+            _StockRow(label: 'ONT', valor: stockOnt, umbral: 3),
+            if (stockDecoClaro != null && stockDecoVtr != null) ...[
+              _StockRow(
+                  label: 'Decodificador Claro',
+                  valor: stockDecoClaro,
+                  umbral: 5),
+              _StockRow(
+                  label: 'Decodificador VTR',
+                  valor: stockDecoVtr,
+                  umbral: 5),
+            ] else if (stockDecoTotal > 0)
+              _StockRow(
+                  label: 'Decodificador (total)',
+                  valor: stockDecoTotal,
+                  umbral: 5),
+            _StockRow(label: 'Extensor', valor: stockExt, umbral: 2),
             const SizedBox(height: 8),
             Row(children: [
               const Icon(Icons.schedule_rounded, size: 11, color: _textDim),
@@ -490,9 +506,14 @@ class _AlertaAuditadaCard extends StatelessWidget {
     final tecnico      = alerta['nombre_tecnico'] as String? ?? '—';
     final rut          = alerta['rut_tecnico']    as String? ?? '';
     final tipo         = alerta['tipo_material']  as String? ?? '—';
-    final stockOnt     = (alerta['stock_ont']          as num? ?? 0).toDouble();
-    final stockDeco    = (alerta['stock_decodificador'] as num? ?? 0).toDouble();
-    final stockExt     = (alerta['stock_extensor']      as num? ?? 0).toDouble();
+    final stockOnt       = (alerta['stock_ont'] as num? ?? 0).toDouble();
+    final stockDecoClaro =
+        (alerta['stock_deco_claro'] as num?)?.toDouble();
+    final stockDecoVtr =
+        (alerta['stock_deco_vtr'] as num?)?.toDouble();
+    final stockDecoTotal =
+        (alerta['stock_decodificador'] as num? ?? 0).toDouble();
+    final stockExt = (alerta['stock_extensor'] as num? ?? 0).toDouble();
     final nombreAuditor = auditoria?['nombre_auditor'] as String? ?? '—';
     final obs = auditoria?['observaciones'] as String? ?? '';
 
@@ -579,9 +600,22 @@ class _AlertaAuditadaCard extends StatelessWidget {
             const Text('Stock al momento de la alerta:',
                 style: TextStyle(color: _textDim, fontSize: 11)),
             const SizedBox(height: 4),
-            _StockRow(label: 'ONT',           valor: stockOnt,  umbral: 3),
-            _StockRow(label: 'Decodificador', valor: stockDeco, umbral: 5),
-            _StockRow(label: 'Extensor',      valor: stockExt,  umbral: 2),
+            _StockRow(label: 'ONT', valor: stockOnt, umbral: 3),
+            if (stockDecoClaro != null && stockDecoVtr != null) ...[
+              _StockRow(
+                  label: 'Decodificador Claro',
+                  valor: stockDecoClaro,
+                  umbral: 5),
+              _StockRow(
+                  label: 'Decodificador VTR',
+                  valor: stockDecoVtr,
+                  umbral: 5),
+            ] else if (stockDecoTotal > 0)
+              _StockRow(
+                  label: 'Decodificador (total)',
+                  valor: stockDecoTotal,
+                  umbral: 5),
+            _StockRow(label: 'Extensor', valor: stockExt, umbral: 2),
 
             // Diferencias encontradas
             if (items.isNotEmpty) ...[

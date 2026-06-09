@@ -1,7 +1,7 @@
 name: agente_desconexiones
 description: "CREABOX — Plataforma operativa y alertas de fibra óptica"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.5.7+12
 
 environment:
   sdk: ^3.9.2
@@ -32,6 +32,7 @@ dependencies:
   
   # Estado de la app
   provider: ^6.1.2
+  package_info_plus: ^8.3.0
   
   # Almacenamiento local
   shared_preferences: ^2.3.3
@@ -142,14 +143,16 @@ flutter:
     - assets/apk/tecnicos.apk
 
 # ══════════════════════════════════════════════════════════════════════════
-# Icono launcher CREABOX (CB en gradiente, fondo #0D1B2E).
+# Icono launcher CREABOX (logo Creaciones Tecnológicas / Crea Box).
+# El PNG lleva ~14% de margen; tras regenerar revisar inset en
+# android/.../mipmap-anydpi-v26/ic_launcher.xml (recomendado 12–16%).
 # Tras cambiar los PNG: dart run flutter_launcher_icons
 # ══════════════════════════════════════════════════════════════════════════
 flutter_launcher_icons:
   android: true
   ios: false
   image_path: "assets/images/icon_creabox.png"
-  adaptive_icon_background: "#0D1B2E"
+  adaptive_icon_background: "#0D1B2A"
   adaptive_icon_foreground: "assets/images/icon_creabox_fg.png"
   min_sdk_android: 21
 

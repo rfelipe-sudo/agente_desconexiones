@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'package:agente_desconexiones/models/estado_supervisor.dart';
+import 'package:agente_desconexiones/services/combustible_supervisor_ruta_service.dart';
+import 'package:agente_desconexiones/services/supervisor_rutas_service.dart';
 
 String _nombreDesdeNomina(Map<String, dynamic> t) {
   final n =
@@ -221,6 +223,14 @@ class EstadoSupervisorService extends ChangeNotifier {
   /// [autoCompletada] true si se cerró por GPS (countdown 10 min)
   Future<void> completarActividad(String rutSupervisor,
       {bool autoCompletada = false}) async {
+    final actividadValor = _estadoActual?.actividad ?? '';
+    final partidaLat = _estadoActual?.lat;
+    final partidaLng = _estadoActual?.lng;
+    final partidaEtiqueta = actividadValor.isNotEmpty &&
+            actividadValor != 'sin_actividad'
+        ? CombustibleSupervisorRutaService.etiquetaActividad(actividadValor)
+        : null;
+
     final ticketId = _estadoActual?.ticketIdActivo;
     if (ticketId != null && ticketId.isNotEmpty) {
       await _supabase
@@ -252,6 +262,28 @@ class EstadoSupervisorService extends ChangeNotifier {
         'auto_completada': autoCompletada,
       }).eq('id', histId);
       await prefs.remove(_keyHistorialActivo);
+    }
+
+    if (actividadValor.isNotEmpty &&
+        actividadValor != 'sin_actividad' &&
+        actividadValor != 'en_camino' &&
+        actividadValor != 'ejecutando') {
+      try {
+        final pos = await obtenerPosicion();
+        await CombustibleSupervisorRutaService.instance
+            .registrarTramoAlCompletarActividad(
+          rutSupervisor: rutSupervisor,
+          actividadValor: actividadValor,
+          finLat: pos.latitude,
+          finLng: pos.longitude,
+          partidaLatFallback: partidaLat,
+          partidaLngFallback: partidaLng,
+          partidaEtiquetaFallback: partidaEtiqueta,
+        );
+        SupervisorRutasService().limpiarCache();
+      } catch (e) {
+        debugPrint('⚠️ [EstadoSupervisor] Tramo combustible al completar: $e');
+      }
     }
 
     _detenerListener100m();
@@ -456,13 +488,44 @@ class EstadoSupervisorService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Al LLEGAR al técnico: actividad = 'ejecutando'
-  Future<void> marcarLlegadaAyuda(String rutSupervisor) async {
+  /// Al LLEGAR al técnico: actividad = 'ejecutando' + tramo combustible.
+  Future<void> marcarLlegadaAyuda({
+    required String rutSupervisor,
+    required String ticketId,
+    required String nombreTecnico,
+  }) async {
+    final partidaLat = _estadoActual?.lat;
+    final partidaLng = _estadoActual?.lng;
     final now = DateTime.now().toUtc().toIso8601String();
+    double? llegadaLat;
+    double? llegadaLng;
+
+    try {
+      final pos = await obtenerPosicion();
+      llegadaLat = pos.latitude;
+      llegadaLng = pos.longitude;
+      await CombustibleSupervisorRutaService.instance
+          .registrarTramoAlMarcarLlegada(
+        rutSupervisor: rutSupervisor,
+        ticketId: ticketId,
+        nombreTecnico: nombreTecnico,
+        finLat: pos.latitude,
+        finLng: pos.longitude,
+        partidaLatFallback: partidaLat,
+        partidaLngFallback: partidaLng,
+      );
+      SupervisorRutasService().limpiarCache();
+    } catch (e) {
+      debugPrint('⚠️ [EstadoSupervisor] Tramo combustible al llegar: $e');
+    }
+
     await _supabase.from('estado_supervisor_crea').upsert({
       'rut_supervisor': rutSupervisor,
       'actividad': 'ejecutando',
       'actividad_desde': now,
+      if (llegadaLat != null) 'lat': llegadaLat,
+      if (llegadaLng != null) 'lng': llegadaLng,
+      if (llegadaLat != null) 'ubicacion_at': now,
       'updated_at': now,
     }, onConflict: 'rut_supervisor');
     await cargarEstado(rutSupervisor);

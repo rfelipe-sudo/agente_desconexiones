@@ -5,6 +5,7 @@ import 'package:agente_desconexiones/models/creavox_orden.dart';
 class CreavoxSessionService {
   static const _keyTecnico = 'creavox_tecnico_session';
   static const _keyOrden = 'creavox_orden_activa';
+  static const _keyUltimaOrden = 'creavox_ultima_orden';
   static const _keyLoggedIn = 'creavox_is_logged_in';
 
   static final CreavoxSessionService _instance =
@@ -50,6 +51,20 @@ class CreavoxSessionService {
     await inicializar();
     _orden = orden;
     await _prefs?.setString(_keyOrden, orden.toJsonString());
+    await guardarUltimaOrden(orden);
+  }
+
+  Future<void> guardarUltimaOrden(CreavoxOrden orden) async {
+    await inicializar();
+    await _prefs?.setString(_keyUltimaOrden, orden.toJsonString());
+  }
+
+  CreavoxOrden? getUltimaOrden() {
+    try {
+      final o = _prefs?.getString(_keyUltimaOrden);
+      if (o != null) return CreavoxOrden.fromJsonString(o);
+    } catch (_) {}
+    return null;
   }
 
   bool isLoggedIn() =>
