@@ -105,7 +105,7 @@ class _SolicitudMaterialScreenState extends State<SolicitudMaterialScreen>
   final math.Random _tipRng = math.Random();
 
   // ── Barra de progreso al enviar solicitud ────────────────────
-  static const _estadosGuiaHistorial = ['firmada', 'confirmada_bodega', 'emitida'];
+  static const _estadosGuiaHistorial = ['confirmada_bodega', 'emitida'];
 
   /// Más reciente primero: created_at, luego fecha+hora.
   static int _cmpGuiaReciente(Map<String, dynamic> a, Map<String, dynamic> b) {

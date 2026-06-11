@@ -1,17 +1,14 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 
-const _bg      = Color(0xFF0A1628);
+import 'package:agente_desconexiones/services/app_tecnico_launcher.dart';
+
+const _bg = Color(0xFF0A1628);
 const _surface = Color(0xFF0D1B2A);
-const _accent  = Color(0xFF00D9FF);
-const _danger  = Color(0xFFEF4444);
+const _accent = Color(0xFF00D9FF);
+const _danger = Color(0xFFEF4444);
 const _textDim = Color(0xFF8FA8C8);
-const _border  = Color(0xFF1E3A5F);
-
-const _pkgTecnicos  = 'com.vtrapp.tecnico';
-const _assetApkPath = 'assets/apk/tecnicos.apk'; // path para rootBundle
+const _border = Color(0xFF1E3A5F);
 
 class FinalizarOrdenScreen extends StatefulWidget {
   const FinalizarOrdenScreen({super.key});
@@ -21,13 +18,9 @@ class FinalizarOrdenScreen extends StatefulWidget {
 }
 
 class _FinalizarOrdenScreenState extends State<FinalizarOrdenScreen> {
-  static const _channel = MethodChannel(
-    'com.creacionestecnologicas.agente_desconexiones/app_launcher',
-  );
-
   bool _verificando = true;
-  bool _instalado   = false;
-  bool _instalando  = false;
+  bool _instalado = false;
+  bool _instalando = false;
   String? _error;
 
   @override
@@ -37,44 +30,58 @@ class _FinalizarOrdenScreenState extends State<FinalizarOrdenScreen> {
   }
 
   Future<void> _verificarYAbrir() async {
-    setState(() { _verificando = true; _error = null; });
+    setState(() {
+      _verificando = true;
+      _error = null;
+    });
     try {
-      final instalado = await _channel.invokeMethod<bool>('isInstalled', _pkgTecnicos) ?? false;
+      final instalado = await AppTecnicoLauncher.isInstalled();
       if (!mounted) return;
-      setState(() { _instalado = instalado; _verificando = false; });
+      setState(() {
+        _instalado = instalado;
+        _verificando = false;
+      });
       if (instalado) await _abrirApp();
     } on PlatformException catch (e) {
-      if (mounted) setState(() { _error = e.message; _verificando = false; });
+      if (mounted) {
+        setState(() {
+          _error = e.message;
+          _verificando = false;
+        });
+      }
     }
   }
 
   Future<void> _abrirApp() async {
     try {
-      await _channel.invokeMethod('launchApp', _pkgTecnicos);
+      await AppTecnicoLauncher.launch();
     } on PlatformException catch (e) {
       if (mounted) setState(() => _error = e.message);
     }
   }
 
   Future<void> _instalarApp() async {
-    setState(() { _instalando = true; _error = null; });
+    setState(() {
+      _instalando = true;
+      _error = null;
+    });
     try {
-      // 1. Leer el APK desde Flutter assets (rootBundle maneja descompresión).
-      final bytes = await rootBundle.load(_assetApkPath);
-
-      // 2. Escribir en directorio de caché del dispositivo.
-      final cacheDir = await getTemporaryDirectory();
-      final apkFile  = File('${cacheDir.path}/apk/tecnicos.apk');
-      await apkFile.parent.create(recursive: true);
-      await apkFile.writeAsBytes(bytes.buffer.asUint8List(), flush: true);
-
-      // 3. Pedir a Kotlin que abra el instalador con la ruta absoluta.
-      await _channel.invokeMethod('installApkFromPath', apkFile.path);
+      await AppTecnicoLauncher.installFromAssets();
       if (mounted) setState(() => _instalando = false);
     } on PlatformException catch (e) {
-      if (mounted) setState(() { _error = e.message; _instalando = false; });
+      if (mounted) {
+        setState(() {
+          _error = e.message;
+          _instalando = false;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _instalando = false; });
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _instalando = false;
+        });
+      }
     }
   }
 
@@ -133,7 +140,6 @@ class _FinalizarOrdenScreenState extends State<FinalizarOrdenScreen> {
       );
     }
 
-    // No instalada → mostrar botón de instalación
     return _StatusView(
       icon: const Icon(Icons.install_mobile, color: _accent, size: 56),
       title: 'App Técnicos no instalada',
@@ -144,8 +150,11 @@ class _FinalizarOrdenScreenState extends State<FinalizarOrdenScreen> {
               style: FilledButton.styleFrom(
                 backgroundColor: _accent,
                 foregroundColor: _bg,
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               onPressed: _instalarApp,
               icon: const Icon(Icons.download),
@@ -179,7 +188,8 @@ class _StatusView extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 88, height: 88,
+            width: 88,
+            height: 88,
             decoration: BoxDecoration(
               color: const Color(0xFF0D1B2A),
               borderRadius: BorderRadius.circular(22),

@@ -23,11 +23,16 @@ class MainActivity : FlutterActivity() {
     private val NAV_CHANNEL      = "com.creacionestecnologicas.agente_desconexiones/navigation"
 
     private var navChannel: MethodChannel? = null
+    private var launcherChannel: MethodChannel? = null
 
     // Result de Flutter pendiente: se responde en onResume cuando el scanner cierre.
     private var pendingCtoResult: MethodChannel.Result? = null
 
     private var llegadaPlayer: MediaPlayer? = null
+
+    companion object {
+        private const val REQUEST_APP_TECNICO = 9911
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -52,7 +57,8 @@ class MainActivity : FlutterActivity() {
             }
 
         // ── Canal App Launcher (App Técnicos) ────────────────────────────────
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LAUNCHER_CHANNEL)
+        launcherChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LAUNCHER_CHANNEL)
+        launcherChannel!!
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "isInstalled" -> {
@@ -95,6 +101,39 @@ class MainActivity : FlutterActivity() {
                         } catch (e: Exception) {
                             result.error("INSTALL_ERROR", e.message, null)
                         }
+                    }
+                    "openAppTecnicoWebView" -> {
+                        val url: String
+                        val username: String?
+                        val password: String?
+                        when (val args = call.arguments) {
+                            is String -> {
+                                url = args
+                                username = null
+                                password = null
+                            }
+                            is Map<*, *> -> {
+                                url = args["url"] as? String ?: ""
+                                username = args["username"] as? String
+                                password = args["password"] as? String
+                            }
+                            else -> {
+                                result.error("INVALID", "Argumentos inválidos", null)
+                                return@setMethodCallHandler
+                            }
+                        }
+                        if (url.isBlank()) {
+                            result.error("INVALID", "URL vacía", null)
+                            return@setMethodCallHandler
+                        }
+                        val intent = Intent(this, AppTecnicoActivity::class.java)
+                        intent.putExtra(AppTecnicoActivity.EXTRA_URL, url)
+                        if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
+                            intent.putExtra(AppTecnicoActivity.EXTRA_AUTO_USERNAME, username)
+                            intent.putExtra(AppTecnicoActivity.EXTRA_AUTO_PASSWORD, password)
+                        }
+                        startActivityForResult(intent, REQUEST_APP_TECNICO)
+                        result.success(null)
                     }
                     else -> result.notImplemented()
                 }
@@ -211,6 +250,17 @@ class MainActivity : FlutterActivity() {
     override fun onPause() {
         AppVisibility.activityResumed = false
         super.onPause()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_APP_TECNICO) return
+        if (resultCode == AppTecnicoActivity.RESULT_CREDENTIALS_ERROR) {
+            launcherChannel?.invokeMethod("credentialsError", null)
+        } else {
+            launcherChannel?.invokeMethod("appTecnicoClosed", null)
+        }
     }
 
     // Cuando MainActivity vuelve al primer plano (scanner cerrado), notificamos a Flutter.

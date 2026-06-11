@@ -21,6 +21,7 @@ import 'package:agente_desconexiones/services/alarm_audio_service.dart';
 import 'package:agente_desconexiones/services/alertas_cto_service.dart';
 import 'package:agente_desconexiones/services/auth_service.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart';
+import 'package:agente_desconexiones/services/app_tecnico_open_service.dart';
 import 'package:agente_desconexiones/services/material_alerta_estado.dart';
 import 'package:agente_desconexiones/screens/tu_mes_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_equipo_screen.dart';
@@ -35,6 +36,20 @@ import 'package:agente_desconexiones/screens/jefe_ops_home_screen.dart';
 import 'package:agente_desconexiones/services/comunicado_service.dart';
 import 'package:agente_desconexiones/services/logistica_service.dart';
 import 'package:agente_desconexiones/widgets/perfil_tecnico_sheet.dart';
+import 'package:agente_desconexiones/providers/alerta_provider.dart';
+import 'package:agente_desconexiones/utils/navegacion_con_cortina.dart';
+import 'package:agente_desconexiones/screens/asistente_cto_screen.dart';
+import 'package:agente_desconexiones/screens/asistente_crea_terreno_screen.dart';
+import 'package:agente_desconexiones/screens/ayuda_terreno_screen.dart';
+import 'package:agente_desconexiones/screens/ast_login_screen.dart';
+import 'package:agente_desconexiones/screens/solicitud_material_screen.dart';
+import 'package:agente_desconexiones/screens/mis_actividades_screen.dart';
+import 'package:agente_desconexiones/screens/supervisor/mi_equipo_nyquist_screen.dart';
+import 'package:agente_desconexiones/screens/supervisor/asistente_supervisor_screen.dart';
+import 'package:agente_desconexiones/screens/ito/informe_auditoria_calidad_screen.dart';
+import 'package:agente_desconexiones/screens/supervisor/solicitudes_ayuda_screen.dart';
+import 'package:agente_desconexiones/screens/supervisor/mi_actividad_screen.dart';
+import 'package:agente_desconexiones/services/mis_actividades_state.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -296,13 +311,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         IconButton(
           icon: const Icon(Icons.calendar_month),
           tooltip: 'Tu Mes',
-          onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const TuMesScreen(),
-              ),
-            );
-          },
+          onPressed: () => _pushConCortina(
+            color: const Color(0xFF6366F1),
+            titulo: 'Tu Mes',
+            screen: const TuMesScreen(),
+          ),
         ),
         IconButton(
           icon: const Icon(Icons.refresh),
@@ -318,6 +331,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           },
         ),
       ],
+    );
+  }
+
+  Future<void> _pushConCortina({
+    required Color color,
+    required String titulo,
+    String? subtitulo,
+    required Widget screen,
+    Future<void> Function()? hastaListo,
+  }) {
+    return NavegacionConCortina.push<void>(
+      context,
+      accentColor: color,
+      titulo: titulo,
+      subtitulo: subtitulo,
+      destination: screen,
+      hastaListo: hastaListo,
     );
   }
 
@@ -340,7 +370,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFF00D9FF), Color(0xFF0099CC)],
             ),
-            onTap: () => Navigator.of(context).pushNamed('/asistente-cto'),
+            onTap: () => _pushConCortina(
+              color: const Color(0xFF00D9FF),
+              titulo: 'Asistente de CTO',
+              screen: const AsistenteCtoScreen(),
+            ),
           ),
           _buildActionButton(
             icon: Icons.mic,
@@ -349,8 +383,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFFAB47BC), Color(0xFF7B1FA2)],
             ),
-            onTap: () =>
-                Navigator.of(context).pushNamed('/asistente-crea-terreno'),
+            onTap: () => _pushConCortina(
+              color: const Color(0xFFAB47BC),
+              titulo: 'Asistente CREA',
+              screen: const AsistenteCreaTerrenoScreen(),
+            ),
           ),
           // ── Fila 2 ──────────────────────────────────────────────
           _buildActionButton(
@@ -360,7 +397,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFF4CAF50), Color(0xFF2E7D32)],
             ),
-            onTap: () => Navigator.of(context).pushNamed('/ayuda-terreno'),
+            onTap: () => _pushConCortina(
+              color: const Color(0xFF4CAF50),
+              titulo: 'Ayuda en Terreno',
+              screen: const AyudaTerrenoScreen(),
+            ),
           ),
           _buildActionButton(
             icon: Icons.health_and_safety_outlined,
@@ -369,7 +410,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             gradient: const LinearGradient(
               colors: [Color(0xFF7C3AED), Color(0xFF4F46E5)],
             ),
-            onTap: () => Navigator.of(context).pushNamed('/ast'),
+            onTap: () => _pushConCortina(
+              color: const Color(0xFF7C3AED),
+              titulo: 'AST',
+              screen: const AstLoginScreen(),
+            ),
           ),
           // ── Fila 3 ──────────────────────────────────────────────
           Stack(
@@ -396,8 +441,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       }
                     } catch (_) {}
                     if (mounted) setState(() => _solicitudesMaterialCount = 0);
-                    if (mounted)
-                      Navigator.of(context).pushNamed('/solicitud-material');
+                    if (mounted) {
+                      _pushConCortina(
+                        color: const Color(0xFF10B981),
+                        titulo: 'Solicitud de Material',
+                        screen: const SolicitudMaterialScreen(),
+                      );
+                    }
                   },
                 ),
               ),
@@ -427,13 +477,45 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             label: 'WiFi &\nMapas',
           ),
           // ── Fila 4 ──────────────────────────────────────────────
-          _buildProximamenteActionButton(
-            icon: Icons.speed,
-            label: 'Medición\nde Velocidad',
+          Consumer<AlertaProvider>(
+            builder: (context, alertaProvider, _) {
+              final bloqueada = alertaProvider.misActividadesBloqueada;
+              return _buildActionButton(
+                icon: bloqueada
+                    ? Icons.lock_outline_rounded
+                    : Icons.assignment_outlined,
+                label: 'Mis\nActividades',
+                color: bloqueada
+                    ? const Color(0xFFEF4444)
+                    : const Color(0xFF3B82F6),
+                gradient: bloqueada
+                    ? const LinearGradient(
+                        colors: [Color(0xFFEF4444), Color(0xFFB91C1C)],
+                      )
+                    : const LinearGradient(
+                        colors: [Color(0xFF3B82F6), Color(0xFF1D4ED8)],
+                      ),
+                onTap: () => _pushConCortina(
+                  color: bloqueada
+                      ? const Color(0xFFEF4444)
+                      : const Color(0xFF3B82F6),
+                  titulo: 'Mis Actividades',
+                  subtitulo: 'Iniciando sesión en TOA…',
+                  screen: const MisActividadesScreen(),
+                  hastaListo: MisActividadesState.instance.esperarCortinaHome,
+                ),
+              );
+            },
           ),
-          _buildProximamenteActionButton(
-            icon: Icons.assignment_outlined,
-            label: 'Mis\nActividades',
+          _buildActionButton(
+            icon: Icons.phone_android,
+            label: 'App\nTécnico',
+            color: const Color(0xFFE30613),
+            gradient: const LinearGradient(
+              colors: [Color(0xFFE30613), Color(0xFFB8050F)],
+            ),
+            onTap: () =>
+                AppTecnicoOpenService.instance.openFromHome(context),
           ),
           // ── Condicionales ────────────────────────────────────────
           if (_puedeVerEquipo)
@@ -444,8 +526,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFFFFA500), Color(0xFFFF8C00)],
               ),
-              onTap: () =>
-                  Navigator.of(context).pushNamed('/supervisor-equipo'),
+              onTap: () => _pushConCortina(
+                color: const Color(0xFFFFA500),
+                titulo: 'Mi Equipo',
+                screen: const MiEquipoNyquistScreen(),
+              ),
             ),
           if (_esIto)
             _buildActionButton(
@@ -455,8 +540,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFF7B61FF), Color(0xFF5C3FCC)],
               ),
-              onTap: () =>
-                  Navigator.of(context).pushNamed('/asistente-supervisor'),
+              onTap: () => _pushConCortina(
+                color: const Color(0xFF7B61FF),
+                titulo: 'Panel Supervisor',
+                screen: const AsistenteSupervisorScreen(),
+              ),
             ),
           if (_esItoCalidad)
             _buildActionButton(
@@ -466,8 +554,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFFEC4899), Color(0xFFBE185D)],
               ),
-              onTap: () => Navigator.of(context)
-                  .pushNamed('/informe-auditoria-calidad'),
+              onTap: () => _pushConCortina(
+                color: const Color(0xFFEC4899),
+                titulo: 'Informe Auditoría',
+                screen: const InformeAuditoriaCalidadScreen(),
+              ),
             ),
           if (_esBodega)
             _buildActionButton(
@@ -477,7 +568,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
               ),
-              onTap: () => Navigator.of(context).pushNamed('/bodega'),
+              onTap: () => _pushConCortina(
+                color: const Color(0xFFF59E0B),
+                titulo: 'Panel Bodega',
+                screen: const BodegaScreen(),
+              ),
             ),
           if (usuario.esSupervisor) ...[
             _buildActionButton(
@@ -487,8 +582,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFF00ACC1), Color(0xFF00838F)],
               ),
-              onTap: () =>
-                  Navigator.of(context).pushNamed('/asistente-supervisor'),
+              onTap: () => _pushConCortina(
+                color: const Color(0xFF00ACC1),
+                titulo: 'Asistente Supervisor',
+                screen: const AsistenteSupervisorScreen(),
+              ),
             ),
             Stack(
               clipBehavior: Clip.none,
@@ -503,9 +601,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                     onTap: () {
                       setState(() => _ayudaPendienteCount = 0);
-                      Navigator.of(context)
-                          .pushNamed('/solicitudes-ayuda')
-                          .then((_) => _cargarAyudaPendiente());
+                      _pushConCortina(
+                        color: const Color(0xFFE53935),
+                        titulo: 'Solicitudes de ayuda',
+                        screen: const SolicitudesAyudaScreen(),
+                      ).then((_) => _cargarAyudaPendiente());
                     },
                   ),
                 ),
@@ -539,7 +639,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFF5C6BC0), Color(0xFF3949AB)],
               ),
-              onTap: () => Navigator.of(context).pushNamed('/mi-actividad'),
+              onTap: () => _pushConCortina(
+                color: const Color(0xFF5C6BC0),
+                titulo: 'Mi actividad',
+                screen: const MiActividadScreen(),
+              ),
             ),
           ],
           if (_esAdmin)
@@ -550,10 +654,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               gradient: const LinearGradient(
                 colors: [Color(0xFFFF6B35), Color(0xFFE55A2B)],
               ),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => MonitorScreen(rutAdmin: _rutSesion),
-                ),
+              onTap: () => _pushConCortina(
+                color: const Color(0xFFFF6B35),
+                titulo: 'Monitor Sistema',
+                screen: MonitorScreen(rutAdmin: _rutSesion),
               ),
             ),
         ],
@@ -709,8 +813,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           action: SnackBarAction(
             label: 'Ver',
             textColor: Colors.white,
-            onPressed: () =>
-                Navigator.of(context).pushNamed('/solicitud-material'),
+            onPressed: () => _pushConCortina(
+              color: const Color(0xFF10B981),
+              titulo: 'Solicitud de Material',
+              screen: const SolicitudMaterialScreen(),
+            ),
           ),
         ));
         break;

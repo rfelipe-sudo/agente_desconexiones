@@ -42,6 +42,7 @@ import 'package:agente_desconexiones/screens/speed_meter_screen.dart';
 import 'package:agente_desconexiones/screens/fiber_microscope_screen.dart';
 import 'package:agente_desconexiones/screens/mis_actividades_screen.dart';
 import 'package:agente_desconexiones/screens/finalizar_orden_screen.dart';
+import 'package:agente_desconexiones/screens/app_tecnico_screen.dart';
 import 'package:agente_desconexiones/screens/solicitud_material_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_equipo_nyquist_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/solicitudes_ayuda_screen.dart';
@@ -530,6 +531,7 @@ class AgenteDesconexionesApp extends StatelessWidget {
           '/microscope': (context) => const FiberMicroscopeScreen(),
           '/mis-actividades': (context) => const MisActividadesScreen(),
           '/finalizar-orden': (context) => const FinalizarOrdenScreen(),
+          '/app-tecnico': (context) => const AppTecnicoScreen(),
           '/solicitud-material': (context) => const SolicitudMaterialScreen(),
           '/supervisor-equipo': (context) => const MiEquipoNyquistScreen(),
           '/asistente-supervisor': (context) => const AsistenteSupervisorScreen(),

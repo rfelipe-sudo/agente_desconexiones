@@ -103,6 +103,10 @@ dependencies:
   
   # Certificado WiFi (HTML v3 en WebView)
   webview_flutter: ^4.10.0
+  webview_flutter_android: ^4.3.0
+
+  # Descomprimir APK embebido (App Técnico www)
+  archive: ^4.0.7
 
   # Firma digital para transferencias
   signature: ^5.4.0

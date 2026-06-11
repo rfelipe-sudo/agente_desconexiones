@@ -1,13 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 /// Singleton que mantiene vivo el `WebViewController` de la pantalla
 /// "Mis Actividades" para que cuando el técnico salga a otra herramienta
 /// y vuelva, conserve el estado: cookies, página actual, scroll, formularios.
-///
-/// **Trade-off**: el WebView usa ~80–150 MB de RAM mientras está vivo.
-/// Si en celus low-end el sistema mata la app, retroceder al modo
-/// "recordar URL" y aceptar que se vuelva a hacer login al volver.
 class MisActividadesState extends ChangeNotifier {
   static final MisActividadesState instance = MisActividadesState._();
   MisActividadesState._();
@@ -22,16 +21,26 @@ class MisActividadesState extends ChangeNotifier {
   bool get loading => _loading;
   bool get hasError => _hasError;
 
-  /// Listener opcional para mensajes que el JS de autollenado emite por
-  /// el canal `creaboxLog`. Útil para mostrar un mini-overlay durante
-  /// pruebas y diagnosticar dónde se atasca el flujo.
   void Function(String msg)? onAutologinLog;
-
-  /// Listener para cambios de etapa del autologin. Valores posibles:
-  /// `'loading'` (en pantalla SSO/email/password), `'mfa'` (esperando
-  /// aprobación del Authenticator), `'kmsi'` (mantener sesión iniciada),
-  /// `'done'` (fuera de login).
   void Function(String stage)? onAutologinStage;
+
+  String autologinStage = 'idle';
+  bool entradaCancelada = false;
+
+  /// Espera sesión TOA lista (o interacción MFA/picker) para quitar cortina del Home.
+  Future<void> esperarCortinaHome({Duration timeout = const Duration(seconds: 90)}) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (entradaCancelada) return;
+      switch (autologinStage) {
+        case 'done':
+        case 'mfa':
+        case 'picker':
+          return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+  }
 
   /// Devuelve el controller si ya existe, o lo crea con la URL de inicio.
   WebViewController obtenerOCrear({
@@ -40,12 +49,16 @@ class MisActividadesState extends ChangeNotifier {
     void Function(String url)? onPageFinished,
     void Function(String url)? onUrlChange,
   }) {
+    _onPageStarted = onPageStarted;
+    _onPageFinished = onPageFinished;
+    _onUrlChange = onUrlChange;
+
     final existing = _controller;
     if (existing != null) {
-      // Controller ya vivo — devolvemos. Los callbacks viejos siguen vigentes
-      // pero podemos sobrescribir el log handler.
+      unawaited(_configurarPlataforma(existing));
       return existing;
     }
+
     final c = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF0A1628))
@@ -58,42 +71,69 @@ class MisActividadesState extends ChangeNotifier {
       ..addJavaScriptChannel(
         'creaboxStage',
         onMessageReceived: (msg) {
+          autologinStage = msg.message;
           onAutologinStage?.call(msg.message);
+          notifyListeners();
         },
-      )
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (url) {
-            _loading = true;
-            _hasError = false;
-            _ultimaUrl = url;
-            notifyListeners();
-            onPageStarted?.call(url);
-          },
-          onPageFinished: (url) {
-            _loading = false;
-            _ultimaUrl = url;
-            notifyListeners();
-            onPageFinished?.call(url);
-          },
-          onUrlChange: (change) {
-            final u = change.url;
-            if (u != null) {
-              _ultimaUrl = u;
-              onUrlChange?.call(u);
-            }
-          },
-          onWebResourceError: (_) {
-            _loading = false;
-            _hasError = true;
-            notifyListeners();
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(urlInicial));
+      );
+    _aplicarNavigationDelegate(c);
+    unawaited(_configurarPlataforma(c));
+    c.loadRequest(Uri.parse(urlInicial));
     _controller = c;
     _ultimaUrl = urlInicial;
     return c;
+  }
+
+  void Function(String url)? _onPageStarted;
+  void Function(String url)? _onPageFinished;
+  void Function(String url)? _onUrlChange;
+
+  void _aplicarNavigationDelegate(WebViewController c) {
+    c.setNavigationDelegate(
+      NavigationDelegate(
+        onPageStarted: (url) {
+          _loading = true;
+          _hasError = false;
+          _ultimaUrl = url;
+          notifyListeners();
+          _onPageStarted?.call(url);
+        },
+        onPageFinished: (url) {
+          _loading = false;
+          _hasError = false;
+          _ultimaUrl = url;
+          notifyListeners();
+          _onPageFinished?.call(url);
+        },
+        onUrlChange: (change) {
+          final u = change.url;
+          if (u != null) {
+            _ultimaUrl = u;
+            _onUrlChange?.call(u);
+          }
+        },
+        onWebResourceError: (error) {
+          if (error.isForMainFrame != true) return;
+          debugPrint(
+            '[MisActividades] error frame principal: '
+            '${error.url ?? "?"} → ${error.description}',
+          );
+          _loading = false;
+          _hasError = true;
+          notifyListeners();
+        },
+      ),
+    );
+  }
+
+  Future<void> _configurarPlataforma(WebViewController c) async {
+    final platform = c.platform;
+    if (platform is! AndroidWebViewController) return;
+    await platform.setMixedContentMode(MixedContentMode.alwaysAllow);
+    final cookies = AndroidWebViewCookieManager(
+      const PlatformWebViewCookieManagerCreationParams(),
+    );
+    await cookies.setAcceptThirdPartyCookies(platform, true);
   }
 
   void marcarLoading(bool v) {
@@ -110,7 +150,6 @@ class MisActividadesState extends ChangeNotifier {
     }
   }
 
-  /// Recargar manualmente.
   Future<void> recargar() async {
     final c = _controller;
     if (c != null) {
@@ -121,7 +160,6 @@ class MisActividadesState extends ChangeNotifier {
     }
   }
 
-  /// Si querés liberar memoria explícitamente (ej. logout), llamá esto.
   void destruir() {
     _controller = null;
     _ultimaUrl = null;
@@ -130,4 +168,3 @@ class MisActividadesState extends ChangeNotifier {
     notifyListeners();
   }
 }
-

@@ -988,6 +988,7 @@ class FcmService {
   /// Limpia flags FCM obsoletos al volver a primer plano (sin repetir sonido).
   Future<void> onAppResumed() async {
     try {
+      unawaited(syncFcmTokenDispositivo());
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getString(kPrefSolicitudMaterialPendiente) == 'true') {
         await prefs.remove(kPrefSolicitudMaterialPendiente);

@@ -464,6 +464,9 @@ class LogisticaService {
   static String? categorizar(String nombreErp, {String? sku}) {
     final n = nombreErp.toUpperCase();
 
+    // Accesorios / herramientas — no son material consumible en OT.
+    if (n.contains('PLANTILLA')) return null;
+
     if (n.contains('ROSETA'))                                      return 'Roseta';
     if (n.contains('JUMPER') || n.contains('LATIGUILLO'))          return 'Jumper';
     if (n.contains('AMARRA'))                                      return 'Amarras plásticas';

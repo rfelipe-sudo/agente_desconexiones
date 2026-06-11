@@ -196,6 +196,90 @@ class MaterialAlertaBackground {
     );
   }
 
+  /// Monitor traspasos y guías firmadas para bodeguero (foreground service / app minimizada).
+  @pragma('vm:entry-point')
+  static List<StreamSubscription<List<Map<String, dynamic>>>> iniciarMonitorBodeguero() {
+    final subs = <StreamSubscription<List<Map<String, dynamic>>>>[];
+    final traspasosAlerteados = <String>{};
+    final guiasAlerteadas = <String>{};
+    var traspasoInit = false;
+    var guiaInit = false;
+
+    debugPrint('📦 [BodBG] monitor bodeguero activo');
+
+    subs.add(
+      Supabase.instance.client
+          .from('traspasos_bodega')
+          .stream(primaryKey: ['id'])
+          .order('created_at', ascending: false)
+          .listen(
+        (rows) async {
+          if (!traspasoInit) {
+            for (final row in rows) {
+              final id = row['id']?.toString();
+              if (id != null) traspasosAlerteados.add(id);
+            }
+            traspasoInit = true;
+            debugPrint('📦 [BodBG] traspasos carga inicial ${rows.length}');
+            return;
+          }
+          for (final row in rows) {
+            final id = row['id']?.toString();
+            final estado = row['estado']?.toString() ?? '';
+            if (id == null || estado != 'pendiente') continue;
+            if (traspasosAlerteados.contains(id)) continue;
+            traspasosAlerteados.add(id);
+            final tipo = row['tipo_material']?.toString() ?? 'Material';
+            debugPrint('📦 [BodBG] ✅ traspaso $id → alerta');
+            await mostrar(
+              accion: 'traspaso_bodega',
+              title: 'Nuevo traspaso en bodega',
+              body: '$tipo — traspaso pendiente de aprobación',
+              data: {'accion': 'traspaso_bodega', 'traspaso_id': id},
+            );
+          }
+        },
+        onError: (Object e) => debugPrint('📦 [BodBG] error traspasos: $e'),
+      ),
+    );
+
+    subs.add(
+      Supabase.instance.client
+          .from('solicitudes_bodega')
+          .stream(primaryKey: ['id'])
+          .eq('estado', 'firmada')
+          .listen(
+        (rows) async {
+          if (!guiaInit) {
+            for (final row in rows) {
+              final id = row['id']?.toString();
+              if (id != null) guiasAlerteadas.add(id);
+            }
+            guiaInit = true;
+            debugPrint('📦 [BodBG] guías carga inicial ${rows.length}');
+            return;
+          }
+          for (final row in rows) {
+            final id = row['id']?.toString();
+            if (id == null || guiasAlerteadas.contains(id)) continue;
+            guiasAlerteadas.add(id);
+            final tipo = row['tipo_material']?.toString() ?? 'Material';
+            debugPrint('📦 [BodBG] ✅ guía firmada $id → alerta');
+            await mostrar(
+              accion: 'guia_firmada_bodega',
+              title: 'Guía firmada — revisar bodega',
+              body: '$tipo — nueva guía pendiente de confirmar',
+              data: {'accion': 'guia_firmada_bodega', 'guia_id': id},
+            );
+          }
+        },
+        onError: (Object e) => debugPrint('📦 [BodBG] error guías: $e'),
+      ),
+    );
+
+    return subs;
+  }
+
   /// Monitor Supabase en el isolate del foreground service (app minimizada).
   @pragma('vm:entry-point')
   static StreamSubscription<List<Map<String, dynamic>>>? iniciarMonitorSupabase(

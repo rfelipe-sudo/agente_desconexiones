@@ -103,6 +103,7 @@ class DeteccionCaminataService {
     // ── Monitor solicitudes material (app minimizada, foreground service activo) ──
     StreamSubscription<List<Map<String, dynamic>>>? matSub;
     StreamSubscription<List<Map<String, dynamic>>>? ayudaSupSub;
+    final List<StreamSubscription<List<Map<String, dynamic>>>> bodegaSubs = [];
     final rutTecnico = prefs.getString('rut_tecnico') ?? '';
     final rol = prefs.getString('user_rol') ??
         prefs.getString('rol_usuario') ??
@@ -123,6 +124,10 @@ class DeteccionCaminataService {
             MaterialAlertaBackground.iniciarMonitorAyudaSupervisor(rutSup);
         print('🆘 [AyudaBG] monitor supervisor activo rut=$rutSup');
       }
+    }
+    if (rol == 'bodeguero') {
+      bodegaSubs.addAll(MaterialAlertaBackground.iniciarMonitorBodeguero());
+      print('📦 [BodBG] monitor bodeguero activo (${bodegaSubs.length} streams)');
     }
 
     // ── Timer de ubicación cada 5 minutos ─────────────────────────────────
@@ -598,6 +603,10 @@ class DeteccionCaminataService {
       timerValidacion?.cancel();
       ubicacionTimer?.cancel();
       matSub?.cancel();
+      ayudaSupSub?.cancel();
+      for (final sub in bodegaSubs) {
+        sub.cancel();
+      }
       service.stopSelf();
     });
   }

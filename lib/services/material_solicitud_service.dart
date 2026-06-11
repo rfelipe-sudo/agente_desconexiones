@@ -457,7 +457,7 @@ class MaterialSolicitudService {
             if (folioKepler != null) 'folio_kepler': folioKepler,
           })
           .eq('solicitud_id', solicitudId)
-          .eq('estado', 'firmada');
+          .inFilter('estado', ['firmada', 'confirmada_bodega']);
 
       final ruts = [rutEntregador, rutSolicitante];
       final tokenRows = await _db

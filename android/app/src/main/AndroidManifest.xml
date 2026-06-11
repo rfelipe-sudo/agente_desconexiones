@@ -100,7 +100,7 @@
         <!-- Usamos tools:replace para agregar foregroundServiceType -->
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
-            android:foregroundServiceType="location"
+            android:foregroundServiceType="location|dataSync"
             android:exported="true"
             tools:replace="android:exported,android:foregroundServiceType" />
         
@@ -137,6 +137,14 @@
             android:exported="false"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+        <!-- App Técnico embebida: WebView nativo en proceso aparte (no ANR en Flutter) -->
+        <activity
+            android:name=".AppTecnicoActivity"
+            android:exported="false"
+            android:process=":apptecnico"
+            android:screenOrientation="portrait"
+            android:hardwareAccelerated="true"
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
     </application>
     <queries>
         <intent>

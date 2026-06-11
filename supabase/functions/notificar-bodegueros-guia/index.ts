@@ -1,7 +1,7 @@
 /**
  * Edge Function: notificar-bodegueros-guia
  *
- * FCM a bodegueros cuando una guía queda firmada (notification+data vía fcm-send).
+ * FCM a bodegueros cuando una guía queda firmada (data-only vía fcm-send → sonido BG).
  * Body: { guia_id: string }
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";

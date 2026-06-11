@@ -3,7 +3,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/produccion_service.dart';
 import '../services/reversa_service.dart';
-import '../services/krp_consumo_service.dart';
 import '../constants/app_constants.dart';
 import '../widgets/creaciones_loading.dart';
 import '../widgets/flota_card.dart';

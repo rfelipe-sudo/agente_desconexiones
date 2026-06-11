@@ -1,7 +1,7 @@
 /**
  * Edge Function: notificar-bodega-traspaso
  *
- * Envía FCM a todos los bodegueros con token registrado (notification+data vía fcm-send).
+ * Envía FCM a todos los bodegueros con token registrado (data-only vía fcm-send).
  * Usa service role (RLS no bloquea lectura de nomina_bodega).
  *
  * Body: { traspaso_id: string }

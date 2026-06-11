@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/krp_consumo_service.dart';
-import '../models/consumo_material.dart';
-import 'finalizar_orden_screen.dart';
 
-/// Pantalla de estadísticas de consumo de materiales
+import '../config/consumo_reglas.dart';
+import '../models/solicitud_material.dart';
+import '../services/logistica_service.dart';
+import '../services/recetas_consumo_service.dart';
+
+// Mismos tokens visuales que solicitud de material.
+const _bg = Color(0xFF0A1628);
+const _surface = Color(0xFF0D1B2A);
+const _accent = Color(0xFF00D9FF);
+const _border = Color(0xFF1E3A5F);
+const _textDim = Color(0xFF8FA8C8);
+const _green = Color(0xFF22C55E);
+const _orange = Color(0xFFF59E0B);
+
+/// Lista de OTs pendientes de consumo → selección de materiales.
 class ConsumoScreen extends StatefulWidget {
   const ConsumoScreen({super.key});
 
@@ -13,485 +24,1409 @@ class ConsumoScreen extends StatefulWidget {
 }
 
 class _ConsumoScreenState extends State<ConsumoScreen> {
-  // final _service = KrpConsumoService(); // PAUSADO
-  
+  final _service = RecetasConsumoService();
+  final _logistica = LogisticaService();
+
   bool _cargando = true;
-  String? _rutTecnico;
-  Map<String, dynamic> _estadisticas = {};
-  // List<ConsumoMaterial> _historial = []; // PAUSADO
-  List<Map<String, dynamic>> _historial = [];
+  String? _error;
+  List<OrdenPendienteConsumo> _ordenes = [];
+  List<Receta> _recetas = [];
+  int? _idTrabajador;
+  String? _rut;
+  TecnicoStock? _stock;
 
   @override
   void initState() {
     super.initState();
-    _cargarDatos();
+    _cargar();
   }
 
-  Future<void> _cargarDatos() async {
+  Future<void> _cargar() async {
+    setState(() {
+      _cargando = true;
+      _error = null;
+    });
+
     try {
-      setState(() => _cargando = true);
-
-      // Obtener RUT del técnico
       final prefs = await SharedPreferences.getInstance();
-      _rutTecnico = prefs.getString('rut_tecnico');
-
-      if (_rutTecnico != null) {
-        final now = DateTime.now();
-        
-        // CONSUMO PAUSADO - valores por defecto
-        final stats = <String, dynamic>{};
-        final historial = <Map<String, dynamic>>[];
-        
-        // // Cargar estadísticas del mes
-        // final stats = await _service.obtenerEstadisticasMes(
-        //   rutTecnico: _rutTecnico!,
-        //   mes: now.month,
-        //   anno: now.year,
-        // );
-
-        // // Cargar historial reciente
-        // final historial = await _service.obtenerHistorialConsumos(
-        //   rutTecnico: _rutTecnico!,
-        //   limit: 10,
-        // );
-
-        setState(() {
-          _estadisticas = stats;
-          _historial = historial;
-          _cargando = false;
-        });
-      } else {
-        setState(() => _cargando = false);
+      final rut = prefs.getString('rut_tecnico');
+      if (rut == null || rut.isEmpty) {
+        throw Exception('No hay RUT de técnico en sesión');
       }
+
+      final idTrab = await _service.resolverIdTrabajador(rut);
+      if (idTrab == null) {
+        throw Exception(
+            'No se encontró tu ID en KRP. Contacta a soporte CREA.');
+      }
+
+      final nombre = prefs.getString('nombre_tecnico');
+
+      final results = await Future.wait([
+        _service.getOtsPendienteConsumo(rut: rut),
+        _service.getRecetas(),
+        _logistica.fetchStockTecnico(rut, nombreDisplay: nombre),
+      ]);
+
+      if (!mounted) return;
+      final ordenes = results[0] as List<OrdenPendienteConsumo>;
+      setState(() {
+        _rut = rut;
+        _idTrabajador = idTrab;
+        _ordenes = ordenes;
+        _recetas = results[1] as List<Receta>;
+        _stock = results[2] as TecnicoStock?;
+        _cargando = false;
+      });
     } catch (e) {
-      print('❌ Error cargando datos de consumo: $e');
-      setState(() => _cargando = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error cargando datos: $e')),
-        );
-      }
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString().replaceFirst('Exception: ', '');
+        _cargando = false;
+      });
     }
+  }
+
+  void _abrirOrden(OrdenPendienteConsumo orden) {
+    if (_idTrabajador == null || _rut == null) return;
+
+    final materiales =
+        _service.materialesParaReceta(_recetas, orden.idReceta);
+    final nombreReceta =
+        _service.nombreReceta(_recetas, orden.idReceta) ?? 'Receta';
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ConsumoOrdenScreen(
+          orden: orden,
+          materiales: materiales,
+          nombreReceta: nombreReceta,
+          rut: _rut!,
+          idTrabajador: _idTrabajador!,
+          service: _service,
+          stockInicial: _stock,
+          onConsumoOk: _cargar,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final nombreMes = _getNombreMes(now.month);
-    final total = _estadisticas['total'] ?? 0;
-    final porTipo = _estadisticas['por_tipo'] as Map<String, dynamic>? ?? {};
-
     return Scaffold(
+      backgroundColor: _bg,
       appBar: AppBar(
-        title: const Text('Consumo Órdenes'),
-        backgroundColor: Colors.blue,
+        backgroundColor: _surface,
         foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text('Consumo de Materiales'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _cargarDatos,
-            tooltip: 'Actualizar',
+            onPressed: _cargando ? null : _cargar,
           ),
         ],
       ),
       body: _cargando
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _cargarDatos,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+          ? const Center(
+              child: CircularProgressIndicator(color: _accent, strokeWidth: 2))
+          : _error != null
+              ? _buildError()
+              : _buildListaOrdenes(),
+    );
+  }
+
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: _orange, size: 48),
+            const SizedBox(height: 16),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: _cargar,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Reintentar'),
+              style: FilledButton.styleFrom(backgroundColor: _accent),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildListaOrdenes() {
+    if (_ordenes.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.check_circle_outline,
+                  color: _green.withValues(alpha: 0.8), size: 56),
+              const SizedBox(height: 16),
+              const Text(
+                'Sin órdenes pendientes',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'No tienes OTs pendientes de consumo de material.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: _textDim, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      color: _accent,
+      backgroundColor: _surface,
+      onRefresh: _cargar,
+      child: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: _ordenes.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (_, i) => _buildCardOrden(_ordenes[i]),
+      ),
+    );
+  }
+
+  Widget _buildCardOrden(OrdenPendienteConsumo orden) {
+    final recetaNombre =
+        _service.nombreReceta(_recetas, orden.idReceta) ?? 'Receta ${orden.idReceta}';
+
+    return Material(
+      color: _surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: () => _abrirOrden(orden),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _orange.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: _orange.withValues(alpha: 0.4)),
+                    ),
+                    child: const Text(
+                      'PENDIENTE',
+                      style: TextStyle(
+                          color: _orange,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const Spacer(),
+                  const Icon(Icons.chevron_right, color: _textDim),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                orden.codigoExterno,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                orden.tipoActividad,
+                style: const TextStyle(color: _accent, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                recetaNombre,
+                style: const TextStyle(color: _textDim, fontSize: 12),
+              ),
+              if (orden.nombreCliente.isNotEmpty &&
+                  orden.nombreCliente != 'NaN') ...[
+                const SizedBox(height: 6),
+                Text(
+                  orden.nombreCliente,
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+              if (orden.direccionCliente.isNotEmpty &&
+                  orden.direccionCliente != 'NaN') ...[
+                const SizedBox(height: 4),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Header
-                    Card(
-                      elevation: 4,
-                      color: Colors.blue[700],
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          children: [
-                            Text(
-                              'Consumo $nombreMes ${now.year}',
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 16,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              '$total',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 48,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const Text(
-                              'Órdenes totales',
-                              style: TextStyle(color: Colors.white70),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    // Distribución por tipo
-                    const Text(
-                      'Distribución por Tipo',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 12),
-
-                    _buildTipoOrden(
-                      icon: Icons.add_circle,
-                      color: Colors.green,
-                      tipo: 'Altas',
-                      cantidad: '${porTipo['Alta'] ?? 0}',
-                      porcentaje: _calcularPorcentaje(porTipo['Alta'] ?? 0, total),
-                    ),
-                    _buildTipoOrden(
-                      icon: Icons.build,
-                      color: Colors.orange,
-                      tipo: 'Reparaciones',
-                      cantidad: '${porTipo['Reparación'] ?? 0}',
-                      porcentaje: _calcularPorcentaje(porTipo['Reparación'] ?? 0, total),
-                    ),
-                    _buildTipoOrden(
-                      icon: Icons.swap_horiz,
-                      color: Colors.purple,
-                      tipo: 'Migraciones',
-                      cantidad: '${porTipo['Migración'] ?? 0}',
-                      porcentaje: _calcularPorcentaje(porTipo['Migración'] ?? 0, total),
-                    ),
-                    _buildTipoOrden(
-                      icon: Icons.settings,
-                      color: Colors.blue,
-                      tipo: 'Modificaciones',
-                      cantidad: '${porTipo['Modificación'] ?? 0}',
-                      porcentaje: _calcularPorcentaje(porTipo['Modificación'] ?? 0, total),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // Historial reciente
-                    if (_historial.isNotEmpty) ...[
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Historial Reciente',
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              // TODO: Navegar a historial completo
-                            },
-                            child: const Text('Ver todo'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      ..._historial.take(5).map((consumo) => _buildHistorialCard(consumo)),
-                    ],
-
-                    const SizedBox(height: 24),
-
-                    // Botón para finalizar nueva orden
-                    ElevatedButton.icon(
-                      onPressed: _mostrarDialogoNuevaOrden,
-                      icon: const Icon(Icons.add),
-                      label: const Text('FINALIZAR NUEVA ORDEN'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        padding: const EdgeInsets.all(16),
+                    const Icon(Icons.location_on_outlined,
+                        color: _textDim, size: 14),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        '${orden.direccionCliente}${orden.comunaCliente.isNotEmpty && orden.comunaCliente != 'NaN' ? ', ${orden.comunaCliente}' : ''}',
+                        style: const TextStyle(color: _textDim, fontSize: 11),
                       ),
                     ),
                   ],
                 ),
-              ),
-            ),
-    );
-  }
-
-  Widget _buildTipoOrden({
-    required IconData icon,
-    required Color color,
-    required String tipo,
-    required String cantidad,
-    required String porcentaje,
-  }) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: color.withOpacity(0.2),
-          child: Icon(icon, color: color),
-        ),
-        title: Text(tipo),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              cantidad,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                porcentaje,
-                style: TextStyle(
-                  color: color,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-          ],
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildHistorialCard(Map<String, dynamic> consumo) { // ConsumoMaterial consumo) {
-    Color estadoColor = Colors.grey;
-    final esConfirmado = consumo['esConfirmado'] == true;
-    final esRechazado = consumo['esRechazado'] == true;
-    
-    if (esConfirmado) {
-      estadoColor = Colors.green;
-    } else if (esRechazado) {
-      estadoColor = Colors.red;
+// ── Detalle: selección de materiales (estilo ayuda de material) ──────────────
+
+class ConsumoOrdenScreen extends StatefulWidget {
+  final OrdenPendienteConsumo orden;
+  final List<RecetaMaterial> materiales;
+  final String nombreReceta;
+  final String rut;
+  final int idTrabajador;
+  final RecetasConsumoService service;
+  final TecnicoStock? stockInicial;
+  final VoidCallback onConsumoOk;
+
+  const ConsumoOrdenScreen({
+    super.key,
+    required this.orden,
+    required this.materiales,
+    required this.nombreReceta,
+    required this.rut,
+    required this.idTrabajador,
+    required this.service,
+    this.stockInicial,
+    required this.onConsumoOk,
+  });
+
+  @override
+  State<ConsumoOrdenScreen> createState() => _ConsumoOrdenScreenState();
+}
+
+class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
+  final _logistica = LogisticaService();
+
+  TecnicoStock? _stock;
+  bool _cargandoStock = true;
+  String? _errorStock;
+  final Map<int, int> _cantidadesPorMaterial = {};
+  final List<ItemStock> _seriesSeleccionadas = [];
+  bool _enviando = false;
+
+  late final Set<String> _categoriasReceta;
+  late final bool _recetaTieneSeriados;
+  late final Set<int> _idsReceta;
+
+  @override
+  void initState() {
+    super.initState();
+    _categoriasReceta = _calcularCategoriasReceta();
+    _recetaTieneSeriados = widget.materiales.any((m) => m.esSeriado);
+    _idsReceta = widget.materiales.map((m) => m.id).toSet();
+    _cargarStock();
+  }
+
+  Set<String> _calcularCategoriasReceta() {
+    final cats = <String>{};
+    for (final m in widget.materiales) {
+      final cat = m.categoriaConsumo();
+      if (cat != null) cats.add(cat);
+    }
+    return cats;
+  }
+
+  int _saldoCategoria(String categoria, {bool seriado = false}) {
+    final stock = _stock;
+    if (stock == null) return 0;
+
+    if (!seriado) {
+      return _itemsNoSeriados(categoria)
+          .fold<int>(0, (sum, i) => sum + i.cantidad.toInt());
     }
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: Icon(
-          _getIconoTipo(consumo['tipoOrden'] ?? ''),
-          color: _getColorTipo(consumo['tipoOrden'] ?? ''),
-        ),
-        title: Text('OT: ${consumo['ordenTrabajo'] ?? 'N/A'}'),
-        subtitle: Text(
-          '${consumo['tipoOrden'] ?? 'N/A'} • ${_formatearFecha(consumo['fechaConsumo'] ?? '')}\n'
-          '${consumo['totalMateriales'] ?? 0} materiales consumidos',
-        ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: estadoColor.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            (consumo['estado'] ?? 'PENDIENTE').toString().toUpperCase(),
-            style: TextStyle(
-              color: estadoColor,
-              fontWeight: FontWeight.bold,
-              fontSize: 10,
-            ),
-          ),
-        ),
-        onTap: () {
-          // TODO: Ver detalle del consumo
-        },
-      ),
-    );
+    final desdeMapa = stock.stock[categoria]?.toInt() ?? 0;
+    if (desdeMapa > 0) return desdeMapa;
+
+    var total = 0.0;
+    for (final i in stock.items) {
+      if (i.categoria != categoria) continue;
+      if (i.esSeriado) total += 1;
+    }
+    return total.toInt();
   }
 
-  void _mostrarDialogoNuevaOrden() {
-    final controllerOT = TextEditingController();
-    String tipoOrden = 'Alta';
+  /// IDs de la receta de esta OT que corresponden a [categoria].
+  Set<int> _idsRecetaParaCategoria(String categoria, {bool seriado = false}) {
+    final ids = <int>{};
+    for (final m in widget.materiales) {
+      if (m.esSeriado != seriado) continue;
+      if (m.categoriaConsumo() == categoria) ids.add(m.id);
+    }
+    return ids;
+  }
 
-    showDialog(
+  List<ItemStock> _filtrarPorReceta(
+    String categoria,
+    List<ItemStock> items, {
+    required bool seriado,
+  }) {
+    final idsReceta = _idsRecetaParaCategoria(categoria, seriado: seriado);
+    if (idsReceta.isEmpty) return const [];
+    return items.where((i) => idsReceta.contains(i.idMaterial)).toList();
+  }
+
+  Future<void> _cargarStock() async {
+    setState(() {
+      _cargandoStock = true;
+      _errorStock = null;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final nombre = prefs.getString('nombre_tecnico');
+      final stock = widget.stockInicial ??
+          await _logistica.fetchStockTecnico(
+            widget.rut,
+            nombreDisplay: nombre,
+          );
+      if (!mounted) return;
+      if (stock == null) {
+        setState(() {
+          _errorStock =
+              'No se encontró tu saldo en logística. Verifica tu RUT en nómina.';
+          _cargandoStock = false;
+        });
+        return;
+      }
+      setState(() {
+        _stock = stock;
+        _cargandoStock = false;
+        _prefillMinimosObligatorios();
+        _consolidarCantidadesNoSeriadas();
+      });
+      debugPrint(
+        '[Consumo] saldo ${stock.items.length} ítems, '
+        'categorías receta: $_categoriasReceta, '
+        'seriados receta: $_recetaTieneSeriados, '
+        'ids receta: $_idsReceta',
+      );
+      for (final m in widget.materiales) {
+        debugPrint(
+          '[Consumo] receta · id ${m.id} · ${m.nombre} · '
+          'cat ${m.categoriaConsumo()} · seriado ${m.esSeriado}',
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorStock = 'No se pudo cargar tu saldo';
+        _cargandoStock = false;
+      });
+    }
+  }
+
+  bool _mostrarCategoria(MaterialItem m) {
+    if (widget.materiales.isNotEmpty &&
+        !_categoriasReceta.contains(m.nombre)) {
+      return false;
+    }
+
+    if (m.esSeriado) {
+      if (_saldoCategoria(m.nombre, seriado: true) > 0) return true;
+      if (_categoriasReceta.contains(m.nombre)) return true;
+      final regla = consumoReglaPara(m.nombre, widget.orden.tipoActividad);
+      return regla?.maximo != null && regla!.maximo! > 0;
+    }
+
+    if (_saldoCategoria(m.nombre) > 0) return true;
+    if (_categoriasReceta.contains(m.nombre)) return true;
+    final regla = consumoReglaPara(m.nombre, widget.orden.tipoActividad);
+    return regla?.minimo != null && regla!.minimo! > 0;
+  }
+
+  List<MaterialItem> get _noSeriadosVisibles =>
+      kMateriales.where((m) => !m.esSeriado && _mostrarCategoria(m)).toList();
+
+  List<MaterialItem> get _seriadosVisibles =>
+      kMateriales.where((m) => m.esSeriado && _mostrarCategoria(m)).toList();
+
+  List<ItemStock> _itemsNoSeriados(String categoria) {
+    final stock = _stock;
+    if (stock == null) return const [];
+    final items = stock.items
+        .where((i) => !i.esSeriado && i.categoria == categoria)
+        .toList();
+    return _filtrarPorReceta(categoria, items, seriado: false);
+  }
+
+  /// Ítem no seriado con mayor saldo → único código a rebajar por categoría.
+  ItemStock? _itemSaldoParaCategoria(String categoria) {
+    final items = _itemsNoSeriados(categoria);
+    if (items.isEmpty) return null;
+    items.sort((a, b) => b.cantidad.compareTo(a.cantidad));
+    return items.first;
+  }
+
+  void _consolidarCantidadesNoSeriadas() {
+    for (final m in _noSeriadosVisibles) {
+      final principal = _itemSaldoParaCategoria(m.nombre);
+      if (principal == null) continue;
+      var total = 0;
+      for (final item in _itemsNoSeriados(m.nombre)) {
+        total += _cantidadesPorMaterial[item.idMaterial] ?? 0;
+        if (item.idMaterial != principal.idMaterial) {
+          _cantidadesPorMaterial.remove(item.idMaterial);
+        }
+      }
+      if (total > 0) {
+        _cantidadesPorMaterial[principal.idMaterial] = total;
+      }
+    }
+  }
+
+  List<ItemStock> _itemsSeriados(String categoria) {
+    final stock = _stock;
+    if (stock == null) return const [];
+    final usadas = _seriesSeleccionadas.map((s) => s.serie).toSet();
+    final items = stock.items
+        .where((i) =>
+            i.esSeriado &&
+            i.categoria == categoria &&
+            !usadas.contains(i.serie))
+        .toList();
+    return _filtrarPorReceta(categoria, items, seriado: true);
+  }
+
+  int _totalCategoria(String categoria) {
+    final stock = _stock;
+    if (stock == null) return 0;
+    var total = 0;
+    for (final item in stock.items) {
+      if (!item.esSeriado && item.categoria == categoria) {
+        total += _cantidadesPorMaterial[item.idMaterial] ?? 0;
+      }
+    }
+    return total;
+  }
+
+  int get _totalOnt => _seriesSeleccionadas
+      .where((s) => kConsumoCategoriasOnt.contains(s.categoria))
+      .length;
+
+  int get _totalDeco => _seriesSeleccionadas
+      .where((s) => kConsumoCategoriasDeco.contains(s.categoria))
+      .length;
+
+  int get _totalExtensor => _seriesSeleccionadas
+      .where((s) => s.categoria == kConsumoCategoriaExtensor)
+      .length;
+
+  int get _totalDrop {
+    var total = 0;
+    for (final cat in kConsumoCategoriasDrop) {
+      total += _totalCategoria(cat);
+    }
+    return total;
+  }
+
+  String? get _dropSeleccionado {
+    for (final cat in kConsumoCategoriasDrop) {
+      if (_totalCategoria(cat) > 0) return cat;
+    }
+    return null;
+  }
+
+  String? get _marcaDecoBloqueada {
+    for (final s in _seriesSeleccionadas) {
+      if (kConsumoCategoriasDeco.contains(s.categoria)) return s.categoria;
+    }
+    return null;
+  }
+
+  bool _categoriaSeriadaDeshabilitada(String categoria) {
+    if (kConsumoCategoriasOnt.contains(categoria)) {
+      if (_totalOnt >= kConsumoMaxOnt) {
+        return !_seriesSeleccionadas.any((s) => s.categoria == categoria);
+      }
+      if (_totalOnt > 0) {
+        return !_seriesSeleccionadas.any((s) => s.categoria == categoria);
+      }
+    }
+    if (kConsumoCategoriasDeco.contains(categoria)) {
+      final bloqueada = _marcaDecoBloqueada;
+      if (bloqueada != null && bloqueada != categoria) return true;
+      if (_totalDeco >= kConsumoMaxDeco &&
+          !_seriesSeleccionadas.any((s) => s.categoria == categoria)) {
+        return true;
+      }
+    }
+    if (categoria == kConsumoCategoriaExtensor &&
+        _totalExtensor >= kConsumoMaxExtensor &&
+        !_seriesSeleccionadas.any((s) => s.categoria == categoria)) {
+      return true;
+    }
+    return false;
+  }
+
+  void _prefillMinimosObligatorios() {
+    if (!consumoExigirMinimos(widget.orden.tipoActividad)) return;
+    for (final m in _noSeriadosVisibles) {
+      final min = consumoMinimo(m.nombre, widget.orden.tipoActividad);
+      if (min == null || min <= 0) continue;
+      if (_totalCategoria(m.nombre) >= min) continue;
+      final item = _itemSaldoParaCategoria(m.nombre);
+      if (item == null) continue;
+      final maxItem = item.cantidad.toInt();
+      _cantidadesPorMaterial[item.idMaterial] =
+          min.clamp(0, maxItem > 0 ? maxItem : min);
+    }
+  }
+
+  Future<void> _mostrarAlertaMaximo(int maximo, String categoria) async {
+    await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Finalizar Nueva Orden'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: _border),
+        ),
+        title: const Row(
           children: [
-            TextField(
-              controller: controllerOT,
-              decoration: const InputDecoration(
-                labelText: 'Número de OT',
-                hintText: 'Ej: 1-3EU0KT95',
-                border: OutlineInputBorder(),
+            Icon(Icons.warning_amber_rounded, color: _orange),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Límite de consumo',
+                style: TextStyle(color: Colors.white, fontSize: 16),
               ),
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: tipoOrden,
-              decoration: const InputDecoration(
-                labelText: 'Tipo de Orden',
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'Alta', child: Text('Alta')),
-                DropdownMenuItem(value: 'Migración', child: Text('Migración')),
-                DropdownMenuItem(value: 'Reparación', child: Text('Reparación')),
-                DropdownMenuItem(value: 'Modificación', child: Text('Modificación')),
-              ],
-              onChanged: (value) {
-                if (value != null) tipoOrden = value;
-              },
             ),
           ],
         ),
+        content: Text(
+          'ACTIVIDAD SOLO PERMITE CONSUMIR UN MAXIMO DE $maximo ${categoria.toUpperCase()}',
+          style: const TextStyle(color: Colors.white70, fontSize: 14),
+        ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCELAR'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (controllerOT.text.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Ingresa el número de OT')),
-                );
-                return;
-              }
-
-              Navigator.pop(context);
-
-              // CONSUMO PAUSADO - Comentar navegación a FinalizarOrdenScreen
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Funcionalidad de consumo pausada temporalmente')),
-              );
-              
-              // // Navegar a pantalla de finalización
-              // final resultado = await Navigator.push<bool>(
-              //   context,
-              //   MaterialPageRoute(
-              //     builder: (_) => FinalizarOrdenScreen(
-              //       codigoOrden: controllerOT.text,
-              //       tipoOrden: tipoOrden,
-              //       rutTecnico: _rutTecnico ?? '',
-              //     ),
-              //   ),
-              // );
-
-              // // Si se finalizó exitosamente, recargar datos
-              // if (resultado == true) {
-              //   _cargarDatos();
-              // }
-            },
-            child: const Text('CONTINUAR'),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: FilledButton.styleFrom(backgroundColor: _accent),
+            child: const Text('ACEPTAR'),
           ),
         ],
       ),
     );
   }
 
-  String _calcularPorcentaje(int cantidad, int total) {
-    if (total == 0) return '0%';
-    final porcentaje = (cantidad / total * 100).toStringAsFixed(0);
-    return '$porcentaje%';
+  Future<void> _mostrarAlertaSoloUnDrop(String dropActual) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: _border),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: _orange),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Límite de consumo',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'ACTIVIDAD SOLO PERMITE CONSUMIR UN DROP. '
+          'YA SELECCIONASTE ${dropActual.toUpperCase()}',
+          style: const TextStyle(color: Colors.white70, fontSize: 14),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: FilledButton.styleFrom(backgroundColor: _accent),
+            child: const Text('ACEPTAR'),
+          ),
+        ],
+      ),
+    );
   }
 
-  IconData _getIconoTipo(String tipo) {
-    switch (tipo.toLowerCase()) {
-      case 'alta':
-      case 'instalacion':
-        return Icons.add_circle;
-      case 'reparación':
-      case 'reparacion':
-        return Icons.build;
-      case 'migración':
-      case 'migracion':
-        return Icons.swap_horiz;
-      case 'modificación':
-      case 'modificacion':
-        return Icons.settings;
-      default:
-        return Icons.work;
+  int _maxSeriado(String categoria) {
+    if (kConsumoCategoriasOnt.contains(categoria)) return kConsumoMaxOnt;
+    if (kConsumoCategoriasDeco.contains(categoria)) return kConsumoMaxDeco;
+    return kConsumoMaxExtensor;
+  }
+
+  Future<void> _ajustarCantidad(String categoria, int delta) async {
+    final item = _itemSaldoParaCategoria(categoria);
+    if (item == null) return;
+
+    final actual = _cantidadesPorMaterial[item.idMaterial] ?? 0;
+    final maxCat = consumoMaximo(categoria, widget.orden.tipoActividad);
+    final totalCat = _totalCategoria(categoria);
+    final maxItem = item.cantidad.toInt();
+
+    if (delta > 0 && kConsumoCategoriasDrop.contains(categoria)) {
+      final dropActual = _dropSeleccionado;
+      if (dropActual != null &&
+          dropActual != categoria &&
+          _totalDrop >= kConsumoMaxDropTotal) {
+        await _mostrarAlertaSoloUnDrop(dropActual);
+        return;
+      }
+    }
+
+    if (delta > 0 && maxCat != null && totalCat >= maxCat) {
+      await _mostrarAlertaMaximo(maxCat, categoria);
+      return;
+    }
+
+    var nuevo = actual + delta;
+    if (nuevo < 0) nuevo = 0;
+    if (nuevo > maxItem) nuevo = maxItem;
+    if (maxCat != null && nuevo > maxCat) {
+      await _mostrarAlertaMaximo(maxCat, categoria);
+      nuevo = maxCat;
+    }
+
+    setState(() {
+      for (final other in _itemsNoSeriados(categoria)) {
+        if (other.idMaterial != item.idMaterial) {
+          _cantidadesPorMaterial.remove(other.idMaterial);
+        }
+      }
+      if (nuevo == 0) {
+        _cantidadesPorMaterial.remove(item.idMaterial);
+      } else {
+        _cantidadesPorMaterial[item.idMaterial] = nuevo;
+      }
+    });
+  }
+
+  void _agregarSerie(ItemStock? item) {
+    if (item == null || item.serie == null) return;
+    setState(() => _seriesSeleccionadas.add(item));
+  }
+
+  void _quitarSerie(ItemStock item) {
+    setState(() => _seriesSeleccionadas.remove(item));
+  }
+
+  String? _validarMaterialesConReceta(
+    List<List<dynamic>> noSeriados,
+    List<List<dynamic>> seriados,
+  ) {
+    if (widget.materiales.isEmpty) return null;
+
+    String etiqueta(int idMaterial, {String? serie}) {
+      for (final item in _stock?.items ?? const <ItemStock>[]) {
+        if (item.idMaterial == idMaterial) {
+          if (serie != null) return '${item.nombre} · $serie';
+          return item.nombre;
+        }
+      }
+      for (final m in widget.materiales) {
+        if (m.id == idMaterial) return m.nombre;
+      }
+      return 'Material id $idMaterial';
+    }
+
+    final invalidos = <String>[];
+    for (final row in noSeriados) {
+      final id = row[0] as int;
+      if (!_idsReceta.contains(id)) {
+        invalidos.add('${etiqueta(id)} (id $id, cant ${row[1]})');
+      }
+    }
+    for (final row in seriados) {
+      final id = row[0] as int;
+      if (!_idsReceta.contains(id)) {
+        invalidos.add('${etiqueta(id, serie: row[1]?.toString())} (id $id)');
+      }
+    }
+
+    if (invalidos.isEmpty) return null;
+
+    final permitidos = widget.materiales
+        .map((m) => '• ${m.nombre} (id ${m.id})')
+        .join('\n');
+
+    return 'Estos materiales no pertenecen a la receta '
+        '"${widget.nombreReceta}":\n'
+        '${invalidos.map((e) => '• $e').join('\n')}\n\n'
+        'Solo se pueden enviar materiales de la receta:\n'
+        '$permitidos';
+  }
+
+  List<List<dynamic>> _filtrarPayloadReceta(List<List<dynamic>> filas) {
+    if (widget.materiales.isEmpty) return filas;
+    return filas.where((r) => _idsReceta.contains(r[0] as int)).toList();
+  }
+
+  Future<void> _enviar() async {
+    final noSeriados = <List<dynamic>>[];
+    for (final entry in _cantidadesPorMaterial.entries) {
+      if (entry.value > 0) noSeriados.add([entry.key, entry.value]);
+    }
+    final seriados = _seriesSeleccionadas
+        .map((s) => [s.idMaterial, s.serie!] as List<dynamic>)
+        .toList();
+
+    if (noSeriados.isEmpty && seriados.isEmpty) {
+      await _mostrarBloqueoConsumo(
+        'Sin materiales seleccionados',
+        'Indica cantidades en los materiales no seriados o selecciona '
+        'series de tu saldo antes de registrar.',
+      );
+      return;
+    }
+
+    final totales = <String, int>{};
+    for (final m in _noSeriadosVisibles) {
+      final t = _totalCategoria(m.nombre);
+      if (t > 0) totales[m.nombre] = t;
+    }
+
+    final err = validarConsumoCantidades(
+      tipoActividad: widget.orden.tipoActividad,
+      totalPorCategoria: totales,
+      totalOnt: _totalOnt,
+      totalDeco: _totalDeco,
+      marcaDecoSeleccionada: _marcaDecoBloqueada,
+      totalExtensor: _totalExtensor,
+      limitarCategorias:
+          widget.materiales.isNotEmpty ? _categoriasReceta : null,
+    );
+    if (err != null) {
+      await _mostrarBloqueoConsumo(
+        'No cumple las reglas de consumo',
+        err,
+      );
+      return;
+    }
+
+    final errReceta = _validarMaterialesConReceta(noSeriados, seriados);
+    if (errReceta != null) {
+      await _mostrarBloqueoConsumo(
+        'Materiales fuera de la receta',
+        errReceta,
+      );
+      return;
+    }
+
+    final noSeriadosEnvio = _filtrarPayloadReceta(noSeriados);
+    final seriadosEnvio = _filtrarPayloadReceta(seriados);
+
+    if (noSeriadosEnvio.isEmpty && seriadosEnvio.isEmpty) {
+      await _mostrarBloqueoConsumo(
+        'Sin materiales de la receta',
+        'Selecciona materiales que coincidan con la receta '
+        '"${widget.nombreReceta}" y que tengas en tu saldo.',
+      );
+      return;
+    }
+
+    final idTrabajador = widget.orden.idTrabajador > 0
+        ? widget.orden.idTrabajador
+        : widget.idTrabajador;
+
+    setState(() => _enviando = true);
+
+    ConsumoResult result;
+    try {
+      result = await widget.service.submitConsumo(
+        ordenDeTrabajo: widget.orden.codigoExterno,
+        idTrabajador: idTrabajador,
+        noSeriados: noSeriadosEnvio,
+        seriados: seriadosEnvio,
+      );
+    } catch (e) {
+      result = ConsumoResult(exito: false, mensaje: e.toString());
+    }
+
+    if (!mounted) return;
+    setState(() => _enviando = false);
+
+    if (result.exito) {
+      widget.onConsumoOk();
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: _surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: _border),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.check_circle, color: _green),
+              SizedBox(width: 8),
+              Text('Consumo registrado',
+                  style: TextStyle(color: Colors.white, fontSize: 16)),
+            ],
+          ),
+          content: Text(
+            'OT ${widget.orden.codigoExterno}\n'
+            'Material descontado correctamente.',
+            style: const TextStyle(color: _textDim),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.pop(context);
+              },
+              style: FilledButton.styleFrom(backgroundColor: _green),
+              child: const Text('ACEPTAR'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      await _mostrarBloqueoConsumo(
+        'No se pudo registrar el consumo',
+        '${result.mensaje}\n\n'
+        'OT: ${widget.orden.codigoExterno}\n'
+        'Técnico KRP: $idTrabajador\n'
+        'Ítems no seriados: ${noSeriadosEnvio.length} · '
+        'Seriados: ${seriadosEnvio.length}',
+      );
     }
   }
 
-  Color _getColorTipo(String tipo) {
-    switch (tipo.toLowerCase()) {
-      case 'alta':
-      case 'instalacion':
-        return Colors.green;
-      case 'reparación':
-      case 'reparacion':
-        return Colors.orange;
-      case 'migración':
-      case 'migracion':
-        return Colors.purple;
-      case 'modificación':
-      case 'modificacion':
-        return Colors.blue;
-      default:
-        return Colors.grey;
+  Future<void> _mostrarBloqueoConsumo(String titulo, String detalle) async {
+    debugPrint('[Consumo] bloqueado — $titulo: $detalle');
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: _border),
+        ),
+        title: Row(
+          children: [
+            const Icon(Icons.info_outline, color: _orange),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                titulo,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Text(
+            detalle,
+            style: const TextStyle(color: _textDim, fontSize: 13),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: FilledButton.styleFrom(backgroundColor: _accent),
+            child: const Text('ENTENDIDO'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _hintRegla(String categoria) {
+    final min = consumoMinimo(categoria, widget.orden.tipoActividad);
+    final max = consumoMaximo(categoria, widget.orden.tipoActividad);
+    if (min != null && max != null) return 'Mín $min · Máx $max';
+    if (min != null) return 'Mín $min';
+    if (max != null) return 'Máx $max';
+    return '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bg,
+      appBar: AppBar(
+        backgroundColor: _surface,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: Text(
+          widget.orden.codigoExterno,
+          style: const TextStyle(fontSize: 15),
+        ),
+      ),
+      body: _cargandoStock
+          ? const Center(
+              child: CircularProgressIndicator(color: _accent, strokeWidth: 2))
+          : _errorStock != null
+              ? _buildErrorStock()
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildHeader(),
+                    Expanded(child: _buildContenido()),
+                  ],
+                ),
+    );
+  }
+
+  Widget _buildErrorStock() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.inventory_2_outlined, color: _orange, size: 48),
+            const SizedBox(height: 12),
+            Text(_errorStock!,
+                style: const TextStyle(color: Colors.white70)),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _cargarStock,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Reintentar'),
+              style: FilledButton.styleFrom(backgroundColor: _accent),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    final exigirMin = consumoExigirMinimos(widget.orden.tipoActividad);
+    final hayReceta = widget.materiales.isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      color: _surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.orden.tipoActividad,
+              style: const TextStyle(color: _accent, fontSize: 13)),
+          const SizedBox(height: 4),
+          Text(widget.nombreReceta,
+              style: const TextStyle(color: _textDim, fontSize: 12)),
+          if (hayReceta) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Solo materiales de la receta "${widget.nombreReceta}" '
+              '(${widget.materiales.length} ítems).',
+              style: TextStyle(
+                  color: _accent.withValues(alpha: 0.85), fontSize: 11),
+            ),
+          ],
+          if (exigirMin && hayReceta) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Los mínimos aplican solo a categorías incluidas en esta receta.',
+              style: TextStyle(
+                  color: _orange.withValues(alpha: 0.9), fontSize: 11),
+            ),
+          ] else if (exigirMin) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Los mínimos son obligatorios para esta actividad.',
+              style: TextStyle(
+                  color: _orange.withValues(alpha: 0.9), fontSize: 11),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContenido() {
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        16,
+        16,
+        16 + MediaQuery.paddingOf(context).bottom,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _border),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(9),
+              child: Column(
+                children: [
+                  if (_noSeriadosVisibles.isNotEmpty)
+                    _grupoCategorias('No seriados', _noSeriadosVisibles),
+                  if (_noSeriadosVisibles.isNotEmpty &&
+                      _seriadosVisibles.isNotEmpty)
+                    const Divider(height: 1, color: _border),
+                  if (_seriadosVisibles.isNotEmpty)
+                    _grupoCategorias('Seriados', _seriadosVisibles),
+                  if (_noSeriadosVisibles.isEmpty &&
+                      _seriadosVisibles.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        widget.materiales.isEmpty
+                            ? 'La receta de esta OT no trajo materiales desde KRP.'
+                            : 'No hay materiales de la receta con saldo disponible.',
+                        style: const TextStyle(color: _textDim, fontSize: 12),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          _buildBotonEnviar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _grupoCategorias(String titulo, List<MaterialItem> items) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+          child: Text(
+            titulo.toUpperCase(),
+            style: const TextStyle(
+              color: _textDim,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ),
+        ...items.map(
+          (m) => m.esSeriado ? _buildFilaSeriada(m) : _buildFilaNoSeriada(m),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFilaNoSeriada(MaterialItem m) {
+    final item = _itemSaldoParaCategoria(m.nombre);
+    final saldo = _saldoCategoria(m.nombre);
+    final hint = _hintRegla(m.nombre);
+    final qty = item != null ? (_cantidadesPorMaterial[item.idMaterial] ?? 0) : 0;
+    final enUso = qty > 0;
+
+    if (item == null) {
+      return _filaBase(
+        m: m,
+        enUso: enUso,
+        hint: hint,
+        saldo: saldo,
+        trailing: const Text('—', style: TextStyle(color: _textDim, fontSize: 12)),
+      );
     }
+
+    return _filaBase(
+      m: m,
+      enUso: enUso,
+      hint: hint,
+      saldo: saldo,
+      trailing: _stepperInline(m.nombre),
+    );
   }
 
-  String _formatearFecha(DateTime fecha) {
-    final dia = fecha.day.toString().padLeft(2, '0');
-    final mes = _getNombreMesCorto(fecha.month);
-    final hora = fecha.hour.toString().padLeft(2, '0');
-    final minuto = fecha.minute.toString().padLeft(2, '0');
-    return '$dia $mes $hora:$minuto';
+  Widget _buildFilaSeriada(MaterialItem m) {
+    final deshabilitado = _categoriaSeriadaDeshabilitada(m.nombre);
+    final saldo = _saldoCategoria(m.nombre, seriado: true);
+    final hint = _hintRegla(m.nombre);
+    final series =
+        _seriesSeleccionadas.where((s) => s.categoria == m.nombre).toList();
+    final disponibles = _itemsSeriados(m.nombre);
+    final maxPermitido = _maxSeriado(m.nombre);
+    final puedeAgregar = !deshabilitado &&
+        series.length < maxPermitido &&
+        disponibles.isNotEmpty;
+
+    return Opacity(
+      opacity: deshabilitado ? 0.4 : 1,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: series.isNotEmpty ? _accent : Colors.transparent,
+              width: 3,
+            ),
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(Icons.memory_outlined,
+                color: series.isNotEmpty ? _accent : _textDim, size: 16),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    m.nombre,
+                    style: TextStyle(
+                      color: series.isNotEmpty ? Colors.white : _textDim,
+                      fontSize: 13,
+                      fontWeight:
+                          series.isNotEmpty ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  if (hint.isNotEmpty)
+                    Text(hint,
+                        style: const TextStyle(color: _textDim, fontSize: 10)),
+                  Text(
+                    saldo > 0 ? 'Saldo: $saldo' : 'Sin saldo',
+                    style: TextStyle(
+                      color: saldo > 0 ? _green : _orange,
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  ...series.map(
+                    (s) => InputChip(
+                      label: Text(
+                        s.serie ?? '',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          color: Colors.white,
+                        ),
+                      ),
+                      deleteIconColor: _orange,
+                      backgroundColor: const Color(0xFF0A1628),
+                      side: BorderSide(color: _green.withValues(alpha: 0.4)),
+                      onDeleted: () => _quitarSerie(s),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                  if (puedeAgregar) _dropdownSerie(m.nombre, disponibles),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  String _getNombreMes(int mes) {
-    const meses = [
-      '',
-      'Enero',
-      'Febrero',
-      'Marzo',
-      'Abril',
-      'Mayo',
-      'Junio',
-      'Julio',
-      'Agosto',
-      'Septiembre',
-      'Octubre',
-      'Noviembre',
-      'Diciembre'
-    ];
-    return meses[mes];
+  Widget _dropdownSerie(String categoria, List<ItemStock> disponibles) {
+    return SizedBox(
+      width: 118,
+      height: 32,
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<ItemStock>(
+          isExpanded: true,
+          isDense: true,
+          hint: const Text('Serie', style: TextStyle(color: _textDim, fontSize: 11)),
+          dropdownColor: _surface,
+          style: const TextStyle(color: Colors.white, fontSize: 10),
+          items: disponibles
+              .map((i) => DropdownMenuItem(
+                    value: i,
+                    child: Text(
+                      i.serie ?? '',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontFamily: 'monospace'),
+                    ),
+                  ))
+              .toList(),
+          onChanged: deshabilitadoSerie(categoria)
+              ? null
+              : (v) => _agregarSerie(v),
+        ),
+      ),
+    );
   }
 
-  String _getNombreMesCorto(int mes) {
-    const meses = [
-      '',
-      'Ene',
-      'Feb',
-      'Mar',
-      'Abr',
-      'May',
-      'Jun',
-      'Jul',
-      'Ago',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dic'
-    ];
-    return meses[mes];
+  bool deshabilitadoSerie(String categoria) =>
+      _categoriaSeriadaDeshabilitada(categoria);
+
+  Widget _filaBase({
+    required MaterialItem m,
+    required bool enUso,
+    required String hint,
+    required int saldo,
+    required Widget trailing,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(
+            color: enUso ? _accent : Colors.transparent,
+            width: 3,
+          ),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(
+            m.esSeriado ? Icons.memory_outlined : Icons.cable_outlined,
+            color: enUso ? _accent : _textDim,
+            size: 16,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  m.nombre,
+                  style: TextStyle(
+                    color: enUso ? Colors.white : _textDim,
+                    fontSize: 13,
+                    fontWeight: enUso ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+                if (hint.isNotEmpty)
+                  Text(hint,
+                      style: const TextStyle(color: _textDim, fontSize: 10)),
+                Text(
+                  saldo > 0 ? 'Saldo: $saldo' : 'Sin saldo',
+                  style: TextStyle(
+                    color: saldo > 0 ? _green : _orange,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          trailing,
+        ],
+      ),
+    );
+  }
+
+  Widget _stepperInline(String categoria) {
+    final item = _itemSaldoParaCategoria(categoria);
+    final qty = item != null ? (_cantidadesPorMaterial[item.idMaterial] ?? 0) : 0;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _btnCantidad(Icons.remove, () => _ajustarCantidad(categoria, -1),
+            pad: 8, iconSize: 18),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            '$qty',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
+          ),
+        ),
+        _btnCantidad(Icons.add, () => _ajustarCantidad(categoria, 1),
+            pad: 8, iconSize: 18),
+      ],
+    );
+  }
+
+  Widget _badge(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(text,
+          style: TextStyle(
+              color: color, fontWeight: FontWeight.bold, fontSize: 12)),
+    );
+  }
+
+  Widget _buildBotonEnviar() {
+    return SafeArea(
+      top: false,
+      child: FilledButton.icon(
+        onPressed: _enviando ? null : _enviar,
+        icon: _enviando
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
+              )
+            : const Icon(Icons.send),
+        label: Text(_enviando ? 'Registrando...' : 'REGISTRAR CONSUMO'),
+        style: FilledButton.styleFrom(
+          backgroundColor: _green,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          minimumSize: const Size(double.infinity, 52),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      ),
+    );
+  }
+
+  Widget _btnCantidad(IconData icon, VoidCallback onTap,
+      {double pad = 8, double iconSize = 18}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: EdgeInsets.all(pad),
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: _border),
+        ),
+        child: Icon(icon, color: _accent, size: iconSize),
+      ),
+    );
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
 

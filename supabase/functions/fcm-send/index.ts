@@ -1,10 +1,9 @@
 /**
  * Edge Function: fcm-send
  *
- * Envía mensajes FCM v1. Alertas técnicas (material, flota): data_only para
- * onMessageReceived + Kotlin. Bodeguero (traspaso_bodega, guia_firmada_bodega):
- * siempre notification+data con canal mat_alertas_7 — respaldo si Android no
- * invoca onMessageReceived en background.
+ * Envía mensajes FCM v1. Alertas técnicas y bodeguero: data_only para
+ * onMessageReceived + Kotlin (sonido USAGE_ALARM en 2º plano / app cerrada).
+ * Comunicados / ayuda supervisor: notification+data con canal nativo como respaldo.
  *
  * Acepta `token` (uno) o `tokens` (array) para envío masivo.
  *
@@ -204,8 +203,10 @@ serve(async (req) => {
       body.skip_notification === true ||
       body.dataOnly === true;
 
-    // Bodeguero / comunicados / ayuda supervisor: notification + data para que
-    // Android muestre notificación con sonido aunque no invoque onMessageReceived.
+    // Bodeguero / comunicados / ayuda supervisor: notification+data.
+    // Android entrega notificaciones aunque el proceso esté muerto (battery opt).
+    // El sonido lo pone el canal mat_alertas_7 (USAGE_ALARM, alerta_urgente).
+    // data-only solo llega si el proceso está vivo → no sirve para app cerrada.
     const esAlertaBodega =
       accion === "traspaso_bodega" || accion === "guia_firmada_bodega";
     const esAlertaComunicado = accion === "comunicado_creabox";
