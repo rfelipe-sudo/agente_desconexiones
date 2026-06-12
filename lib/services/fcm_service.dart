@@ -144,8 +144,18 @@ Future<void> _aplicarAccion(Map<String, dynamic> data) async {
   final prefs = await SharedPreferences.getInstance();
   if (accion == 'bloquear_card') {
     await prefs.setString(kPrefAlertaBloqueoMisActividades, 'true');
+    final titulo = data['title']?.toString();
+    final desc = data['descripcion']?.toString() ?? data['body']?.toString();
+    if (titulo != null && titulo.isNotEmpty) {
+      await prefs.setString(kPrefAlertaBloqueoTitulo, titulo);
+    }
+    if (desc != null && desc.isNotEmpty) {
+      await prefs.setString(kPrefAlertaBloqueoDescripcion, desc);
+    }
   } else if (accion == 'desbloquear_card') {
     await prefs.setString(kPrefAlertaBloqueoMisActividades, 'false');
+    await prefs.remove(kPrefAlertaBloqueoTitulo);
+    await prefs.remove(kPrefAlertaBloqueoDescripcion);
   } else if (accion == 'solicitud_material') {
     await prefs.setString(kPrefSolicitudMaterialPendiente, 'true');
   } else if (accion == 'guia_firmada_bodega') {
