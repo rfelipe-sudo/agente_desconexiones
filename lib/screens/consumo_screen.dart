@@ -339,14 +339,12 @@ class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
 
   late final Set<String> _categoriasReceta;
   late final bool _recetaTieneSeriados;
-  late final Set<int> _idsReceta;
 
   @override
   void initState() {
     super.initState();
     _categoriasReceta = _calcularCategoriasReceta();
     _recetaTieneSeriados = widget.materiales.any((m) => m.esSeriado);
-    _idsReceta = widget.materiales.map((m) => m.id).toSet();
     _cargarStock();
   }
 
@@ -395,8 +393,10 @@ class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
     required bool seriado,
   }) {
     final idsReceta = _idsRecetaParaCategoria(categoria, seriado: seriado);
-    if (idsReceta.isEmpty) return const [];
-    return items.where((i) => idsReceta.contains(i.idMaterial)).toList();
+    if (idsReceta.isEmpty) return items;
+    final filtrados =
+        items.where((i) => idsReceta.contains(i.idMaterial)).toList();
+    return filtrados.isNotEmpty ? filtrados : items;
   }
 
   Future<void> _cargarStock() async {
@@ -430,15 +430,8 @@ class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
       debugPrint(
         '[Consumo] saldo ${stock.items.length} ítems, '
         'categorías receta: $_categoriasReceta, '
-        'seriados receta: $_recetaTieneSeriados, '
-        'ids receta: $_idsReceta',
+        'seriados receta: $_recetaTieneSeriados',
       );
-      for (final m in widget.materiales) {
-        debugPrint(
-          '[Consumo] receta · id ${m.id} · ${m.nombre} · '
-          'cat ${m.categoriaConsumo()} · seriado ${m.esSeriado}',
-        );
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -449,11 +442,6 @@ class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
   }
 
   bool _mostrarCategoria(MaterialItem m) {
-    if (widget.materiales.isNotEmpty &&
-        !_categoriasReceta.contains(m.nombre)) {
-      return false;
-    }
-
     if (m.esSeriado) {
       if (_saldoCategoria(m.nombre, seriado: true) > 0) return true;
       if (_categoriasReceta.contains(m.nombre)) return true;
@@ -741,57 +729,6 @@ class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
     setState(() => _seriesSeleccionadas.remove(item));
   }
 
-  String? _validarMaterialesConReceta(
-    List<List<dynamic>> noSeriados,
-    List<List<dynamic>> seriados,
-  ) {
-    if (widget.materiales.isEmpty) return null;
-
-    String etiqueta(int idMaterial, {String? serie}) {
-      for (final item in _stock?.items ?? const <ItemStock>[]) {
-        if (item.idMaterial == idMaterial) {
-          if (serie != null) return '${item.nombre} · $serie';
-          return item.nombre;
-        }
-      }
-      for (final m in widget.materiales) {
-        if (m.id == idMaterial) return m.nombre;
-      }
-      return 'Material id $idMaterial';
-    }
-
-    final invalidos = <String>[];
-    for (final row in noSeriados) {
-      final id = row[0] as int;
-      if (!_idsReceta.contains(id)) {
-        invalidos.add('${etiqueta(id)} (id $id, cant ${row[1]})');
-      }
-    }
-    for (final row in seriados) {
-      final id = row[0] as int;
-      if (!_idsReceta.contains(id)) {
-        invalidos.add('${etiqueta(id, serie: row[1]?.toString())} (id $id)');
-      }
-    }
-
-    if (invalidos.isEmpty) return null;
-
-    final permitidos = widget.materiales
-        .map((m) => '• ${m.nombre} (id ${m.id})')
-        .join('\n');
-
-    return 'Estos materiales no pertenecen a la receta '
-        '"${widget.nombreReceta}":\n'
-        '${invalidos.map((e) => '• $e').join('\n')}\n\n'
-        'Solo se pueden enviar materiales de la receta:\n'
-        '$permitidos';
-  }
-
-  List<List<dynamic>> _filtrarPayloadReceta(List<List<dynamic>> filas) {
-    if (widget.materiales.isEmpty) return filas;
-    return filas.where((r) => _idsReceta.contains(r[0] as int)).toList();
-  }
-
   Future<void> _enviar() async {
     final noSeriados = <List<dynamic>>[];
     for (final entry in _cantidadesPorMaterial.entries) {
@@ -823,34 +760,11 @@ class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
       totalDeco: _totalDeco,
       marcaDecoSeleccionada: _marcaDecoBloqueada,
       totalExtensor: _totalExtensor,
-      limitarCategorias:
-          widget.materiales.isNotEmpty ? _categoriasReceta : null,
     );
     if (err != null) {
       await _mostrarBloqueoConsumo(
         'No cumple las reglas de consumo',
         err,
-      );
-      return;
-    }
-
-    final errReceta = _validarMaterialesConReceta(noSeriados, seriados);
-    if (errReceta != null) {
-      await _mostrarBloqueoConsumo(
-        'Materiales fuera de la receta',
-        errReceta,
-      );
-      return;
-    }
-
-    final noSeriadosEnvio = _filtrarPayloadReceta(noSeriados);
-    final seriadosEnvio = _filtrarPayloadReceta(seriados);
-
-    if (noSeriadosEnvio.isEmpty && seriadosEnvio.isEmpty) {
-      await _mostrarBloqueoConsumo(
-        'Sin materiales de la receta',
-        'Selecciona materiales que coincidan con la receta '
-        '"${widget.nombreReceta}" y que tengas en tu saldo.',
       );
       return;
     }
@@ -866,8 +780,8 @@ class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
       result = await widget.service.submitConsumo(
         ordenDeTrabajo: widget.orden.codigoExterno,
         idTrabajador: idTrabajador,
-        noSeriados: noSeriadosEnvio,
-        seriados: seriadosEnvio,
+        noSeriados: noSeriados,
+        seriados: seriados,
       );
     } catch (e) {
       result = ConsumoResult(exito: false, mensaje: e.toString());
@@ -917,8 +831,8 @@ class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
         '${result.mensaje}\n\n'
         'OT: ${widget.orden.codigoExterno}\n'
         'Técnico KRP: $idTrabajador\n'
-        'Ítems no seriados: ${noSeriadosEnvio.length} · '
-        'Seriados: ${seriadosEnvio.length}',
+        'Ítems no seriados: ${noSeriados.length} · '
+        'Seriados: ${seriados.length}',
       );
     }
   }
@@ -1026,7 +940,6 @@ class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
 
   Widget _buildHeader() {
     final exigirMin = consumoExigirMinimos(widget.orden.tipoActividad);
-    final hayReceta = widget.materiales.isNotEmpty;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       color: _surface,
@@ -1038,23 +951,7 @@ class _ConsumoOrdenScreenState extends State<ConsumoOrdenScreen> {
           const SizedBox(height: 4),
           Text(widget.nombreReceta,
               style: const TextStyle(color: _textDim, fontSize: 12)),
-          if (hayReceta) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Solo materiales de la receta "${widget.nombreReceta}" '
-              '(${widget.materiales.length} ítems).',
-              style: TextStyle(
-                  color: _accent.withValues(alpha: 0.85), fontSize: 11),
-            ),
-          ],
-          if (exigirMin && hayReceta) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Los mínimos aplican solo a categorías incluidas en esta receta.',
-              style: TextStyle(
-                  color: _orange.withValues(alpha: 0.9), fontSize: 11),
-            ),
-          ] else if (exigirMin) ...[
+          if (exigirMin) ...[
             const SizedBox(height: 8),
             Text(
               'Los mínimos son obligatorios para esta actividad.',
