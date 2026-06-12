@@ -47,3 +47,5 @@ const int kMaterialGpsMaxAntiguedadMinutos = 10;
 // Llaves de SharedPreferences
 const String kPrefFcmTokenRegistrado = 'fcm_token_registrado';
 const String kPrefAlertaBloqueoMisActividades = 'alerta_activa_mis_actividades';
+const String kPrefAlertaBloqueoTitulo = 'alerta_bloqueo_titulo';
+const String kPrefAlertaBloqueoDescripcion = 'alerta_bloqueo_descripcion';
