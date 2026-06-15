@@ -640,7 +640,7 @@ class _AppHomeByRolState extends State<_AppHomeByRol> {
             unawaited(FcmService.instance.initBodegaGuiaMonitor());
             unawaited(FcmService.instance.initBodegaTraspasoMonitor());
           });
-          return const BodegueroMenuScreen();
+          return const BodegaScreen();
         }
         if (rol == 'supervisor') {
           WidgetsBinding.instance.addPostFrameCallback((_) async {
