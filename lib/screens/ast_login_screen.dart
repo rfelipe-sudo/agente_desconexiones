@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:agente_desconexiones/models/creavox_tecnico.dart';
 import 'package:agente_desconexiones/services/creavox_api_service.dart';
 import 'package:agente_desconexiones/services/creavox_session_service.dart';
 import 'package:agente_desconexiones/services/logistica_service.dart';
@@ -78,6 +80,32 @@ class _AstLoginScreenState extends State<AstLoginScreen> {
 
     try {
       var tecnico = await _api.loginTecnico(rut);
+
+      // Fallback: buscar en nomina_tecnicos de Supabase (nuevos ingresos Creabox)
+      if (tecnico == null) {
+        final rutNorm = rut.replaceAll(RegExp(r'[.\-]'), '').toUpperCase();
+        final lista = [rutNorm, rutNorm.toLowerCase()];
+        final row = await Supabase.instance.client
+            .from('nomina_tecnicos')
+            .select('rut, nombres, paterno, materno')
+            .inFilter('rut', lista)
+            .maybeSingle();
+
+        if (row != null) {
+          final nombre =
+              '${row['nombres'] ?? ''} ${row['paterno'] ?? ''} ${row['materno'] ?? ''}'
+                  .trim()
+                  .replaceAll(RegExp(r'\s+'), ' ');
+          tecnico = CreavoxTecnico(
+            rutTecnico: rut,
+            nombreTecnico: nombre.isNotEmpty ? nombre : rut,
+            nombreSupervisor: '',
+            rutSupervisor: '',
+            active: true,
+          );
+        }
+      }
+
       if (tecnico == null) {
         if (mounted) setState(() => _error = 'RUT no encontrado o sin acceso');
         return;
