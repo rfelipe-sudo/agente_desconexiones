@@ -419,6 +419,11 @@ class _MisActividadesScreenState extends State<MisActividadesScreen>
   // ─── Modal alerta + banner pruebas + token FCM (mantienen comportamiento)
 
   void _mostrarModalAlerta() {
+    final alerta = context.read<AlertaProvider>();
+    final titulo = alerta.tituloAlerta ?? 'ALERTA DE DESCONEXIÓN\nPENDIENTE DE RESOLVER';
+    final descripcion = alerta.descripcionAlerta
+        ?? 'Tienes una alerta de desconexión pendiente de resolver. Resuelve para avanzar o comunícate con tu coordinador.';
+
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -448,10 +453,10 @@ class _MisActividadesScreenState extends State<MisActividadesScreen>
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
-                'ALERTA DE DESCONEXIÓN\nPENDIENTE DE RESOLVER',
+              Text(
+                titulo,
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 22,
                   fontWeight: FontWeight.w800,
@@ -460,10 +465,10 @@ class _MisActividadesScreenState extends State<MisActividadesScreen>
                 ),
               ),
               const SizedBox(height: 14),
-              const Text(
-                'Tienes una alerta de desconexión pendiente de resolver. Resuelve para avanzar o comunícate con tu coordinador.',
+              Text(
+                descripcion,
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   color: Color(0xFFCBD5E1),
                   fontSize: 14,
                   height: 1.45,
