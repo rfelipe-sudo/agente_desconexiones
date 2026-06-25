@@ -23,6 +23,8 @@ import 'package:agente_desconexiones/services/auth_service.dart';
 import 'package:agente_desconexiones/services/fcm_service.dart';
 import 'package:agente_desconexiones/services/app_tecnico_open_service.dart';
 import 'package:agente_desconexiones/services/material_alerta_estado.dart';
+import 'package:agente_desconexiones/screens/wifi_mapas_screen.dart';
+import 'package:agente_desconexiones/screens/wifi_cobertura_screen.dart';
 import 'package:agente_desconexiones/screens/tu_mes_screen.dart';
 import 'package:agente_desconexiones/screens/supervisor/mi_equipo_screen.dart';
 import 'package:agente_desconexiones/services/ayuda_service.dart';
@@ -472,9 +474,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ),
             ],
           ),
-          _buildProximamenteActionButton(
+          _buildActionButton(
             icon: Icons.wifi_find,
             label: 'WiFi &\nMapas',
+            color: const Color(0xFF00D9FF),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF00D9FF), Color(0xFF0099CC)],
+            ),
+            onTap: () => _pushConCortina(
+              color: const Color(0xFF00D9FF),
+              titulo: 'WiFi & Mapas',
+              subtitulo: 'Cargando herramientas…',
+              screen: const WifiCoberturaScreen(),
+            ),
           ),
           // ── Fila 4 ──────────────────────────────────────────────
           Consumer<AlertaProvider>(

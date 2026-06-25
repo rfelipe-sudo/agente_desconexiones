@@ -3,16 +3,20 @@ import 'package:http/http.dart' as http;
 
 /// Configuración de SSID/clave WiFi vía interfaz web de la ONT.
 class WifiCredencialesScreen extends StatefulWidget {
-  const WifiCredencialesScreen({super.key});
+  const WifiCredencialesScreen({super.key, this.passwordOnt});
+
+  /// Password obtenida desde CDE Virtual. Si es null usa la contraseña por defecto.
+  final String? passwordOnt;
 
   @override
   State<WifiCredencialesScreen> createState() => _WifiCredencialesScreenState();
 }
 
 class _WifiCredencialesScreenState extends State<WifiCredencialesScreen> {
-  static const _ontHost = '192.168.1.1';
-  static const _ontUser = 'root';
-  static const _ontPassword = 'VAdtzq39';
+  static const _ontHost            = '192.168.1.1';
+  static const _ontUser            = 'root';
+  static const _kDefaultOntPassword = 'VAdtzq39';
+  String get _ontPassword => widget.passwordOnt ?? _kDefaultOntPassword;
   static String get _base => 'http://$_ontHost';
 
   final _ssid24 = TextEditingController();

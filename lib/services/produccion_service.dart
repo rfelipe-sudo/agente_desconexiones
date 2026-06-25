@@ -996,11 +996,17 @@ class ProduccionService {
 
         int completadasDia = 0;
         double rguDia = 0;
+        // Dedup por orden_trabajo dentro del día para evitar contar el mismo OT
+        // dos veces cuando el batch nocturno lo re-inserta con otro codigo_tecnico.
+        final Set<String> otVistasEnDia = {};
 
         for (var orden in ordenesDelDia) {
+          final ot = orden['orden_trabajo']?.toString() ?? '';
           final estado = orden['estado']?.toString() ?? '';
 
           if (cuentaComoProduccion(orden)) {
+            if (ot.isNotEmpty && otVistasEnDia.contains(ot)) continue;
+            if (ot.isNotEmpty) otVistasEnDia.add(ot);
             completadas++;
             completadasDia++;
             final rgu = (orden['rgu_total'] as num?)?.toDouble() ?? 0;
@@ -1161,11 +1167,17 @@ class ProduccionService {
 
       // Agrupar por día (solo órdenes que cuentan como producción)
       Map<String, Map<String, dynamic>> porDia = {};
+      // Dedup por orden_trabajo: el mismo OT puede aparecer dos veces si el
+      // batch nocturno lo re-inserta con un codigo_tecnico distinto (MM vs NFTT).
+      final Set<String> otVistas = {};
 
       for (var orden in ordenesCompletadas) {
         if (!cuentaComoProduccion(orden)) continue;
         final fecha = orden['fecha_trabajo']?.toString() ?? '';
         if (fecha.isEmpty) continue;
+        final ot = orden['orden_trabajo']?.toString() ?? '';
+        if (ot.isEmpty || otVistas.contains(ot)) continue;
+        otVistas.add(ot);
 
         if (!porDia.containsKey(fecha)) {
           porDia[fecha] = {
